@@ -424,21 +424,7 @@ object ResourceMonitorService {
      */
     private fun postToWebhook(webhookUrl: String, payload: String) {
         Thread {
-            try {
-                val url  = java.net.URL(webhookUrl)
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json; utf-8")
-                conn.connectTimeout = 8_000
-                conn.readTimeout    = 8_000
-                conn.doOutput       = true
-                conn.outputStream.use { os ->
-                    os.write(payload.toByteArray(Charsets.UTF_8))
-                }
-                conn.responseCode
-            } catch (_: Throwable) {
-                // Intentionally silent — telemetry must never cause secondary failures.
-            }
+            DiscordWebhookClient.post(webhookUrl, payload)
         }.also { it.isDaemon = true; it.name = "focusflow-resource-telemetry" }.start()
     }
 

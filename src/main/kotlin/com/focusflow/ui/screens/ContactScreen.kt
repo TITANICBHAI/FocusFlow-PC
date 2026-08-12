@@ -46,6 +46,7 @@ fun ContactScreen() {
     var feedbackText   by remember { mutableStateOf("") }
     var feedbackSent   by remember { mutableStateOf(false) }
     var feedbackSending by remember { mutableStateOf(false) }
+    var feedbackFailed  by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         crashLogs = withContext(Dispatchers.IO) { CrashReporter.findCrashLogs() }
@@ -192,7 +193,7 @@ fun ContactScreen() {
                         } else {
                             OutlinedTextField(
                                 value         = feedbackText,
-                                onValueChange = { feedbackText = it },
+                                 onValueChange = { feedbackText = it; feedbackFailed = false },
                                 placeholder   = { Text("Describe your issue or idea…", color = OnSurface2) },
                                 minLines      = 3,
                                 maxLines      = 8,
@@ -209,9 +210,13 @@ fun ContactScreen() {
                                 Button(
                                     onClick = {
                                         feedbackSending = true
-                                        ReviewPromptService.sendFeedback(feedbackText)
-                                        feedbackSent    = true
-                                        feedbackSending = false
+                                         feedbackFailed  = false
+                                         ReviewPromptService.sendFeedback(feedbackText) { delivered ->
+                                             feedbackSending = false
+                                             feedbackSent    = delivered
+                                             feedbackFailed  = !delivered
+                                             if (!delivered) statusMessage = "Feedback could not be delivered. Please try again."
+                                         }
                                     },
                                     enabled = feedbackText.isNotBlank() && !feedbackSending,
                                     colors  = ButtonDefaults.buttonColors(containerColor = Purple80)
@@ -221,6 +226,13 @@ fun ContactScreen() {
                                     Spacer(Modifier.width(6.dp))
                                     Text("Send Feedback", fontSize = 13.sp)
                                 }
+                             if (feedbackFailed) {
+                                 Text(
+                                     "Discord did not accept the feedback. Please try again.",
+                                     color = MaterialTheme.colorScheme.error,
+                                     style = MaterialTheme.typography.bodySmall
+                                 )
+                             }
                             }
                         }
                     }

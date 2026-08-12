@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ReviewPromptService — smart Microsoft Store rating prompt for FocusFlow.
@@ -117,29 +118,35 @@ object ReviewPromptService {
     /** Dismiss without recording a decision (e.g. dialog X button). Treats as decline. */
     fun onDismiss() = onDecline()
 
-    /** Send an issue/feedback message to the Discord feedback webhook. */
-    fun sendFeedback(message: String) {
-        if (message.isBlank() || FEEDBACK_WEBHOOK_URL.isBlank()) return
+    /**
+     * Send an issue/feedback message to the Discord feedback webhook.
+     *
+     * Discord limits an embed description to 4096 characters. Trim before
+     * building JSON so a long pasted report cannot be rejected with HTTP 400.
+     * The callback runs on the UI dispatcher and reports the actual HTTP result
+     * instead of optimistically claiming the message was sent.
+     */
+    fun sendFeedback(message: String, onResult: (Boolean) -> Unit = {}) {
+        val cleanMessage = message.trim().take(4_000)
+        if (cleanMessage.isBlank() || FEEDBACK_WEBHOOK_URL.isBlank()) {
+            onResult(false)
+            return
+        }
         scope.launch {
-            try {
+            val delivered = try {
                 val payload = buildString {
                     append("{\"embeds\":[{")
                     append("\"title\":\"💬 User Feedback\",")
-                    append("\"description\":${escapeJson(message)},")
+                    append("\"description\":${escapeJson(cleanMessage)},")
                     append("\"color\":5814783,")
                     append("\"fields\":[{\"name\":\"Version\",\"value\":\"${CrashReporter.APP_VERSION}\",\"inline\":true}]")
                     append("}]}")
                 }
-                val conn = java.net.URL(FEEDBACK_WEBHOOK_URL).openConnection()
-                    as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = 6_000
-                conn.readTimeout    = 6_000
-                conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-                conn.responseCode // consume
-            } catch (_: Throwable) {}
+                DiscordWebhookClient.post(FEEDBACK_WEBHOOK_URL, payload)
+            } catch (_: Throwable) {
+                false
+            }
+            withContext(Dispatchers.Main) { onResult(delivered) }
         }
     }
 

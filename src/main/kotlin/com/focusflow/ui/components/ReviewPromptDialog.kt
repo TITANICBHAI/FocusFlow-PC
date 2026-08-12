@@ -46,6 +46,8 @@ fun ReviewPromptDialog() {
     var showFeedback    by remember { mutableStateOf(false) }
     var feedbackText    by remember { mutableStateOf("") }
     var feedbackSent    by remember { mutableStateOf(false) }
+    var feedbackSending by remember { mutableStateOf(false) }
+    var feedbackFailed  by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = { ReviewPromptService.onDismiss() },
@@ -112,7 +114,7 @@ fun ReviewPromptDialog() {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value         = feedbackText,
-                                onValueChange = { feedbackText = it },
+                                 onValueChange = { feedbackText = it; feedbackFailed = false },
                                 placeholder   = { Text(s.reviewFeedbackHint, color = OnSurface2) },
                                 minLines      = 3,
                                 maxLines      = 6,
@@ -125,14 +127,26 @@ fun ReviewPromptDialog() {
                             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                 Button(
                                     onClick = {
-                                        ReviewPromptService.sendFeedback(feedbackText)
-                                        feedbackSent = true
+                                        feedbackSending = true
+                                        feedbackFailed = false
+                                        ReviewPromptService.sendFeedback(feedbackText) { delivered ->
+                                            feedbackSending = false
+                                            feedbackSent = delivered
+                                            feedbackFailed = !delivered
+                                        }
                                     },
-                                    enabled = feedbackText.isNotBlank(),
+                                    enabled = feedbackText.isNotBlank() && !feedbackSending,
                                     colors  = ButtonDefaults.buttonColors(containerColor = Purple80)
                                 ) {
                                     Text(s.reviewFeedbackSend, fontSize = 13.sp)
                                 }
+                            }
+                            if (feedbackFailed) {
+                                Text(
+                                    "Could not deliver feedback. Please try again.",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
                         }
                     }

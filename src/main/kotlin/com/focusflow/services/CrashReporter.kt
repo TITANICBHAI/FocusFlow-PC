@@ -151,8 +151,9 @@ object CrashReporter {
         // Free OOM reserve FIRST — before any allocation — so we have heap.
         oomReserve = null
 
-        // Fire Discord telemetry immediately on a background daemon thread.
-        // Daemon flag ensures it never prevents JVM exit.
+        // Send before the handler returns. A daemon worker is not reliable here:
+        // once the uncaught-exception handler returns, the JVM may exit before
+        // that worker has opened the connection.
         sendToDiscord(throwable, source)
 
         // Re-install AWT handler (AWT clears it after each use)
@@ -600,15 +601,7 @@ object CrashReporter {
                     }
                 """.trimIndent()
 
-                val url  = java.net.URL(webhookUrl)
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json; utf-8")
-                conn.connectTimeout = 8_000
-                conn.readTimeout    = 8_000
-                conn.doOutput = true
-                conn.outputStream.use { os -> os.write(payload.toByteArray(Charsets.UTF_8)) }
-                conn.responseCode
+                DiscordWebhookClient.post(webhookUrl, payload)
             } catch (_: Throwable) {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }
@@ -714,7 +707,9 @@ object CrashReporter {
     }
 
     /**
-     * Sends a compact crash embed to a Discord webhook on a daemon background thread.
+     * Sends a compact crash embed to a Discord webhook before the fatal handler
+     * returns. This is intentionally synchronous because the JVM may terminate
+     * before a daemon worker gets a chance to deliver the report.
      *
      * • Known-benign Compose/coroutine exceptions are silently dropped (no Discord ping).
      * • Every real report includes a fingerprint field — identical bugs from many
@@ -735,8 +730,7 @@ object CrashReporter {
         val optedIn = try { Database.getSetting("crash_reports_enabled") != "false" } catch (_: Throwable) { true }
         if (!optedIn) return
 
-        Thread {
-            try {
+        try {
                 val rawTrace = throwable.stackTraceToString()
                 val trace = if (rawTrace.length > 1500)
                     rawTrace.substring(0, 1500) + "\n... [truncated]"
@@ -775,21 +769,10 @@ object CrashReporter {
                     }
                 """.trimIndent()
 
-                val url  = java.net.URL(webhookUrl)
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json; utf-8")
-                conn.connectTimeout = 8_000
-                conn.readTimeout    = 8_000
-                conn.doOutput = true
-                conn.outputStream.use { os ->
-                    os.write(payload.toByteArray(Charsets.UTF_8))
-                }
-                conn.responseCode
+                DiscordWebhookClient.post(webhookUrl, payload)
             } catch (_: Throwable) {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }
-        }.also { it.isDaemon = true; it.name = "focusflow-crash-telemetry" }.start()
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
