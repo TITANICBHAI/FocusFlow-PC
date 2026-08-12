@@ -44,6 +44,8 @@ import com.focusflow.services.FocusSessionService
 import kotlin.system.exitProcess
 import com.focusflow.ui.components.AndroidPromoDialog
 import com.focusflow.ui.components.BlockOverlay
+import com.focusflow.ui.components.EdgeExtensionPromoDialog
+import com.focusflow.ui.components.openEdgeExtensionStore
 import com.focusflow.ui.components.FocusLauncherBreakBanner
 import com.focusflow.ui.components.FocusLauncherOverlay
 import com.focusflow.ui.components.GlobalPinSetupDialog
@@ -66,6 +68,7 @@ import androidx.compose.ui.input.key.*
 import com.focusflow.ui.LocalNavigate
 
 private const val APP_VERSION = "1.1.7"
+private const val EDGE_EXTENSION_PROMO_DISMISSED = "edge_extension_promo_dismissed"
 
 /**
  * Screens where the floating "Restart as Admin" button is shown.
@@ -96,6 +99,7 @@ fun App() {
     var showOnboarding      by remember { mutableStateOf(false) }
     var showGlobalPinSetup  by remember { mutableStateOf(false) }
     var showAndroidPromo    by remember { mutableStateOf(false) }
+    var showEdgeExtensionPromo by remember { mutableStateOf(false) }
     val showReviewPrompt    by ReviewPromptService.shouldShow.collectAsState()
     var showTelemetryConsent     by remember { mutableStateOf(false) }
     var showRegistryOrphanDialog by remember { mutableStateOf(false) }
@@ -156,23 +160,30 @@ fun App() {
             // if the user has never been asked (null = never set, as opposed to "true"/"false").
             val showConsent = !fl
                 && Database.getSetting("crash_reports_enabled") == null
+            // Show the Edge extension exactly on the 20th completed app open.
+            // Dismissal is permanent so this is never shown again on this install.
+            val showEdgeExtension = !fl
+                && openCount == 20
+                && Database.getSetting(EDGE_EXTENSION_PROMO_DISMISSED) != "true"
 
             if (showAndroid) {
                 Database.setSetting("android_promo_shown_date", java.time.LocalDate.now().toString())
                 Database.setSetting("android_promo_last_version", APP_VERSION)
             }
 
-            listOf(fl, pn, showAndroid, showConsent)
+            listOf(fl, pn, showAndroid, showConsent, showEdgeExtension)
         }
         val firstLaunch  = launchData[0]
         val pinNeeded    = launchData[1]
         val androidPromo = launchData[2]
         val needsConsent = launchData[3]
+        val edgeExtensionPromo = launchData[4]
 
         if (firstLaunch) showOnboarding = true
         if (pinNeeded && !firstLaunch) showGlobalPinSetup = true
         if (androidPromo) showAndroidPromo = true
         if (needsConsent) showTelemetryConsent = true
+        if (edgeExtensionPromo) showEdgeExtensionPromo = true
     }
 
     // ── Registry orphan check ─────────────────────────────────────────────────
@@ -357,6 +368,24 @@ fun App() {
 
         if (showAndroidPromo) {
             AndroidPromoDialog(onDismiss = { showAndroidPromo = false })
+        }
+
+        if (showEdgeExtensionPromo) {
+            EdgeExtensionPromoDialog(
+                onInstall = {
+                    openEdgeExtensionStore()
+                    showEdgeExtensionPromo = false
+                    scope.launch(Dispatchers.IO) {
+                        Database.setSetting(EDGE_EXTENSION_PROMO_DISMISSED, "true")
+                    }
+                },
+                onDismiss = {
+                    showEdgeExtensionPromo = false
+                    scope.launch(Dispatchers.IO) {
+                        Database.setSetting(EDGE_EXTENSION_PROMO_DISMISSED, "true")
+                    }
+                }
+            )
         }
 
         if (showReviewPrompt) {
