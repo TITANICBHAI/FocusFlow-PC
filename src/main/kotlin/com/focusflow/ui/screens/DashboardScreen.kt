@@ -55,7 +55,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-private const val APP_VERSION = "1.1.7"
+private const val APP_VERSION = "1.1.8"
 
 @Composable
 fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigateTasks: () -> Unit) {

@@ -256,7 +256,7 @@ private suspend fun applyOnboardingSelections(
         Database.setSetting("theme_mode", theme)
         // Mark current version as seen so the "What's New" banner never shows
         // on a fresh install — it's only for users upgrading from an older build.
-        Database.setSetting("last_seen_version", "1.1.7")
+        Database.setSetting("last_seen_version", "1.1.8")
 
         // Telemetry — new install completed onboarding; which goal category and presets did they pick?
         // This fires on a daemon thread inside sendModeEvent so it never blocks the IO coroutine.

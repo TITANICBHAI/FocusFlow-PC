@@ -67,7 +67,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.*
 import com.focusflow.ui.LocalNavigate
 
-private const val APP_VERSION = "1.1.7"
+private const val APP_VERSION = "1.1.8"
 private const val EDGE_EXTENSION_PROMO_DISMISSED = "edge_extension_promo_dismissed"
 
 /**

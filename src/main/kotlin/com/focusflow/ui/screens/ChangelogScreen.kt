@@ -31,6 +31,18 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "1.1.8",
+        date       = "August 2026",
+        badge      = "NEW",
+        badgeColor = Purple80,
+        changes    = listOf(
+            "NEW" to "Microsoft Edge extension promotion — shown once on the 20th app launch with a direct link to the official FocusFlow Edge Add-ons listing",
+            "IMP" to "Edge extension promotion can be dismissed permanently; it will not appear again after dismissal or installation",
+            "FIX" to "Discord crash reporting now completes its bounded webhook request before the JVM exits, preventing fatal reports from being lost",
+            "FIX" to "Feedback delivery now checks Discord responses and reports failures instead of showing a false success state"
+        )
+    ),
+    ChangelogEntry(
         version    = "1.1.7",
         date       = "August 2026",
         badge      = "STABLE",
