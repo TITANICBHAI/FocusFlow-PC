@@ -55,8 +55,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-private const val APP_VERSION = "1.1.8"
-
 @Composable
 fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigateTasks: () -> Unit) {
     val today   = LocalDate.now()
@@ -79,6 +77,7 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
     val strings = LocalizationManager.strings
 
     fun reload() {
+        val latestChangelogVersion = LATEST_CHANGELOG_VERSION
         scope.launch {
             val t   = withContext(Dispatchers.IO) { Database.getTasksForDate(today) }
             val s   = withContext(Dispatchers.IO) { Database.getCurrentStreak() }
@@ -98,9 +97,11 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
             blockedAttempts = ba
             val ins = withContext(Dispatchers.IO) { FocusInsightsService.compute() }
             insights = ins
-            // Show "What's New" banner once per version update
-            if (lsv != APP_VERSION) {
-                withContext(Dispatchers.IO) { Database.setSetting("last_seen_version", APP_VERSION) }
+            // Show "What's New" banner once for each release in the changelog.
+            if (latestChangelogVersion != null && lsv != latestChangelogVersion) {
+                withContext(Dispatchers.IO) {
+                    Database.setSetting("last_seen_version", latestChangelogVersion)
+                }
                 showWhatsNew = true
             }
         }
@@ -642,20 +643,21 @@ private fun WhatsNewBanner(
     onViewChangelog: () -> Unit,
     onDismiss:       () -> Unit
 ) {
-    // Dynamically built from the top entry in CHANGELOG — no manual updates needed on version bumps.
-    val entry = CHANGELOG.firstOrNull()
+    // Dynamically built from the latest changelog entry — no separate version
+    // or highlight list needs updating when a release is added.
+    val entry = LATEST_CHANGELOG_ENTRY ?: return
     val tagIcon = mapOf(
         "NEW"  to Icons.Default.AutoAwesome,
         "FIX"  to Icons.Default.BugReport,
         "IMP"  to Icons.AutoMirrored.Filled.TrendingUp,
         "SEC"  to Icons.Default.Security,
         "UPD"  to Icons.Default.Update,
-        "PERF" to Icons.Default.Speed
+        "PERF" to Icons.Default.Speed,
+        "REMOVED" to Icons.Default.DeleteOutline
     )
-    val highlights = entry?.changes
-        ?.take(3)
-        ?.map { (tag, desc) -> (tagIcon[tag] ?: Icons.Default.AutoAwesome) to desc }
-        ?: emptyList()
+    val highlights = entry.changes
+        .take(3)
+        .map { (tag, desc) -> (tagIcon[tag] ?: Icons.Default.AutoAwesome) to desc }
 
     Row(
         modifier = Modifier
@@ -679,7 +681,7 @@ private fun WhatsNewBanner(
         // Text block
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "What's New in v$APP_VERSION",
+                "What's New in v${entry.version}",
                 style      = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 color      = OnSurface

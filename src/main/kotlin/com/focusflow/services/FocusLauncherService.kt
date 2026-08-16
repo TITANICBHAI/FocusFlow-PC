@@ -113,17 +113,6 @@ object FocusLauncherService {
 
         if (durationMinutes != null) startSessionTimer()
 
-        // Telemetry — kiosk mode entered
-        ResourceMonitorService.sendModeEvent(
-            title       = "🔒 Focus Launcher Entered",
-            description = "User entered kiosk / Focus Launcher mode.",
-            color       = 10038562, // purple
-            fields      = listOf(
-                "Allowed Apps" to apps.size.toString(),
-                "Duration" to (if (durationMinutes != null) "${durationMinutes}m" else "unlimited")
-            )
-        )
-
         SystemTrayManager.showNotification(
             "Focus Launcher Active",
             "Kiosk mode enabled. ${apps.size} app(s) available.",
@@ -137,18 +126,6 @@ object FocusLauncherService {
         // both running the full teardown sequence simultaneously (double showTaskbar,
         // double NuclearMode.disable, redundant DB writes, etc.).
         if (!_isActive.compareAndSet(expect = true, update = false)) return
-
-        // Telemetry — kiosk mode exited
-        val sessionDurationMs = System.currentTimeMillis() - _sessionStartMs.value
-        ResourceMonitorService.sendModeEvent(
-            title       = "🔓 Focus Launcher Exited",
-            description = "User exited kiosk / Focus Launcher mode.",
-            color       = 15844367, // yellow
-            fields      = listOf(
-                "Session Duration" to "${sessionDurationMs / 60_000}m",
-                "Hard Locked" to _isHardLocked.value.toString()
-            )
-        )
 
         _isHardLocked.value       = false
         _breakActive.value        = false
@@ -188,13 +165,6 @@ object FocusLauncherService {
         val newValue = !prev
         Database.setSetting(HARD_LOCK_KEY, newValue.toString())
 
-        // Telemetry — hard lock toggled (no break possible when locked)
-        ResourceMonitorService.sendModeEvent(
-            title       = "🔐 Hard Lock ${if (newValue) "Enabled" else "Disabled"}",
-            description = "User toggled Hard Lock inside Focus Launcher (prevents taking a break).",
-            color       = if (newValue) 15158332 else 5763719, // red / green
-            fields      = listOf("Locked" to newValue.toString())
-        )
     }
 
     /**
@@ -209,14 +179,6 @@ object FocusLauncherService {
         // and calling NuclearMode.disable() twice. Only one caller proceeds.
         if (!_breakActive.compareAndSet(false, true)) return
         _breakRemainingSeconds.value = BREAK_SECONDS
-
-        // Telemetry — launcher break taken
-        ResourceMonitorService.sendModeEvent(
-            title       = "☕ Focus Launcher Break Started",
-            description = "User took a break during a Focus Launcher kiosk session.",
-            color       = 16744272, // amber
-            fields      = listOf("Break Budget Already Used" to (!_canTakeBreak.value).toString())
-        )
 
         Database.setSetting(BREAK_USED_KEY, java.time.LocalDate.now().toString())
 

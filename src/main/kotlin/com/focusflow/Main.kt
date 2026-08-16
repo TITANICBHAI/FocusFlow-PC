@@ -24,12 +24,6 @@ fun main() = application {
     // Writes a detailed report to Desktop/~/.focusflow/tmpdir with a Swing dialog.
     CrashReporter.install()
 
-    // ── Resource monitor — anonymous JVM/OS health telemetry ──────────────────
-    // Samples heap, thread count, GC, and physical RAM every 60s.
-    // Sends a Discord embed heartbeat hourly + immediate alerts on threshold breach.
-    // Respects the same "crash_reports_enabled" opt-out toggle as crash reporting.
-    ResourceMonitorService.start()
-
     // ── Startup registry janitor ───────────────────────────────────────────────
     // Unconditionally remove any leftover registry lockdown keys from a previous
     // session that was terminated before RegistryLockdown.disable() could run

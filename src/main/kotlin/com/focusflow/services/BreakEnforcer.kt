@@ -59,18 +59,6 @@ object BreakEnforcer {
             cyclesBeforeLongBreak = cycles
         )
 
-        // Telemetry — Pomodoro settings configured
-        ResourceMonitorService.sendModeEvent(
-            title       = "🍅 Pomodoro Settings Saved",
-            description = "User configured their Pomodoro timer settings.",
-            color       = 15105570, // orange
-            fields      = listOf(
-                "Work" to "${work}m",
-                "Short Break" to "${short}m",
-                "Long Break" to "${long}m",
-                "Cycles Before Long Break" to cycles.toString()
-            )
-        )
     }
 
     fun onSessionCompleted() {
@@ -87,18 +75,6 @@ object BreakEnforcer {
             phase = phase,
             cycleNumber = newCycle,
             breakSecondsRemaining = breakMins * 60
-        )
-
-        // Telemetry — Pomodoro cycle completed, break starting
-        ResourceMonitorService.sendModeEvent(
-            title       = "🍅 Pomodoro Cycle Completed",
-            description = "User completed a Pomodoro work cycle. Break starting.",
-            color       = 15105570, // orange
-            fields      = listOf(
-                "Cycle #" to newCycle.toString(),
-                "Break Type" to (if (isLong) "Long Break" else "Short Break"),
-                "Break Duration" to "${breakMins}m"
-            )
         )
 
         SoundAversion.playBreakReminder()

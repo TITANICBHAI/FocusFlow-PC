@@ -93,18 +93,6 @@ object FocusSessionService {
         ProcessMonitor.start()
         NotificationService.sessionStarted(name, minutes)
 
-        // Telemetry — session started
-        ResourceMonitorService.sendModeEvent(
-            title       = "▶️ Focus Session Started",
-            description = "User started a focus session.",
-            color       = 3066993, // green
-            fields      = listOf(
-                "Planned Duration" to "${minutes}m",
-                "Extra Blocked Apps" to blockedProcesses.size.toString(),
-                "Pomodoro Mode" to pomodoroMode.toString()
-            )
-        )
-
         startTimer()
 
         // DB write on IO — never block the UI or enforcement thread
@@ -216,19 +204,6 @@ object FocusSessionService {
                 try { onSessionEnded?.invoke(summary) } catch (_: Exception) {}
             }
         }
-
-        // Telemetry — session ended
-        ResourceMonitorService.sendModeEvent(
-            title       = if (completed) "✅ Focus Session Completed" else "⏹️ Focus Session Ended Early",
-            description = if (completed) "User completed a focus session." else "User stopped a session before the timer finished.",
-            color       = if (completed) 3066993 else 15158332, // green / red
-            fields      = listOf(
-                "Planned" to "${planned}m",
-                "Actual"  to "${elapsed / 60}m",
-                "Blocked Attempts" to attempts.toString(),
-                "Completed" to completed.toString()
-            )
-        )
 
         // Clear session log AFTER capturing attempts — keeps next session's count clean
         TemptationLogger.clearSession()

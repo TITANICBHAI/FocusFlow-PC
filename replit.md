@@ -162,4 +162,4 @@ Requires `GITHUB_PERSONAL_ACCESS_TOKEN` Replit Secret (already set).
 - `build.gradle.kts`: Added `-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.PollSelectorProvider` — prevents Java NIO failures inside MSIX AppContainer
 - `ProcessMonitor.kt`: Added UWP/ApplicationFrameHost.exe resolution — when the UWP frame host is foreground, scans running processes to find the actual hosted blocked app
 - `ProcessMonitor.kt`: Added system frame process ignore list (ApplicationFrameHost, ShellExperienceHost, StartMenuExperienceHost, SearchHost)
-- `NuclearMode.kt`: Expanded escape-route list to 30+ processes (added WSL distros, WMI, script engines, package managers, perfmon, resource monitor)
+- `NuclearMode.kt`: Expanded escape-route list to 30+ processes (added WSL distros, WMI, script engines, package managers, Performance Monitor and Resource Monitor executables)

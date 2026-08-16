@@ -959,7 +959,7 @@ fun SettingsScreen() {
             SectionCard(title = "Privacy") {
                 SettingRow(
                     label    = "Send anonymous diagnostics",
-                    subtitle = "Covers crash reports (error type + stack trace), resource health telemetry (heap %, RAM, thread counts, GC), and feature usage events (session start/end, mode activations, feature toggles). No task names, usernames, file paths, or personal data are ever included.",
+                    subtitle = "Covers crash reports and stack traces so we can fix bugs. No task names, usernames, file paths, or personal data are ever included.",
                     trailing = {
                         Switch(
                             checked = crashReportsEnabled,
@@ -976,7 +976,7 @@ fun SettingsScreen() {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Resource Monitor: hourly JVM snapshot + threshold alerts to our private Discord. Feature telemetry: which features are used (no content or PII). Toggle controls all three.",
+                    "Crash reports are sent only when enabled. You can change this setting at any time.",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurface2,
                     modifier = Modifier.padding(horizontal = 4.dp)

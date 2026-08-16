@@ -6,7 +6,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Privacy Policy — FocusFlow Deep Focus App Blocker for Windows</title>
-  <meta name="description" content="FocusFlow privacy policy. All data stays on your PC — no accounts, no cloud. Anonymous crash reports and opt-in feature usage telemetry only. No PII. Local SQLite storage." />
+  <meta name="description" content="FocusFlow privacy policy. All data stays on your PC — no accounts, no cloud. Anonymous crash reports only, when enabled. No PII. Local SQLite storage." />
   <link rel="canonical" href="https://focusflowpc.pages.dev/privacy-policy/" />
 
   <link rel="alternate" hreflang="en" href="https://focusflowpc.pages.dev/privacy-policy/" />
@@ -76,7 +76,7 @@
   </div>
 
   <div class="highlight">
-    Short version: FocusFlow does not collect personal data. All your tasks, notes, habits, and session history stay locally on your PC. No account needed. Two kinds of anonymous data can leave your device: (1) an automatic crash report if the app crashes (exception type, stack trace, OS/app version only), and (2) opt-in anonymous feature usage events that tell the developer which features are being used (e.g. "Focus Session started — 25 min planned"). Neither type includes task names, note contents, usernames, file paths, or any other personal information. Feature telemetry is opt-out via the "Send anonymous diagnostics" toggle in Settings → Privacy.
+    Short version: FocusFlow does not collect personal data. All your tasks, notes, habits, and session history stay locally on your PC. No account needed. The only data that can leave your device is an anonymous crash report if the app crashes (exception type, stack trace, OS/app version only), and only when enabled through the "Send anonymous diagnostics" toggle in Settings → Privacy. Crash reports do not include task names, note contents, usernames, file paths, or any other personal information.
   </div>
 
   <h2>Local-only storage</h2>
@@ -123,21 +123,6 @@
   </ul>
   <p>The crash report does <strong>not</strong> contain your username, file paths, task names, notes, blocked app names, habits, session history, or any other user-generated content. No device identifier or hardware ID is included. It is sent on a background thread and is silently discarded if the internet connection is unavailable.</p>
 
-  <h2>2 · Feature usage telemetry</h2>
-  <p>When the diagnostics toggle is on, FocusFlow sends anonymous feature usage events to help the developer understand which features are used and how the app performs in the real world. Events are sent on a background thread and silently discarded if offline. Examples of events sent:</p>
-  <ul>
-    <li><strong>Focus Session</strong> — started / ended (planned duration, actual duration, completion rate, number of blocked app attempts during session; no task names or note content)</li>
-    <li><strong>Nuclear Mode</strong> — enabled / disabled (blocked escape-attempt count; no app names)</li>
-    <li><strong>Emergency Break</strong> — activated / deactivated (time budget snapshot; no content)</li>
-    <li><strong>Focus Launcher</strong> — entered / exited / break taken / hard-lock ended (durations only)</li>
-    <li><strong>Standalone Block</strong> — started / stopped (duration; no app names or content)</li>
-    <li><strong>Pomodoro</strong> — cycle completed (work/break lengths); settings saved (new durations only)</li>
-    <li><strong>Launch at Login</strong> — enabled or disabled</li>
-    <li><strong>Onboarding</strong> — completed (number of presets chosen, focus duration selected, theme; no preset names)</li>
-    <li><strong>Resource health</strong> — hourly JVM snapshot (heap %, RAM, thread counts, GC pause time) and threshold alerts (heap &gt; 75 % or 90 %, threads &gt; 150)</li>
-  </ul>
-  <p>No event contains task names, note contents, blocked app names, usernames, file paths, IP addresses, device identifiers, hardware IDs, or any other personal or user-generated content. All data is received by TBTechs via a private Discord channel and is used solely for bug identification and app improvement. It is not shared with third parties, sold, or used for any purpose other than app stability and quality.</p>
-
   <h2>What FocusFlow does not collect</h2>
   <ul>
     <li>No location data</li>
@@ -145,23 +130,23 @@
     <li>No keyboard input, clipboard contents, or screen recordings</li>
     <li>No passwords or credentials of any kind</li>
     <li>No payment data</li>
-    <li>No task names, note contents, habit names, or any user-generated content — in any telemetry payload</li>
-    <li>No blocked app names or website domains in any telemetry payload</li>
+    <li>No task names, note contents, habit names, or any user-generated content in crash reports</li>
+    <li>No blocked app names or website domains in crash reports</li>
     <li>No file paths, usernames, IP addresses, or personal identifiers of any kind</li>
     <li>No device identifiers, hardware IDs, or fingerprinting</li>
     <li>No content from other applications</li>
     <li>No cloud accounts, sync, or remote database — all user data is stored locally</li>
   </ul>
 
-  <h2>Your control over telemetry</h2>
-  <p>The "Send anonymous diagnostics" toggle in <strong>Settings → Privacy</strong> controls all three types of outbound data: crash reports, resource health telemetry, and feature usage events. Turning it off immediately stops all outbound diagnostic communication. The toggle state is stored locally and persists across app restarts. No data is queued or batched for later sending — if the toggle is off, nothing is sent.</p>
+  <h2>Your control over diagnostic reports</h2>
+  <p>The "Send anonymous diagnostics" toggle in <strong>Settings → Privacy</strong> controls crash reports. Turning it off immediately stops crash reports from being sent. The toggle state is stored locally and persists across app restarts. No data is queued or batched for later sending.</p>
 
   <h2>Windows App Package (MSIX) and Microsoft Store</h2>
   <p>The Microsoft Store version of FocusFlow is distributed as an MSIX package. The app declares the <code>runFullTrust</code> restricted capability, which is required to enumerate and terminate running processes and manage the Windows taskbar and firewall rules for focus enforcement. This capability is not used to collect, transmit, or store any data beyond what is described in this policy.</p>
   <p>Microsoft may collect standard Store usage data (installs, updates, crashes) as part of its normal platform telemetry, independent of FocusFlow. This is governed by Microsoft's own privacy policy, not TBTechs'.</p>
 
   <h2>Your control</h2>
-  <p>You can uninstall FocusFlow at any time through Windows Settings → Apps. To remove all stored data, delete the <code>%USERPROFILE%\.focusflow\</code> folder after uninstalling. To remove any Windows Firewall rules added by network blocking, open Windows Defender Firewall → Outbound Rules and delete rules named "FocusFlow - Block [appname]". No data remains on any server because none is ever transmitted there.</p>
+  <p>You can uninstall FocusFlow at any time through Windows Settings → Apps. To remove all stored data, delete the <code>%USERPROFILE%\.focusflow\</code> folder after uninstalling. To remove any Windows Firewall rules added by network blocking, open Windows Defender Firewall → Outbound Rules and delete rules named "FocusFlow - Block [appname]". No task, note, or session data is transmitted to any server.</p>
 
   <h2>Children's privacy</h2>
   <p>FocusFlow does not knowingly collect any personal data from anyone. Since no personal data is collected or transmitted, the app is appropriate for use regardless of age. Parents may use FocusFlow to manage focus sessions on shared or family devices.</p>

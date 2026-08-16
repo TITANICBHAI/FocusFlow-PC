@@ -22,12 +22,10 @@ import com.focusflow.ui.theme.*
  * TelemetryConsentDialog
  *
  * Shown once on first launch (after onboarding) to give users an explicit
- * opt-in/out choice before any telemetry is ever sent.
+ * opt-in/out choice before any crash report is ever sent.
  *
  * What we collect (anonymous only):
- *   • JVM heap / memory snapshots — so we know if FocusFlow is leaking memory
- *   • Crash stack traces          — so we can fix bugs faster
- *   • Feature-usage events        — e.g. "session started" (no content, no PII)
+ *   • Crash stack traces — so we can fix bugs faster
  *
  * What we NEVER collect:
  *   • Task names, notes, or any user-created content
@@ -95,12 +93,10 @@ fun TelemetryConsentDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ConsentBullet(label = "Crash reports & stack traces",       allowed = true)
-                        ConsentBullet(label = "Anonymous JVM memory snapshots",     allowed = true)
-                        ConsentBullet(label = "Feature-usage events (no content)",  allowed = true)
-                        ConsentBullet(label = "Task names, notes, or session data", allowed = false)
-                        ConsentBullet(label = "Which apps you block",               allowed = false)
-                        ConsentBullet(label = "Your name, email, or IP address",    allowed = false)
+                         ConsentBullet(label = "Crash reports & stack traces",       allowed = true)
+                         ConsentBullet(label = "Task names, notes, or session data", allowed = false)
+                         ConsentBullet(label = "Which apps you block",               allowed = false)
+                         ConsentBullet(label = "Your name, email, or IP address",    allowed = false)
                     }
                 }
 

@@ -4,8 +4,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Small, dependency-free Discord webhook client shared by crash, feedback, and
- * resource telemetry reporting.
+ * Small, dependency-free Discord webhook client shared by crash and feedback
+ * reporting.
  *
  * Discord returns 204 for a successful execute-webhook request.  Treat the
  * whole 2xx range as success so this also works with ?wait=true and future

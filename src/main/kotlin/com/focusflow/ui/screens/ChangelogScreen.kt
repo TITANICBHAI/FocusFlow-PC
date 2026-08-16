@@ -36,6 +36,7 @@ internal val CHANGELOG = listOf(
         badge      = "NEW",
         badgeColor = Purple80,
         changes    = listOf(
+            "REMOVED" to "Resource Monitor Service and feature-usage telemetry — FocusFlow no longer collects or sends periodic JVM/OS health snapshots, threshold alerts, or feature activity events",
             "NEW" to "Microsoft Edge extension promotion — shown once on the 20th app launch with a direct link to the official FocusFlow Edge Add-ons listing",
             "IMP" to "Edge extension promotion can be dismissed permanently; it will not appear again after dismissal or installation",
             "FIX" to "Discord crash reporting now completes its bounded webhook request before the JVM exits, preventing fatal reports from being lost",
@@ -323,12 +324,20 @@ internal val CHANGELOG = listOf(
     )
 )
 
+/** The newest release entry is the source of truth for dashboard What's New. */
+internal val LATEST_CHANGELOG_ENTRY: ChangelogEntry?
+    get() = CHANGELOG.firstOrNull()
+
+internal val LATEST_CHANGELOG_VERSION: String?
+    get() = LATEST_CHANGELOG_ENTRY?.version
+
 private val BADGE_COLOR = mapOf(
     "NEW" to Purple80,
     "IMP" to Warning,
     "FIX" to Error,
     "SEC" to Color(0xFF29B6F6),
-    "UPD" to Color(0xFF26C6DA)
+    "UPD" to Color(0xFF26C6DA),
+    "REMOVED" to Error
 )
 
 @Composable

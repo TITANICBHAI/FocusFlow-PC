@@ -53,7 +53,7 @@ object ReviewPromptService {
 
     // ── Feedback webhook ──────────────────────────────────────────────────────
     // Stored as Base64 so plain-text scrapers skip it — same pattern as
-    // CrashReporter and ResourceMonitorService.
+    // CrashReporter.
     // To generate: Base64.getEncoder().encodeToString("https://discord.com/...".toByteArray())
     // Leave blank to disable the "Report an Issue" button entirely.
     private const val OBFUSCATED_FEEDBACK_WEBHOOK =

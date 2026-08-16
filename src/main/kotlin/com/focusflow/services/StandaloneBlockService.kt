@@ -70,18 +70,6 @@ object StandaloneBlockService {
             )
         }
 
-        // Telemetry — standalone block created
-        ResourceMonitorService.sendModeEvent(
-            title       = "🚫 Standalone Block Started",
-            description = "User created a standalone app block.",
-            color       = 15158332, // red
-            fields      = listOf(
-                "App Count"  to processNames.size.toString(),
-                "Duration"   to "${durationMs / 60_000}m",
-                "Scheduled"  to (newBlock.startMs != null).toString()
-            )
-        )
-
         startWatcher()
     }
 
@@ -117,15 +105,6 @@ object StandaloneBlockService {
     }
 
     fun stop() {
-        // Telemetry — only fire if there was actually an active block to stop
-        if (_block.value != null) {
-            ResourceMonitorService.sendModeEvent(
-                title       = "✅ Standalone Block Stopped",
-                description = "User manually cancelled a standalone app block.",
-                color       = 5763719, // green
-                fields      = listOf("Remaining" to "${remainingMs() / 60_000}m left")
-            )
-        }
         _block.value = null
         watchJob?.cancel()
         watchJob = null

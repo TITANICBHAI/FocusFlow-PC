@@ -43,7 +43,7 @@ import com.focusflow.enforcement.WindowsStartupManager
 import com.focusflow.enforcement.isWindows
 import com.focusflow.i18n.AppLanguage
 import com.focusflow.i18n.LocalizationManager
-import com.focusflow.services.ResourceMonitorService
+import com.focusflow.ui.screens.LATEST_CHANGELOG_VERSION
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -256,20 +256,10 @@ private suspend fun applyOnboardingSelections(
         Database.setSetting("theme_mode", theme)
         // Mark current version as seen so the "What's New" banner never shows
         // on a fresh install — it's only for users upgrading from an older build.
-        Database.setSetting("last_seen_version", "1.1.8")
+        LATEST_CHANGELOG_VERSION?.let { latestVersion ->
+            Database.setSetting("last_seen_version", latestVersion)
+        }
 
-        // Telemetry — new install completed onboarding; which goal category and presets did they pick?
-        // This fires on a daemon thread inside sendModeEvent so it never blocks the IO coroutine.
-        ResourceMonitorService.sendModeEvent(
-            title       = "🎉 Onboarding Completed",
-            description = "A new user finished the setup flow and entered the app.",
-            color       = 5763719, // green
-            fields      = listOf(
-                "Presets Chosen" to selectedPresets.size.toString(),
-                "Default Focus"  to "${focusDuration}m",
-                "Theme"          to theme
-            )
-        )
     }
 }
 

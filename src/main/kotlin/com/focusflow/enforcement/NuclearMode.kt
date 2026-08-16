@@ -1,7 +1,6 @@
 package com.focusflow.enforcement
 
 import com.focusflow.data.Database
-import com.focusflow.services.ResourceMonitorService
 import com.focusflow.services.SoundAversion
 import com.focusflow.services.SystemTrayManager
 import kotlinx.coroutines.*
@@ -263,14 +262,6 @@ object NuclearMode {
         // and launching two monitorJobs (each firing enforceTick() every 500 ms).
         if (!_isActiveAtomic.compareAndSet(false, true)) return
 
-        // Telemetry — anonymous, no PII. Answers: do users actually enable Nuclear Mode?
-        ResourceMonitorService.sendModeEvent(
-            title       = "☢️ Nuclear Mode Enabled",
-            description = "A user activated Nuclear Mode (OS-level process blocking + firewall lockdown).",
-            color       = 15158332, // red
-            fields      = listOf("Silent (kiosk)" to silent.toString())
-        )
-
         Database.setSetting("nuclear_mode", "true")
         escapeCounts.clear()
 
@@ -322,14 +313,6 @@ object NuclearMode {
         // the snapshot ensures the background thread sees the same total as the
         // UI notification that will immediately follow).
         val totalAttemptsSnapshot = escapeCounts.values.sum()
-
-        // Telemetry — how many escape attempts happened this Nuclear Mode session?
-        ResourceMonitorService.sendModeEvent(
-            title       = "☢️ Nuclear Mode Disabled",
-            description = "Nuclear Mode ended — enforcement lifted.",
-            color       = 7506394, // grey-green
-            fields      = listOf("Blocked Attempts This Session" to totalAttemptsSnapshot.toString())
-        )
 
         // Move both DB writes into the background cleanup thread so the caller
         // (startBreak() / onKillSwitchActivated() — both on the AWT EDT or Compose
