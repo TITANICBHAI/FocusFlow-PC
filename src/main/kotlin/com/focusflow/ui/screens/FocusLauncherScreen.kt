@@ -99,21 +99,24 @@ fun FocusLauncherScreen() {
         isLoading = false
     }
 
-    LaunchedEffect(searchQuery) {
+    LaunchedEffect(searchQuery, availableApps) {
         if (searchQuery.isBlank()) {
             searchResults = emptyList()
             return@LaunchedEffect
         }
         val q = searchQuery.trim().lowercase()
+        val availableProcessNames = availableApps
+            .asSequence()
+            .map { it.processName.lowercase() }
+            .toSet()
         searchResults = withContext(Dispatchers.IO) {
             InstalledAppsScanner.getCuratedApps()
                 .filter {
                     it.displayName.lowercase().contains(q) ||
                     it.processName.lowercase().contains(q)
                 }
-                .filter { result ->
-                    availableApps.none { it.processName.equals(result.processName, ignoreCase = true) }
-                }
+                .filter { it.processName.lowercase() !in availableProcessNames }
+                .distinctBy { it.processName.lowercase() }
                 .take(10)
                 .map { FocusLauncherApp(it.processName, it.displayName, it.exePath) }
         }
@@ -283,9 +286,10 @@ fun FocusLauncherScreen() {
                 }
             }
         } else {
-            // Use composite key (processName + index) to guard against duplicate processName
-            // entries that would cause an IllegalStateException in Compose's keyed LazyColumn.
-            itemsIndexed(availableApps, key = { i, it -> "${it.processName}_$i" }) { _, app ->
+            // Namespaces are required because searchResults is rendered in this
+            // same LazyColumn below. Process name is the app identity; the
+            // section prefix prevents cross-section collisions.
+            items(availableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
                 val key      = app.processName.lowercase()
                 val checked  = key in selectedApps
                 AppSelectRow(
@@ -324,7 +328,7 @@ fun FocusLauncherScreen() {
         }
 
         if (searchResults.isNotEmpty()) {
-            itemsIndexed(searchResults, key = { i, it -> "${it.processName}_$i" }) { _, app ->
+            items(searchResults, key = { "search:${it.processName.lowercase()}" }) { app ->
                 val key     = app.processName.lowercase()
                 val added   = availableApps.any { it.processName.equals(app.processName, ignoreCase = true) }
                 val checked = key in selectedApps

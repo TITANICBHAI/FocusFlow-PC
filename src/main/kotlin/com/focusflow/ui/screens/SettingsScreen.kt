@@ -26,6 +26,7 @@ import com.focusflow.data.Database
 import com.focusflow.data.models.BlockRule
 import com.focusflow.data.models.BlockSchedule
 import com.focusflow.data.models.DailyAllowance
+import com.focusflow.data.models.hasValidTimeRange
 import com.focusflow.enforcement.*
 import com.focusflow.i18n.AppLanguage
 import com.focusflow.i18n.LocalizationManager
@@ -821,6 +822,7 @@ fun SettingsScreen() {
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         blockSchedules.forEach { sched ->
+                            val validTimeRange = sched.hasValidTimeRange()
                             Row(
                                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Surface3).padding(10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -838,12 +840,25 @@ fun SettingsScreen() {
                                     }
                                     val days = listOf("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
                                     val dayStr = sched.daysOfWeek.mapNotNull { days.getOrNull(it - 1) }.joinToString(", ")
-                                    Text("$dayStr  %02d:%02d–%02d:%02d".format(sched.startHour, sched.startMinute, sched.endHour, sched.endMinute), style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                                    Text(
+                                        "$dayStr  %02d:%02d–%02d:%02d%s".format(
+                                            sched.startHour, sched.startMinute,
+                                            sched.endHour, sched.endMinute,
+                                            if (validTimeRange) "" else " · Invalid time"
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (validTimeRange) OnSurface2 else Error
+                                    )
                                     if (sched.processNames.isNotEmpty()) Text("${sched.processNames.size} ${strings.settingsAppsCount}", style = MaterialTheme.typography.bodySmall, color = Purple60)
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Switch(
                                         checked = sched.enabled,
+                                        // Invalid legacy schedules remain recoverable:
+                                        // an enabled one can be turned off, but a
+                                        // disabled one cannot be enabled until its
+                                        // time values are repaired.
+                                        enabled = sched.enabled || validTimeRange,
                                         onCheckedChange = { enabled ->
                                             scope.launch {
                                                 withContext(Dispatchers.IO) {
@@ -1716,6 +1731,7 @@ private fun AddScheduleDialog(onDismiss: () -> Unit, onSave: (BlockSchedule) -> 
     var endMinute    by remember { mutableStateOf("0") }
     var selectedDays by remember { mutableStateOf(setOf(1,2,3,4,5)) }
     var processNames by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf(false) }
     val strings      = LocalizationManager.strings
 
     val dayLabels = listOf("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
@@ -1726,7 +1742,7 @@ private fun AddScheduleDialog(onDismiss: () -> Unit, onSave: (BlockSchedule) -> 
         title = { Text(LocalizationManager.strings.settingsAddBlockSchedule, color = OnSurface) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.width(460.dp).heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(LocalizationManager.strings.settingsScheduleName) }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
+                OutlinedTextField(value = name, onValueChange = { name = it; validationError = false }, label = { Text(LocalizationManager.strings.settingsScheduleName) }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
                 Text(LocalizationManager.strings.settingsDaysOfWeek, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     dayLabels.forEachIndexed { i, label ->
@@ -1735,20 +1751,53 @@ private fun AddScheduleDialog(onDismiss: () -> Unit, onSave: (BlockSchedule) -> 
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = startHour,   onValueChange = { startHour   = it.filter { c -> c.isDigit() }.take(2) }, label = { Text(LocalizationManager.strings.settingsStartHr) },  modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
-                    OutlinedTextField(value = startMinute, onValueChange = { startMinute = it.filter { c -> c.isDigit() }.take(2) }, label = { Text(LocalizationManager.strings.settingsStartMin) }, modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
-                    OutlinedTextField(value = endHour,     onValueChange = { endHour     = it.filter { c -> c.isDigit() }.take(2) }, label = { Text(LocalizationManager.strings.settingsEndHr) },    modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
-                    OutlinedTextField(value = endMinute,   onValueChange = { endMinute   = it.filter { c -> c.isDigit() }.take(2) }, label = { Text(LocalizationManager.strings.settingsEndMin) },   modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
+                    OutlinedTextField(value = startHour,   onValueChange = { startHour   = it.filter { c -> c.isDigit() }.take(2); validationError = false }, label = { Text(LocalizationManager.strings.settingsStartHr) },  modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
+                    OutlinedTextField(value = startMinute, onValueChange = { startMinute = it.filter { c -> c.isDigit() }.take(2); validationError = false }, label = { Text(LocalizationManager.strings.settingsStartMin) }, modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
+                    OutlinedTextField(value = endHour,     onValueChange = { endHour     = it.filter { c -> c.isDigit() }.take(2); validationError = false }, label = { Text(LocalizationManager.strings.settingsEndHr) },    modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
+                    OutlinedTextField(value = endMinute,   onValueChange = { endMinute   = it.filter { c -> c.isDigit() }.take(2); validationError = false }, label = { Text(LocalizationManager.strings.settingsEndMin) },   modifier = Modifier.weight(1f), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
                 }
                 OutlinedTextField(value = processNames, onValueChange = { processNames = it }, label = { Text(LocalizationManager.strings.settingsProcessesCsv) }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2), singleLine = true)
                 Text(strings.settingsLeaveProcessesBlank, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                if (validationError) {
+                    Text(
+                        "Use hours 0–23 and minutes 0–59. End time may be 24:00.",
+                        color = Error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         },
         confirmButton = {
             Button(onClick = {
-                if (name.isBlank() || selectedDays.isEmpty()) return@Button
-                val procs = processNames.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                onSave(BlockSchedule(id = UUID.randomUUID().toString(), name = name.trim(), daysOfWeek = selectedDays.toList().sorted(), startHour = startHour.toIntOrNull()?.coerceIn(0,23) ?: 9, startMinute = startMinute.toIntOrNull()?.coerceIn(0,59) ?: 0, endHour = endHour.toIntOrNull()?.coerceIn(0,23) ?: 17, endMinute = endMinute.toIntOrNull()?.coerceIn(0,59) ?: 0, processNames = procs))
+                val startHourValue = startHour.toIntOrNull()
+                val startMinuteValue = startMinute.toIntOrNull()
+                val endHourValue = endHour.toIntOrNull()
+                val endMinuteValue = endMinute.toIntOrNull()
+                val schedule = if (
+                    startHourValue != null && startMinuteValue != null &&
+                    endHourValue != null && endMinuteValue != null
+                ) {
+                    BlockSchedule(
+                        id = UUID.randomUUID().toString(),
+                        name = name.trim(),
+                        daysOfWeek = selectedDays.toList().sorted(),
+                        startHour = startHourValue,
+                        startMinute = startMinuteValue,
+                        endHour = endHourValue,
+                        endMinute = endMinuteValue,
+                        processNames = processNames.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    )
+                } else null
+
+                if (schedule != null &&
+                    schedule.name.isNotBlank() &&
+                    schedule.daysOfWeek.isNotEmpty() &&
+                    schedule.hasValidTimeRange()
+                ) {
+                    onSave(schedule)
+                } else {
+                    validationError = true
+                }
             }, colors = ButtonDefaults.buttonColors(containerColor = Purple80)) { Text(LocalizationManager.strings.btnAdd) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(LocalizationManager.strings.btnCancel, color = OnSurface2) } }

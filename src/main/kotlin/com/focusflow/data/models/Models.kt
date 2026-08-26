@@ -2,7 +2,6 @@ package com.focusflow.data.models
 
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
 
 data class Task(
     val id: String,
@@ -57,6 +56,52 @@ data class BlockSchedule(
     val enabled: Boolean = true,
     val processNames: List<String> = emptyList()
 )
+
+/**
+ * Block schedules use an integer representation so that 24:00 can be stored as
+ * an explicit end-of-day value. LocalTime cannot represent 24:00.
+ */
+fun BlockSchedule.hasValidTimeRange(): Boolean =
+    startHour in 0..23 &&
+    startMinute in 0..59 &&
+    endHour in 0..24 &&
+    endMinute in 0..59 &&
+    (endHour != 24 || endMinute == 0)
+
+/**
+ * Returns whether this schedule is active at [now].
+ *
+ * The calculation is kept with the model so the enforcement service and UI
+ * cannot accidentally implement different rules for overnight schedules or
+ * the special 24:00 end-of-day value.
+ */
+fun BlockSchedule.isActiveAt(now: LocalDateTime): Boolean {
+    if (!enabled || !hasValidTimeRange()) return false
+
+    val currentMinutes = now.hour * 60 + now.minute
+    val startMinutes = startHour * 60 + startMinute
+    val endMinutes = if (endHour == 24) 24 * 60 else endHour * 60 + endMinute
+    val today = now.dayOfWeek.value
+
+    // 24:00 is the end of the named day, not midnight at the start of it.
+    if (endMinutes == 24 * 60) {
+        return today in daysOfWeek && currentMinutes >= startMinutes
+    }
+
+    if (endMinutes > startMinutes) {
+        return today in daysOfWeek &&
+            currentMinutes >= startMinutes &&
+            currentMinutes < endMinutes
+    }
+
+    // Equal start/end is an empty window (the 00:00–24:00 full-day case was
+    // handled above). A start later than the end crosses midnight.
+    if (endMinutes == startMinutes) return false
+
+    val previousDay = if (today == 1) 7 else today - 1
+    return (today in daysOfWeek && currentMinutes >= startMinutes) ||
+        (previousDay in daysOfWeek && currentMinutes < endMinutes)
+}
 
 data class DailyAllowance(
     val processName: String,

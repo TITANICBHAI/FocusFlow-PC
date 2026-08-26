@@ -31,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Composable
 fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
@@ -82,7 +83,7 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
     }
 
     val scrollState = rememberScrollState()
-    val now = java.time.LocalTime.now()
+    val now = LocalDateTime.now()
 
     Box(modifier = Modifier.fillMaxSize().background(Surface)) {
         Column(
@@ -160,12 +161,7 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
 
             // Block schedules
             val activeSchedules = schedules.filter { s ->
-                s.enabled && run {
-                    val day = java.time.LocalDate.now().dayOfWeek.value
-                    s.daysOfWeek.contains(day) &&
-                    now >= java.time.LocalTime.of(s.startHour, s.startMinute) &&
-                    now < java.time.LocalTime.of(s.endHour, s.endMinute)
-                }
+                s.isActiveAt(now)
             }
             StatusCard(
                 icon   = Icons.Default.Schedule,

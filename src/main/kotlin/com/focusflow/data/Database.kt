@@ -737,6 +737,15 @@ object Database {
     }
 
     @Synchronized fun upsertBlockSchedule(s: BlockSchedule) {
+        // Keep legacy invalid rows readable so they can be disabled or deleted,
+        // but never allow an enabled schedule with an unrepresentable time to
+        // be written back to the database.
+        if (s.enabled) {
+            require(s.hasValidTimeRange()) {
+                "Enabled block schedule has invalid time: " +
+                    "${s.startHour}:${s.startMinute}–${s.endHour}:${s.endMinute}"
+            }
+        }
         connection.prepareStatement("""
             INSERT OR REPLACE INTO block_schedules
             (id, name, days_of_week, start_hour, start_minute, end_hour, end_minute, enabled, process_names)

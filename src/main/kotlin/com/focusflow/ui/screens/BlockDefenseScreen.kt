@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import com.focusflow.data.Database
 import com.focusflow.data.models.BlockRule
 import com.focusflow.data.models.BlockSchedule
+import com.focusflow.data.models.hasValidTimeRange
+import com.focusflow.data.models.isActiveAt
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BlockScheduleService
@@ -31,6 +33,7 @@ import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDateTime
 
 @Composable
 fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker: () -> Unit = {}) {
@@ -215,14 +218,10 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 Text(strings.defNoSchedules, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val now = java.time.LocalTime.now()
+                    val now = LocalDateTime.now()
                     blockSchedules.forEach { sched ->
-                        val activeNow = sched.enabled && run {
-                            val day = java.time.LocalDate.now().dayOfWeek.value
-                            sched.daysOfWeek.contains(day) &&
-                            now >= java.time.LocalTime.of(sched.startHour, sched.startMinute) &&
-                            now < java.time.LocalTime.of(sched.endHour, sched.endMinute)
-                        }
+                        val validTimeRange = sched.hasValidTimeRange()
+                        val activeNow = sched.isActiveAt(now)
                         Row(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                                 .background(if (activeNow) Warning.copy(alpha = 0.1f) else Surface3)
@@ -235,8 +234,13 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                                 val days = listOf("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
                                 val dayStr = sched.daysOfWeek.mapNotNull { days.getOrNull(it-1) }.joinToString(", ")
                                 Text(
-                                    "$dayStr  %02d:%02d–%02d:%02d".format(sched.startHour, sched.startMinute, sched.endHour, sched.endMinute),
-                                    color = OnSurface2, style = MaterialTheme.typography.bodySmall
+                                    "$dayStr  %02d:%02d–%02d:%02d%s".format(
+                                        sched.startHour, sched.startMinute,
+                                        sched.endHour, sched.endMinute,
+                                        if (validTimeRange) "" else " · Invalid time"
+                                    ),
+                                    color = if (validTimeRange) OnSurface2 else Error,
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
                             if (activeNow) {
@@ -393,6 +397,7 @@ private fun AddScheduleDialogBD(onDismiss: () -> Unit, onSave: (BlockSchedule) -
     var startM   by remember { mutableStateOf("0") }
     var endH     by remember { mutableStateOf("17") }
     var endM     by remember { mutableStateOf("0") }
+    var validationError by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -401,7 +406,7 @@ private fun AddScheduleDialogBD(onDismiss: () -> Unit, onSave: (BlockSchedule) -
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
-                    value = name, onValueChange = { name = it },
+                    value = name, onValueChange = { name = it; validationError = false },
                     label = { Text(strings.defScheduleName) },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2)
@@ -419,35 +424,58 @@ private fun AddScheduleDialogBD(onDismiss: () -> Unit, onSave: (BlockSchedule) -
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = startH, onValueChange = { startH = it.filter(Char::isDigit).take(2) },
+                    OutlinedTextField(value = startH, onValueChange = { startH = it.filter(Char::isDigit).take(2); validationError = false },
                         label = { Text(strings.defStartH) }, modifier = Modifier.weight(1f), singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                    OutlinedTextField(value = startM, onValueChange = { startM = it.filter(Char::isDigit).take(2) },
+                    OutlinedTextField(value = startM, onValueChange = { startM = it.filter(Char::isDigit).take(2); validationError = false },
                         label = { Text(strings.defStartM) }, modifier = Modifier.weight(1f), singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                    OutlinedTextField(value = endH, onValueChange = { endH = it.filter(Char::isDigit).take(2) },
+                    OutlinedTextField(value = endH, onValueChange = { endH = it.filter(Char::isDigit).take(2); validationError = false },
                         label = { Text(strings.defEndH) }, modifier = Modifier.weight(1f), singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                    OutlinedTextField(value = endM, onValueChange = { endM = it.filter(Char::isDigit).take(2) },
+                    OutlinedTextField(value = endM, onValueChange = { endM = it.filter(Char::isDigit).take(2); validationError = false },
                         label = { Text(strings.defEndM) }, modifier = Modifier.weight(1f), singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
+                }
+                if (validationError) {
+                    Text(
+                        "Use hours 0–23 and minutes 0–59. End time may be 24:00.",
+                        color = Error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank() && selected.isNotEmpty()) {
+                    val startHourValue = startH.toIntOrNull()
+                    val startMinuteValue = startM.toIntOrNull()
+                    val endHourValue = endH.toIntOrNull()
+                    val endMinuteValue = endM.toIntOrNull()
+                    val valid = name.isNotBlank() &&
+                        selected.isNotEmpty() &&
+                        startHourValue != null && startMinuteValue != null &&
+                        endHourValue != null && endMinuteValue != null &&
+                        startHourValue in 0..23 &&
+                        startMinuteValue in 0..59 &&
+                        endHourValue in 0..24 &&
+                        endMinuteValue in 0..59 &&
+                        (endHourValue != 24 || endMinuteValue == 0)
+
+                    if (valid) {
                         onSave(BlockSchedule(
                             id          = java.util.UUID.randomUUID().toString(),
                             name        = name,
                             daysOfWeek  = selected.map { days.indexOf(it) + 1 }.sorted(),
-                            startHour   = startH.toIntOrNull() ?: 9,
-                            startMinute = startM.toIntOrNull() ?: 0,
-                            endHour     = endH.toIntOrNull() ?: 17,
-                            endMinute   = endM.toIntOrNull() ?: 0,
+                            startHour   = startHourValue!!,
+                            startMinute = startMinuteValue!!,
+                            endHour     = endHourValue!!,
+                            endMinute   = endMinuteValue!!,
                             enabled     = true
                         ))
+                    } else {
+                        validationError = true
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Purple80)

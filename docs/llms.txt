@@ -24,7 +24,7 @@ FocusFlow is a free Windows 10/11 desktop productivity application that enforces
 - **Crash-Safe Design:** Taskbar restored via 4 independent safety layers even if the app crashes.
 
 ## Privacy
-FocusFlow collects zero personal data. All data is stored locally in a SQLite database at %USERPROFILE%\.focusflow\focusflow.db. No account required. No internet required. No analytics. No data ever leaves the device.
+FocusFlow is local-first and collects no personal data. Tasks, notes, habits, and session history are stored locally in a SQLite database at %USERPROFILE%\.focusflow\focusflow.db. No account is required and internet access is not needed for normal use. If the user enables anonymous diagnostics, a limited crash or critical-error report may be sent after an error; it contains technical exception details only, not user-created content, usernames, file paths, or other personal information. There is no analytics or usage tracking.
 
 ## Tech Stack
 - Language: Kotlin 1.9.22

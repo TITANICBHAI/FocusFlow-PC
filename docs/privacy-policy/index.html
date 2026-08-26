@@ -76,7 +76,7 @@
   </div>
 
   <div class="highlight">
-    Short version: FocusFlow does not collect personal data. All your tasks, notes, habits, and session history stay locally on your PC. No account needed. The only data that can leave your device is an anonymous crash report if the app crashes (exception type, stack trace, OS/app version only), and only when enabled through the "Send anonymous diagnostics" toggle in Settings → Privacy. Crash reports do not include task names, note contents, usernames, file paths, or any other personal information.
+    Short version: FocusFlow is local-first. Your tasks, notes, habits, and session history stay locally on your PC. No account is needed, and the app does not require internet access for normal use. If "Send anonymous diagnostics" is enabled in Settings → Privacy, the only data that can leave your device is a limited anonymous crash or critical-error report (exception details, stack trace, OS/app version, and a non-identifying fingerprint). Reports do not include task names, note contents, usernames, file paths, or any other personal information.
   </div>
 
   <h2>Local-only storage</h2>
@@ -94,7 +94,7 @@
   <p>None of this data is transmitted to or stored on any FocusFlow-operated or TBTechs-operated server. It never leaves your device except as described in the "Anonymous diagnostics" section below.</p>
 
   <h2>No account system or backend</h2>
-  <p>FocusFlow does not require a user account, email address, or any form of registration. There is no FocusFlow backend service, cloud sync, or remote database. The app operates entirely offline and locally on your device.</p>
+  <p>FocusFlow does not require a user account, email address, or any form of registration. There is no FocusFlow backend service, cloud sync, or remote database. The app operates locally on your device; internet access is used only if you enable anonymous diagnostics and a report needs to be delivered.</p>
 
   <h2>Windows system access used</h2>
   <ul>
@@ -110,7 +110,7 @@
   </ul>
 
   <h2>Anonymous diagnostics</h2>
-  <p>FocusFlow may send two types of anonymous diagnostic data to the developer via a private Discord webhook. Both are controlled by the single "Send anonymous diagnostics" toggle in <strong>Settings → Privacy</strong>, which is <strong>on by default</strong> and can be disabled at any time.</p>
+  <p>FocusFlow may send anonymous diagnostic data to the developer via a private Discord webhook. This is controlled by the single "Send anonymous diagnostics" toggle in <strong>Settings → Privacy</strong>, which is <strong>on by default</strong> and can be disabled at any time. Diagnostics are sent only for an unhandled crash or a critical error that cannot be safely recovered from; they are not collected during normal use.</p>
 
   <h2>1 · Crash reports</h2>
   <p>If FocusFlow encounters an unhandled crash, it automatically sends a single anonymous crash report. This happens only on crash — never during normal use. The report contains:</p>
