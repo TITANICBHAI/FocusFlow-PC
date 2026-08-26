@@ -185,6 +185,7 @@ object ProcessMonitor {
         "setpoint.exe", "khalmnpr.exe",  // SetPoint (legacy MX mice + keyboards)
         "lghub.exe", "lghub_agent.exe", "lghub_updater.exe", // Logitech G HUB (gaming peripherals)
         "logioptions.exe",               // Logitech Options (productivity mice/keyboards)
+        "logioptionsplus.exe",           // Logitech Options+ (newer productivity mice)
         "logooptionsplus.exe",           // Logitech Options+ (newer productivity mice)
         "lcore.exe",                     // Logitech Setpoint legacy core
 
@@ -205,6 +206,7 @@ object ProcessMonitor {
 
         // ── ASUS ROG Armoury Crate ────────────────────────────────────────────
         "armourycrate.exe",        // ASUS ROG Armoury Crate (keyboard lighting, macro keys)
+        "armourycrate.service.exe",// Armoury Crate service process
         "armourcrate.service.exe", // Armoury Crate service process
         "lightingservice.exe",     // ASUS/ROG lighting service
 
@@ -524,7 +526,7 @@ object ProcessMonitor {
                             //   2. taskkill /F /PID  — backup for processes running at higher integrity
                             //      (e.g. launched via "Run as administrator") that JVM cannot destroy
                             try { ph.destroyForcibly() } catch (_: Exception) {}
-                            killProcessByPid(ph.pid())
+                            killProcessByPid(ph.pid(), exeName)
                         }
                     }
                 }
@@ -572,20 +574,21 @@ object ProcessMonitor {
         if (launcherAllowed.isNotEmpty()) {
             // When the UWP frame host is foreground, resolve the actual hosted
             // child process and check it against the launcher allowlist.
-            val launcherResolved = if (lower == uwpFrameHost || lower in systemFrameProcesses) {
-                resolveDisallowedUwpProcess(launcherAllowed) ?: return
+            val launcherTarget = if (lower == uwpFrameHost) {
+                resolveDisallowedUwpProcess(launcherAllowed, pid) ?: return
             } else {
-                processName
+                ProcessTarget(processName, pid)
             }
+            val launcherResolved = launcherTarget.name
             val launcherResolvedLower = launcherResolved.lowercase()
             if (launcherResolvedLower !in launcherSafeProcesses && launcherResolvedLower !in launcherAllowed) {
                 if (tryAcquireCooldown("launcher:$launcherResolvedLower", now)) {
                     // Two-layer kill (same logic as launcherSweep):
                     //   1. destroyForcibly() via PID — instant, zero subprocess overhead
                     //   2. taskkill /F /PID or /IM — handles elevated processes JVM cannot reach
-                    if (pid > 0L) {
-                        try { ProcessHandle.of(pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
-                        killProcessByPid(pid)
+                    if (launcherTarget.pid > 0L) {
+                        try { ProcessHandle.of(launcherTarget.pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
+                        killProcessByPid(launcherTarget.pid, launcherResolved)
                     } else {
                         killProcessByName(launcherResolved)
                     }
@@ -596,17 +599,22 @@ object ProcessMonitor {
         }
 
         // ── UWP frame host resolution (normal block mode) ─────────────────────
-        val resolvedName = if (lower == uwpFrameHost || lower in systemFrameProcesses) {
-            resolveUwpHostedProcess(blocked) ?: return
+        val target = if (lower == uwpFrameHost) {
+            // Never kill ApplicationFrameHost itself. It can host multiple UWP
+            // windows, so only a child process that can be tied to this host PID
+            // is a safe target.
+            resolveUwpHostedProcess(blocked, pid) ?: return
         } else {
-            processName
+            ProcessTarget(processName, pid)
         }
+        val resolvedName = target.name
+        val resolvedPid = target.pid
         val resolvedLower = resolvedName.lowercase()
 
         // ── 0. VPN process blocking ───────────────────────────────────────────
         if (VpnBlocker.isVpnProcess(resolvedLower)) {
             if (tryAcquireCooldown("vpn:$resolvedLower", now)) {
-                enforceBlock(resolvedName, pid, visibleForegroundWindow)
+                enforceBlock(resolvedName, resolvedPid, visibleForegroundWindow)
             }
             return
         }
@@ -614,7 +622,7 @@ object ProcessMonitor {
         // ── 1. Process-name blocking ──────────────────────────────────────────
         if (blocked.any { resolvedLower == it.lowercase() }) {
             if (tryAcquireCooldown(resolvedLower, now)) {
-                enforceBlock(resolvedName, pid, visibleForegroundWindow)
+                enforceBlock(resolvedName, resolvedPid, visibleForegroundWindow)
             }
             return
         }
@@ -653,7 +661,11 @@ object ProcessMonitor {
         if (!tryAcquireCooldown("kw:$resolvedLower", now)) return
 
         // Kill by PID when available — closes only the specific browser window.
-        if (pid > 0L) killProcessByPid(pid) else killProcessByName(resolvedName)
+        if (resolvedPid > 0L) {
+            killProcessByPid(resolvedPid, resolvedName)
+        } else {
+            killProcessByName(resolvedName)
+        }
         SoundAversion.playBlockAlert()
 
         val displayName = resolvedName.removeSuffix(".exe").replaceFirstChar { it.uppercase() }
@@ -684,19 +696,30 @@ object ProcessMonitor {
         if (sessionActive) addAll(sessionExtraBlockedProcesses)
     }
 
-    private fun resolveUwpHostedProcess(blocked: Set<String>): String? {
+    private data class ProcessTarget(val name: String, val pid: Long)
+
+    private fun resolveUwpHostedProcess(blocked: Set<String>, hostPid: Long): ProcessTarget? {
         return try {
-            if (blocked.isEmpty()) return null
+            if (blocked.isEmpty() || hostPid <= 0L) return null
             ProcessHandle.allProcesses()
-                .flatMap { ph -> ph.info().command().stream() }
-                .map { cmd ->
-                    cmd.substringAfterLast('\\')
+                .filter { ph ->
+                    ph.isAlive &&
+                        ph.pid() != ProcessHandle.current().pid() &&
+                        ph.parent().orElse(null)?.pid() == hostPid
+                }
+                .toList()
+                .mapNotNull { ph ->
+                    val command = ph.info().command().orElse(null) ?: return@mapNotNull null
+                    val name = command.substringAfterLast('\\')
                         .substringAfterLast('/')
                         .lowercase()
+                    if (blocked.any { b -> name == b.lowercase() }) {
+                        ProcessTarget(name, ph.pid())
+                    } else {
+                        null
+                    }
                 }
-                .filter { exe -> blocked.any { b -> exe == b.lowercase() } }
-                .findFirst()
-                .orElse(null)
+                .firstOrNull()
         } catch (_: Exception) { null }
     }
 
@@ -709,20 +732,28 @@ object ProcessMonitor {
      * work, but in pure launcher mode the regular block list is empty. This
      * variant scans ALL running processes and returns one that should be killed.
      */
-    private fun resolveDisallowedUwpProcess(allowed: Set<String>): String? {
+    private fun resolveDisallowedUwpProcess(allowed: Set<String>, hostPid: Long): ProcessTarget? {
         return try {
-            val ownPid = ProcessHandle.current().pid()
+            if (hostPid <= 0L) return null
             ProcessHandle.allProcesses()
-                .filter { ph -> ph.isAlive && ph.pid() != ownPid }
-                .flatMap { ph -> ph.info().command().stream() }
-                .map { cmd ->
-                    cmd.substringAfterLast('\\')
+                .filter { ph ->
+                    ph.isAlive &&
+                        ph.pid() != ProcessHandle.current().pid() &&
+                        ph.parent().orElse(null)?.pid() == hostPid
+                }
+                .toList()
+                .mapNotNull { ph ->
+                    val command = ph.info().command().orElse(null) ?: return@mapNotNull null
+                    val name = command.substringAfterLast('\\')
                         .substringAfterLast('/')
                         .lowercase()
+                    if (name !in launcherSafeProcesses && name !in allowed) {
+                        ProcessTarget(name, ph.pid())
+                    } else {
+                        null
+                    }
                 }
-                .filter { exe -> exe !in launcherSafeProcesses && exe !in allowed }
-                .findFirst()
-                .orElse(null)
+                .firstOrNull()
         } catch (_: Exception) { null }
     }
 
@@ -735,7 +766,11 @@ object ProcessMonitor {
         pid: Long = 0L,
         showOverlay: Boolean = false
     ) {
-        if (pid > 0L) killProcessByPid(pid) else killProcessByName(processName)
+        if (pid > 0L) {
+            killProcessByPid(pid, processName)
+        } else {
+            killProcessByName(processName)
+        }
         SoundAversion.playBlockAlert()
 
         val displayName = processName.removeSuffix(".exe").replaceFirstChar { it.uppercase() }

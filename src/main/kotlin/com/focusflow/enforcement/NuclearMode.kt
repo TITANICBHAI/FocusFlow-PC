@@ -7,6 +7,7 @@ import kotlinx.coroutines.*
 import java.awt.TrayIcon
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import com.focusflow.enforcement.killProcessesByName
 
 /**
  * NuclearMode — three-layer escape-route enforcement
@@ -104,6 +105,13 @@ object NuclearMode {
 
     // Reference to the background firewall-cleanup thread so awaitCleanup() can join it.
     @Volatile private var cleanupThread: Thread? = null
+    // Serialises firewall apply/remove operations. Without this, a rapid
+    // disable() -> enable() can let the old cleanup remove rules after the
+    // new enable has applied them.
+    private val firewallLock = Any()
+    // Keeps cleanup-thread handoff atomic with the active-state transition.
+    // Otherwise enable() can miss a cleanup thread created by disable().
+    private val lifecycleLock = Any()
 
     // ── Layer 1: Detect ─────────────────────────────────────────────────────
 
@@ -188,20 +196,10 @@ object NuclearMode {
     private fun killAndLog(found: Set<String>) {
         if (found.isEmpty()) return
 
-        // Batch kill: one process spawn for all targets
-        if (isWindows) {
-            val args = mutableListOf("taskkill", "/F")
-            found.forEach { exe -> args += "/IM"; args += exe }
-            try {
-                val p = ProcessBuilder(args)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .redirectError(ProcessBuilder.Redirect.DISCARD)
-                    .start()
-                // fire-and-forget — no waitFor() needed, but close stdin immediately
-                // so we don't leak the write-end of the pipe on every 500 ms tick.
-                runCatching { p.outputStream.close() }
-            } catch (_: Exception) {}
-        }
+        // Batch kill: one process spawn for all targets. The helper waits for
+        // taskkill briefly so this path has the same reliable completion and
+        // child-process cleanup guarantees as normal enforcement.
+        killProcessesByName(found)
 
         // Tally and periodically persist escape attempts
         found.forEach { exe ->
@@ -273,10 +271,16 @@ object NuclearMode {
         // could race with applyFirewallLock() and remove the rules we're about to add,
         // leaving nuclear mode with zero firewall coverage. Joining inside the IO
         // coroutine preserves this guarantee without touching the EDT.
-        val pendingCleanup = cleanupThread.also { cleanupThread = null }
+        val pendingCleanup = synchronized(lifecycleLock) {
+            cleanupThread.also { cleanupThread = null }
+        }
         scope.launch(Dispatchers.IO) {
             pendingCleanup?.join(3_000)   // join — interrupt won't help netsh waitFor() blocks
-            applyFirewallLock()
+            synchronized(firewallLock) {
+                // disable() may have won the race while the previous cleanup was
+                // finishing. Never apply rules for a mode that is no longer active.
+                if (_isActiveAtomic.get()) applyFirewallLock()
+            }
         }
 
         monitorJob = scope.launch {
@@ -304,30 +308,34 @@ object NuclearMode {
      *               show confusing "Nuclear Mode OFF / Normal operation resumed" popups.
      */
     fun disable(silent: Boolean = false) {
-        _isActiveAtomic.set(false)
-        monitorJob?.cancel()
-        monitorJob = null
+        synchronized(lifecycleLock) {
+            _isActiveAtomic.set(false)
+            monitorJob?.cancel()
+            monitorJob = null
 
-        // Snapshot escape counts before handing off to the background thread
-        // (ConcurrentHashMap.values.sum() is safe without synchronisation, but
-        // the snapshot ensures the background thread sees the same total as the
-        // UI notification that will immediately follow).
-        val totalAttemptsSnapshot = escapeCounts.values.sum()
+            // Snapshot escape counts before handing off to the background thread
+            // (ConcurrentHashMap.values.sum() is safe without synchronisation, but
+            // the snapshot ensures the background thread sees the same total as the
+            // UI notification that will immediately follow).
+            val totalAttemptsSnapshot = escapeCounts.values.sum()
 
-        // Move both DB writes into the background cleanup thread so the caller
-        // (startBreak() / onKillSwitchActivated() — both on the AWT EDT or Compose
-        // UI thread) is never blocked waiting for the DB lock.
-        // awaitCleanup() joins this thread before JVM exit, so persistence is safe
-        // even when disable() is called from the shutdown sequence.
-        val t = Thread({
-            Database.setSetting("nuclear_mode", "false")
-            removeFirewallLock()
-            if (totalAttemptsSnapshot > 0) {
-                Database.setSetting("nuclear_last_session_attempts", totalAttemptsSnapshot.toString())
-            }
-        }, "FocusFlow-FwCleanup")
-        cleanupThread = t
-        t.start()
+            // Move both DB writes into the background cleanup thread so the caller
+            // (startBreak() / onKillSwitchActivated() — both on the AWT EDT or Compose
+            // UI thread) is never blocked waiting for the DB lock.
+            // awaitCleanup() joins this thread before JVM exit, so persistence is safe
+            // even when disable() is called from the shutdown sequence.
+            val t = Thread({
+                synchronized(firewallLock) {
+                    Database.setSetting("nuclear_mode", "false")
+                    removeFirewallLock()
+                    if (totalAttemptsSnapshot > 0) {
+                        Database.setSetting("nuclear_last_session_attempts", totalAttemptsSnapshot.toString())
+                    }
+                }
+            }, "FocusFlow-FwCleanup")
+            cleanupThread = t
+            t.start()
+        }
 
         if (!silent) {
             SystemTrayManager.updateTooltip("FocusFlow — Ready")

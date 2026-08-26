@@ -26,7 +26,8 @@ object FloatingBlockOverlay {
         set(v) { field = v.coerceIn(2, 15) }
 
     @Volatile private var appNameText: String = ""
-    @Volatile private var messageText: String  = "Stay focused. You've got this."
+    @Volatile var overlayMessage: String = "Stay focused. You've got this."
+        set(v) { field = v.take(120) }
 
     private var window: javax.swing.JWindow? = null
     private val scope            = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -41,16 +42,17 @@ object FloatingBlockOverlay {
     // ── Android promo tracking ───────────────────────────────────────────────
     // After the 3rd blocked attempt within a 30-day window, paint a small
     // "Also on Android" nudge at the bottom of the overlay.
-    @Volatile private var blockAttemptsSinceReset: Int = 0
+    private var blockAttemptsSinceReset: Int = 0
     @Volatile private var showAndroidPromo: Boolean    = false
+    private val promoLock = Any()
     private const val PROMO_THRESHOLD = 3
 
     // ── Public API ──────────────────────────────────────────────────────────
 
-    fun show(appName: String, message: String = messageText) {
+    fun show(appName: String, message: String = overlayMessage) {
         if (!isWindows) return
         appNameText = appName
-        messageText = message
+        overlayMessage = message
 
         // Increment block attempt counter and update promo flag (DB-backed 30-day reset).
         scope.launch { updateBlockPromo() }
@@ -72,23 +74,25 @@ object FloatingBlockOverlay {
     }
 
     private fun updateBlockPromo() {
-        val today = java.time.LocalDate.now()
-        val resetDateStr = com.focusflow.data.Database.getSetting("block_promo_reset_date")
-        val daysSinceReset: Long = if (resetDateStr != null) {
-            try {
-                java.time.temporal.ChronoUnit.DAYS.between(
-                    java.time.LocalDate.parse(resetDateStr),
-                    today
-                )
-            } catch (_: Exception) { 31L }
-        } else 31L
+        synchronized(promoLock) {
+            val today = java.time.LocalDate.now()
+            val resetDateStr = com.focusflow.data.Database.getSetting("block_promo_reset_date")
+            val daysSinceReset: Long = if (resetDateStr != null) {
+                try {
+                    java.time.temporal.ChronoUnit.DAYS.between(
+                        java.time.LocalDate.parse(resetDateStr),
+                        today
+                    )
+                } catch (_: Exception) { 31L }
+            } else 31L
 
-        if (daysSinceReset >= 30) {
-            blockAttemptsSinceReset = 0
-            com.focusflow.data.Database.setSetting("block_promo_reset_date", today.toString())
+            if (daysSinceReset >= 30) {
+                blockAttemptsSinceReset = 0
+                com.focusflow.data.Database.setSetting("block_promo_reset_date", today.toString())
+            }
+            blockAttemptsSinceReset++
+            showAndroidPromo = blockAttemptsSinceReset >= PROMO_THRESHOLD
         }
-        blockAttemptsSinceReset++
-        showAndroidPromo = blockAttemptsSinceReset >= PROMO_THRESHOLD
     }
 
     fun hide() {
@@ -201,7 +205,7 @@ object FloatingBlockOverlay {
                     // ── Motivational message ───────────────────────────────
                     g2.color = colSub
                     g2.font = bestFont("Segoe UI", java.awt.Font.PLAIN, 20, java.awt.Font.PLAIN, 20)
-                    val msg = overlay.messageText.take(120)
+                    val msg = overlay.overlayMessage
                     val fmS = g2.fontMetrics
                     g2.drawString(msg, cx - fmS.stringWidth(msg) / 2, cy + 20)
 

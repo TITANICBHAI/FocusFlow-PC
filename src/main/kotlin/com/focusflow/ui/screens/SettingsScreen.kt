@@ -130,6 +130,7 @@ fun SettingsScreen() {
             pinSet          = pinIsSet
             SoundAversion.volumeMultiplier      = soundVolume
             FloatingBlockOverlay.dismissSeconds = overlayDismissSecs
+            FloatingBlockOverlay.overlayMessage  = overlayMessage
             AppBlocker.overlayEnabled           = overlayEnabled
             hookActive      = WinEventHook.isActive
             nuclearActive   = NuclearMode.isActive
@@ -690,6 +691,7 @@ fun SettingsScreen() {
                     value = overlayMessage,
                     onValueChange = { msg ->
                         overlayMessage = msg
+                        FloatingBlockOverlay.overlayMessage = msg
                         scope.launch {
                             withContext(Dispatchers.IO) { Database.setSetting("overlay_message", msg) }
                         }

@@ -7,6 +7,7 @@ import com.sun.jna.platform.win32.WinDef.HWND
 import com.sun.jna.platform.win32.WinNT.HANDLE
 import com.sun.jna.win32.StdCallLibrary
 import com.sun.jna.win32.W32APIOptions
+import java.util.concurrent.TimeUnit
 
 /**
  * WinApiBindings
@@ -110,15 +111,13 @@ fun getForegroundProcessName(): String? {
  * On other platforms: uses ProcessHandle (cross-platform JVM 9+), skipping own PID.
  */
 fun killProcessByName(processName: String): Boolean {
+    val targetName = processName.substringAfterLast("\\").substringAfterLast("/")
+    if (targetName.isBlank() || targetName.equals(currentProcessName(), ignoreCase = true)) {
+        return false
+    }
+
     if (isWindows) {
-        // Fire-and-forget: don't block the enforcement coroutine waiting for taskkill
-        // to exit. The kill signal is sent immediately; the process terminates asynchronously.
-        return try {
-            ProcessBuilder("taskkill", "/F", "/IM", processName)
-                .redirectErrorStream(true)
-                .start()   // intentionally no waitFor()
-            true
-        } catch (_: Exception) { false }
+        return runTaskkill(listOf("taskkill", "/F", "/IM", targetName))
     }
 
     // Non-Windows fallback: ProcessHandle (cross-platform)
@@ -126,8 +125,8 @@ fun killProcessByName(processName: String): Boolean {
     var killed = false
     ProcessHandle.allProcesses().filter { ph ->
         ph.pid() != ownPid && ph.info().command().orElse("").let { cmd ->
-            cmd.substringAfterLast("\\").substringAfterLast("/")
-                .equals(processName, ignoreCase = true)
+             cmd.substringAfterLast("\\").substringAfterLast("/")
+                 .equals(targetName, ignoreCase = true)
         }
     }.forEach { ph ->
         try {
@@ -139,6 +138,28 @@ fun killProcessByName(processName: String): Boolean {
 }
 
 /**
+ * Kill several process images in one Windows command.
+ *
+ * This is used by Nuclear Mode to keep its single-scan/single-kill design while
+ * still waiting for taskkill to finish and reaping the child process cleanly.
+ */
+fun killProcessesByName(processNames: Collection<String>): Boolean {
+    val targets = processNames
+        .map { it.substringAfterLast("\\").substringAfterLast("/") }
+        .filter { it.isNotBlank() && !it.equals(currentProcessName(), ignoreCase = true) }
+        .distinct()
+    if (targets.isEmpty()) return false
+
+    if (isWindows) {
+        val args = mutableListOf("taskkill", "/F")
+        targets.forEach { args += "/IM"; args += it }
+        return runTaskkill(args)
+    }
+
+    return targets.any { killProcessByName(it) }
+}
+
+/**
  * Kill a specific process by PID. More targeted than killProcessByName —
  * only terminates the one window/tab group associated with this PID rather
  * than every instance of the browser.
@@ -146,21 +167,57 @@ fun killProcessByName(processName: String): Boolean {
  * On Windows: taskkill /F /PID <pid>
  * On other platforms: ProcessHandle.destroyForcibly()
  */
-fun killProcessByPid(pid: Long): Boolean {
+fun killProcessByPid(pid: Long, expectedProcessName: String? = null): Boolean {
     if (pid <= 0L) return false
+    val process = ProcessHandle.of(pid).orElse(null) ?: return false
+    if (!process.isAlive || pid == ProcessHandle.current().pid()) return false
+
+    val actualName = process.info().command().orElse(null)
+        ?.substringAfterLast("\\")
+        ?.substringAfterLast("/")
+    if (expectedProcessName != null &&
+        (actualName == null || !actualName.equals(expectedProcessName, ignoreCase = true))
+    ) {
+        return false
+    }
+
     if (isWindows) {
-        // Fire-and-forget — same as killProcessByName; no waitFor() so the
-        // enforcement coroutine is not blocked while taskkill exits.
-        return try {
-            ProcessBuilder("taskkill", "/F", "/PID", pid.toString())
-                .redirectErrorStream(true).start()   // intentionally no waitFor()
-            true
-        } catch (_: Exception) { false }
+        return runTaskkill(listOf("taskkill", "/F", "/PID", pid.toString()))
     }
     return try {
-        ProcessHandle.of(pid).orElse(null)?.destroyForcibly() != null
+        process.destroyForcibly()
     } catch (_: Exception) { false }
 }
+
+/**
+ * Execute taskkill without leaving child processes and pipe handles behind.
+ *
+ * The caller is always an enforcement background thread. Waiting briefly gives
+ * callers an honest success value and lets the OS finish the kill before the
+ * next enforcement action is logged or retried.
+ */
+private fun runTaskkill(args: List<String>): Boolean {
+    return try {
+        val process = ProcessBuilder(args)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        process.outputStream.close()
+        if (!process.waitFor(2, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            false
+        } else {
+            process.exitValue() == 0
+        }
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private fun currentProcessName(): String? =
+    ProcessHandle.current().info().command().orElse(null)
+        ?.substringAfterLast("\\")
+        ?.substringAfterLast("/")
 
 /**
  * Get both the process name and PID for the currently active foreground window.

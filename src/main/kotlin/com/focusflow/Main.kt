@@ -12,6 +12,7 @@ import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.RegistryLockdown
 import com.focusflow.enforcement.WatchdogInstaller
+import com.focusflow.enforcement.FloatingBlockOverlay
 import com.focusflow.services.*
 import com.focusflow.services.FocusLauncherService
 
@@ -47,6 +48,8 @@ fun main() = application {
     SoundAversion.isEnabled          = Database.getSetting("sound_aversion") != "false"
     FocusSessionService.pomodoroMode = Database.getSetting("pomodoro_mode") == "true"
     AppBlocker.overlayEnabled        = Database.getSetting("block_overlay_enabled") != "false"
+    FloatingBlockOverlay.overlayMessage =
+        Database.getSetting("overlay_message") ?: "Stay focused. You've got this."
 
     ProcessMonitor.start()
 
