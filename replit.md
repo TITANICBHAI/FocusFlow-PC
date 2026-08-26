@@ -1,4 +1,4 @@
-# FocusFlow JVM — by TBTechs
+# FocusFlow PC — by TBTechs
 
 A real-enforcement productivity & focus app for Windows, built with Kotlin + Compose Multiplatform Desktop.
 
@@ -140,7 +140,7 @@ GitHub Actions at `.github/workflows/build-windows.yml`:
 - Builds EXE + MSI (Gradle `packageExe`/`packageMsi`) + MSIX (`makeappx.exe`)
 - All 3 Partner Center identity fields are verified before `makeappx` runs
 - Auto-creates a GitHub Release on every push to `main`
-- Watch CI: https://github.com/TITANICBHAI/FocusFlow-jvm/actions
+- Watch CI: https://github.com/TITANICBHAI/FocusFlow-PC/actions
 
 ## Pushing to GitHub
 

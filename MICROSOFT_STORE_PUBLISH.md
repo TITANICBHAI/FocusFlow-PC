@@ -207,7 +207,7 @@ No data leaves the device. No telemetry, analytics, accounts, or network calls a
 
 Privacy Policy: https://focusflowpc.pages.dev/privacy-policy/
 Terms of Service: https://focusflowpc.pages.dev/terms-of-service/
-Source code: https://github.com/TITANICBHAI/FocusFlow-jvm
+Source code: https://github.com/TITANICBHAI/FocusFlow-PC
 ```
 
 ---
@@ -242,9 +242,9 @@ See [`store_descriptions/INDEX.md`](store_descriptions/INDEX.md) for step-by-ste
 | Age rating | PEGI 3 / ESRB Everyone |
 | Pricing | Free |
 | Supported languages | English (en-US), Spanish (es-ES), Chinese Simplified (zh-CN), Japanese (ja-JP), Korean (ko-KR), German (de-DE), French (fr-FR) |
-| Privacy Policy URL | `https://titanicbhai.github.io/FocusFlow-jvm/privacy-policy/` |
-| Website | `https://titanicbhai.github.io/FocusFlow-jvm/` |
-| Support contact | `https://github.com/TITANICBHAI/FocusFlow-jvm/issues` |
+| Privacy Policy URL | `https://titanicbhai.github.io/FocusFlow-PC/privacy-policy/` |
+| Website | `https://titanicbhai.github.io/FocusFlow-PC/` |
+| Support contact | `https://github.com/TITANICBHAI/FocusFlow-PC/issues` |
 
 ### Keywords (search terms field)
 ```
@@ -346,5 +346,5 @@ To publish an update:
 - [Certification requirements](https://docs.microsoft.com/en-us/windows/uwp/publish/the-app-certification-process)
 - [runFullTrust capability](https://docs.microsoft.com/en-us/windows/uwp/packaging/app-capability-declarations)
 - [Compose Desktop packaging](https://github.com/JetBrains/compose-multiplatform/blob/master/tutorials/Native_distributions_and_local_execution/README.md)
-- [FocusFlow GitHub](https://github.com/TITANICBHAI/FocusFlow-jvm)
-- [FocusFlow CI](https://github.com/TITANICBHAI/FocusFlow-jvm/actions)
+- [FocusFlow GitHub](https://github.com/TITANICBHAI/FocusFlow-PC)
+- [FocusFlow CI](https://github.com/TITANICBHAI/FocusFlow-PC/actions)

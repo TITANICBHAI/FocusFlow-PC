@@ -14,7 +14,7 @@
 | Version | `1.0.6` |
 | Developer / Publisher | `TBTechs` |
 | Website | `https://tbtechs.app` *(update if different)* |
-| GitHub Releases | `https://github.com/TITANICBHAI/FocusFlow-jvm/releases` |
+| GitHub Releases | `https://github.com/TITANICBHAI/FocusFlow-PC/releases` |
 | License | See `LICENSE` in repo |
 | Platform | Windows 10 / 11 (x64) |
 | Binary | `.exe` installer or `.msi` — built via `gradle packageExe` / `gradle packageMsi` |
@@ -32,7 +32,7 @@ This is your canonical download source. Every other platform will point here.
    gradle packageExe
    # Output: build/compose/binaries/main/exe/FocusFlow-1.0.6.exe
    ```
-2. Go to `https://github.com/TITANICBHAI/FocusFlow-jvm/releases/new`
+2. Go to `https://github.com/TITANICBHAI/FocusFlow-PC/releases/new`
 3. Tag: `v1.0.6`
 4. Release title: `FocusFlow v1.0.6 — Deep Focus & App Blocker`
 5. Upload: `FocusFlow-1.0.6.exe` and `FocusFlow-1.0.6.msi`
@@ -96,7 +96,7 @@ InstallModes:
   - silent
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/TITANICBHAI/FocusFlow-jvm/releases/download/v1.0.6/FocusFlow-1.0.6.exe
+    InstallerUrl: https://github.com/TITANICBHAI/FocusFlow-PC/releases/download/v1.0.6/FocusFlow-1.0.6.exe
     InstallerSha256: <SHA256_OF_EXE>   # run: certutil -hashfile FocusFlow-1.0.6.exe SHA256
     InstallerSwitches:
       Silent: /S
@@ -113,7 +113,7 @@ PackageLocale: en-US
 Publisher: TBTechs
 PublisherUrl: https://tbtechs.app
 PackageName: FocusFlow — Deep Focus & App Blocker
-PackageUrl: https://github.com/TITANICBHAI/FocusFlow-jvm
+PackageUrl: https://github.com/TITANICBHAI/FocusFlow-PC
 License: See LICENSE
 ShortDescription: Block distracting apps and lock your desktop with real Windows enforcement. No soft timers, no workarounds.
 Description: >
@@ -162,8 +162,8 @@ Popular Windows package manager used by developers and IT admins — `choco inst
     <version>1.0.6</version>
     <title>FocusFlow — Deep Focus &amp; App Blocker</title>
     <authors>TBTechs</authors>
-    <projectUrl>https://github.com/TITANICBHAI/FocusFlow-jvm</projectUrl>
-    <licenseUrl>https://github.com/TITANICBHAI/FocusFlow-jvm/blob/main/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/TITANICBHAI/FocusFlow-PC</projectUrl>
+    <licenseUrl>https://github.com/TITANICBHAI/FocusFlow-PC/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <tags>productivity focus blocker pomodoro windows</tags>
     <summary>Hard-enforcement focus app for Windows. Real Win32 blocking — no soft timers.</summary>
@@ -182,7 +182,7 @@ app allowances, weekly reports, PIN-gated breaks, and Sound Aversion mode.
 $ErrorActionPreference = 'Stop'
 $packageName = 'focusflow'
 $installerType = 'exe'
-$url64 = 'https://github.com/TITANICBHAI/FocusFlow-jvm/releases/download/v1.0.6/FocusFlow-1.0.6.exe'
+$url64 = 'https://github.com/TITANICBHAI/FocusFlow-PC/releases/download/v1.0.6/FocusFlow-1.0.6.exe'
 $checksum64 = '<SHA256_OF_EXE>'
 $checksumType64 = 'sha256'
 $silentArgs = '/S'
@@ -212,11 +212,11 @@ Lightweight, developer-friendly package manager — `scoop install focusflow`. N
 {
   "version": "1.0.6",
   "description": "Hard-enforcement focus & app blocker for Windows. Real Win32 blocking.",
-  "homepage": "https://github.com/TITANICBHAI/FocusFlow-jvm",
+  "homepage": "https://github.com/TITANICBHAI/FocusFlow-PC",
   "license": "See LICENSE",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/TITANICBHAI/FocusFlow-jvm/releases/download/v1.0.6/FocusFlow-1.0.6.exe",
+      "url": "https://github.com/TITANICBHAI/FocusFlow-PC/releases/download/v1.0.6/FocusFlow-1.0.6.exe",
       "hash": "<SHA256_OF_EXE>"
     }
   },
@@ -224,12 +224,12 @@ Lightweight, developer-friendly package manager — `scoop install focusflow`. N
     "script": "Start-Process -FilePath \"$dir\\FocusFlow-1.0.6.exe\" -ArgumentList '/S' -Wait"
   },
   "checkver": {
-    "github": "https://github.com/TITANICBHAI/FocusFlow-jvm"
+    "github": "https://github.com/TITANICBHAI/FocusFlow-PC"
   },
   "autoupdate": {
     "architecture": {
       "64bit": {
-        "url": "https://github.com/TITANICBHAI/FocusFlow-jvm/releases/download/v$version/FocusFlow-$version.exe"
+        "url": "https://github.com/TITANICBHAI/FocusFlow-PC/releases/download/v$version/FocusFlow-$version.exe"
       }
     }
   }
@@ -317,7 +317,7 @@ Discoverable by people searching for alternatives to Cold Turkey, Freedom, Rescu
 | Field | Value |
 |---|---|
 | Name | `FocusFlow` |
-| URL | `https://github.com/TITANICBHAI/FocusFlow-jvm` |
+| URL | `https://github.com/TITANICBHAI/FocusFlow-PC` |
 | License | *(your license)* |
 | Platform | `Windows` |
 | Category | `Productivity` |

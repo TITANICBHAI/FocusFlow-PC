@@ -36,7 +36,7 @@ Or grab the APK: https://github.com/TITANICBHAI/FocusFlow/releases"""
 
 private val SHARE_MESSAGE_REDDIT = """Been using **FocusFlow** to block distracting apps on PC and Android — it's free, open-source, and has no paywalls.
 
-- PC (Windows): https://github.com/TITANICBHAI/FocusFlow-jvm
+- PC (Windows): https://github.com/TITANICBHAI/FocusFlow-PC
 - Android: https://appgallery.huawei.com/app/C117761461 or APK at https://github.com/TITANICBHAI/FocusFlow/releases
 
 Works great for deep work sessions."""

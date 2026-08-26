@@ -315,7 +315,7 @@ internal val CHANGELOG = listOf(
         badge      = "INITIAL",
         badgeColor = OnSurface2,
         changes    = listOf(
-            "NEW"  to "Initial release of FocusFlow JVM desktop app",
+            "NEW"  to "Initial release of FocusFlow PC desktop app",
             "NEW"  to "Dashboard, Tasks, Focus, Stats screens",
             "NEW"  to "Profile & Settings screens",
             "NEW"  to "Privacy & Permissions screen",
@@ -356,7 +356,7 @@ fun ChangelogScreen() {
                 Icon(Icons.Default.History, contentDescription = null, tint = Purple80, modifier = Modifier.size(28.dp))
                 Text("Changelog", style = MaterialTheme.typography.headlineLarge, color = OnSurface)
             }
-            Text("What's new in FocusFlow JVM by TBTechs", style = MaterialTheme.typography.bodyMedium, color = OnSurface2)
+            Text("What's new in FocusFlow PC by TBTechs", style = MaterialTheme.typography.bodyMedium, color = OnSurface2)
 
             CHANGELOG.forEach { entry ->
                 Column(

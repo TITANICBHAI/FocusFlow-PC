@@ -1,4 +1,4 @@
-# FocusFlow JVM — Build Tracker
+# FocusFlow PC — Build Tracker
 
 > Last updated: May 2026 · Version 1.0.6
 
@@ -13,7 +13,7 @@ A real-enforcement productivity & focus app for Windows, built with Kotlin + Com
 ## Architecture
 
 ```
-focusflow-jvm/
+focusflow-pc/
 ├── build.gradle.kts                   Gradle build (Compose Desktop + JNA + SQLite)
 ├── settings.gradle.kts
 ├── gradle/wrapper/                    Gradle wrapper (8.14.2)
@@ -217,8 +217,8 @@ focusflow-jvm/
 - [x] Triple-field manifest verification before `makeappx` runs in CI
 - [x] Store logo generation (CI PowerShell — all required sizes)
 - [x] `runFullTrust` capability declared
-- [x] Privacy Policy hosted: https://titanicbhai.github.io/FocusFlow-jvm/privacy-policy/
-- [x] Terms of Service hosted: https://titanicbhai.github.io/FocusFlow-jvm/terms-of-service/
+- [x] Privacy Policy hosted: https://titanicbhai.github.io/FocusFlow-PC/privacy-policy/
+- [x] Terms of Service hosted: https://titanicbhai.github.io/FocusFlow-PC/terms-of-service/
 - [x] Store listing copy written (short + long description + notes to certification)
 
 ### Website & Docs
@@ -251,6 +251,6 @@ gradle createDistributable
 
 ## GitHub
 
-- **Repo**: https://github.com/TITANICBHAI/FocusFlow-jvm
-- **CI**: https://github.com/TITANICBHAI/FocusFlow-jvm/actions
-- **Website**: https://titanicbhai.github.io/FocusFlow-jvm/
+- **Repo**: https://github.com/TITANICBHAI/FocusFlow-PC
+- **CI**: https://github.com/TITANICBHAI/FocusFlow-PC/actions
+- **Website**: https://titanicbhai.github.io/FocusFlow-PC/

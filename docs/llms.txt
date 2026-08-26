@@ -40,11 +40,11 @@ English, Spanish (Español), French (Français), German (Deutsch), Japanese (日
 
 ## Downloads
 - Microsoft Store: https://apps.microsoft.com/detail/9NJN9FPRQ7T1
-- Direct EXE: https://github.com/TITANICBHAI/FocusFlow-jvm/releases
+- Direct EXE: https://github.com/TITANICBHAI/FocusFlow-PC/releases
 - Android version: https://focusflowapp.pages.dev
 
 ## Source Code
-https://github.com/TITANICBHAI/FocusFlow-jvm
+https://github.com/TITANICBHAI/FocusFlow-PC
 
 ## Website Pages
 - Home (EN): https://focusflowpc.pages.dev/

@@ -44,7 +44,7 @@ Fill in every field as follows:
 | Field | Value |
 |---|---|
 | **Software name** | `FocusFlow` |
-| **Official website** | `https://github.com/TITANICBHAI/FocusFlow-jvm` |
+| **Official website** | `https://github.com/TITANICBHAI/FocusFlow-PC` |
 | **License** | *(match your LICENSE file — MIT / Proprietary / etc.)* |
 | **Platforms** | `Windows` |
 | **Categories** | `Productivity`, `Security & Privacy` |

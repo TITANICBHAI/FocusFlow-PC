@@ -17,7 +17,7 @@ if [ -z "$GITHUB_PERSONAL_ACCESS_TOKEN" ]; then
   exit 1
 fi
 
-REPO="https://${GITHUB_PERSONAL_ACCESS_TOKEN}@github.com/TITANICBHAI/FocusFlow-jvm.git"
+REPO="https://${GITHUB_PERSONAL_ACCESS_TOKEN}@github.com/TITANICBHAI/FocusFlow-PC.git"
 
 # Stage and commit any pending changes
 export GIT_AUTHOR_NAME="FocusFlow Bot"
@@ -51,6 +51,6 @@ else
   echo "Nothing to commit — working tree clean."
 fi
 
-echo "Pushing HEAD → github.com/TITANICBHAI/FocusFlow-jvm (main)..."
+echo "Pushing HEAD → github.com/TITANICBHAI/FocusFlow-PC (main)..."
 git push "$REPO" HEAD:main
-echo "Done. Watch CI at: https://github.com/TITANICBHAI/FocusFlow-jvm/actions"
+echo "Done. Watch CI at: https://github.com/TITANICBHAI/FocusFlow-PC/actions"

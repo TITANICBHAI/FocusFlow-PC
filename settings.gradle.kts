@@ -1,3 +1,3 @@
-rootProject.name = "focusflow-jvm"
+rootProject.name = "focusflow-pc"
 
 include("recovery")

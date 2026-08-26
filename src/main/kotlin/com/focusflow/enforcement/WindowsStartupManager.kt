@@ -8,7 +8,7 @@ import java.io.File
  * WindowsStartupManager
  *
  * Adds / removes a HKCU\Software\Microsoft\Windows\CurrentVersion\Run registry
- * entry so FocusFlow JVM launches automatically on Windows login.
+ * entry so FocusFlow PC launches automatically on Windows login.
  *
  * Uses JNA Advapi32Util for registry access — no admin rights required for HKCU.
  */

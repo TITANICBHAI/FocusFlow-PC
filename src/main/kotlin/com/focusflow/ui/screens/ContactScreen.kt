@@ -147,8 +147,8 @@ fun ContactScreen() {
                     ContactRow(
                         icon     = Icons.Default.BugReport,
                         label    = "Report a Bug on GitHub",
-                        sublabel = "github.com/TITANICBHAI/FocusFlow-jvm/issues",
-                        onClick  = { openUrl("https://github.com/TITANICBHAI/FocusFlow-jvm/issues/new") }
+                        sublabel = "github.com/TITANICBHAI/FocusFlow-PC/issues",
+                        onClick  = { openUrl("https://github.com/TITANICBHAI/FocusFlow-PC/issues/new") }
                     )
                     ContactRow(
                         icon     = Icons.Default.Star,

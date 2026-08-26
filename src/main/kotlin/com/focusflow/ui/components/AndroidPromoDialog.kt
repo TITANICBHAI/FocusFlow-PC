@@ -344,7 +344,7 @@ fun ReviewPromptDialog(onDismiss: () -> Unit) {
                 }
 
                 OutlinedButton(
-                    onClick  = { openUrl("https://github.com/TITANICBHAI/FocusFlow-jvm"); onDismiss() },
+                    onClick  = { openUrl("https://github.com/TITANICBHAI/FocusFlow-PC"); onDismiss() },
                     modifier = Modifier.fillMaxWidth(),
                     shape    = RoundedCornerShape(12.dp),
                     colors   = ButtonDefaults.outlinedButtonColors(contentColor = OnSurface2)
