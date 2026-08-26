@@ -2114,15 +2114,15 @@ Text(
 
 Line 39 contains a hardcoded share text string:
 ```
-- PC (Windows): https://github.com/TITANICBHAI/FocusFlow
+- PC (Windows): https://github.com/TITANICBHAI/FocusFlow-jvm
 ```
 
 Make it OS-conditional so Linux users see a relevant label:
 ```kotlin
 val downloadLine = if (isWindows)
-    "- PC (Windows): https://github.com/TITANICBHAI/FocusFlow"
+    "- PC (Windows): https://github.com/TITANICBHAI/FocusFlow-jvm"
 else
-    "- PC (Linux): https://github.com/TITANICBHAI/FocusFlow"
+    "- PC (Linux): https://github.com/TITANICBHAI/FocusFlow-jvm"
 
 // Use `downloadLine` in place of the hardcoded string
 ```
