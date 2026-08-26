@@ -39,6 +39,7 @@ import com.focusflow.services.NuclearPin
 import com.focusflow.services.SessionPin
 import com.focusflow.ui.components.NuclearPinGateDialog
 import com.focusflow.ui.components.NuclearPinSetupDialog
+import com.focusflow.ui.components.PinGateDialog
 import com.focusflow.services.SoundAversion
 import com.focusflow.services.TaskAlarmService
 import com.focusflow.ui.theme.*
@@ -63,6 +64,7 @@ fun SettingsScreen() {
     var soundVolume        by remember { mutableStateOf(1.0f) }
     var overlayMessage     by remember { mutableStateOf("Stay focused. You've got this.") }
     var overlayDismissSecs by remember { mutableStateOf(4) }
+    var overlayEnabled     by remember { mutableStateOf(true) }
     var pinSet               by remember { mutableStateOf(false) }
     var showAddRule          by remember { mutableStateOf(false) }
     var showPinDialog        by remember { mutableStateOf(false) }
@@ -79,6 +81,7 @@ fun SettingsScreen() {
     // Global PIN state
     var globalPinSet          by remember { mutableStateOf(false) }
     var showGlobalPinDialog   by remember { mutableStateOf(false) }
+    var showOverlayPinGate    by remember { mutableStateOf(false) }
     // Session PIN change dialog
     var showChangePinDialog   by remember { mutableStateOf(false) }
 
@@ -111,6 +114,7 @@ fun SettingsScreen() {
             val crashRep    = withContext(Dispatchers.IO) { Database.getSetting("crash_reports_enabled") != "false" }
             val vol         = withContext(Dispatchers.IO) { Database.getSetting("sound_volume")?.toFloatOrNull() ?: 1.0f }
             val ods         = withContext(Dispatchers.IO) { Database.getSetting("overlay_dismiss_seconds")?.toIntOrNull() ?: 4 }
+            val showOverlay = withContext(Dispatchers.IO) { Database.getSetting("block_overlay_enabled") != "false" }
             val nPinSet     = withContext(Dispatchers.IO) { NuclearPin.isSet() }
             val gPinSet     = withContext(Dispatchers.IO) { GlobalPin.isSet() }
             blockRules      = rules
@@ -122,9 +126,11 @@ fun SettingsScreen() {
             soundVolume     = vol.coerceIn(0f, 1f)
             overlayMessage  = overlay
             overlayDismissSecs = ods.coerceIn(2, 15)
+            overlayEnabled  = showOverlay
             pinSet          = pinIsSet
             SoundAversion.volumeMultiplier      = soundVolume
             FloatingBlockOverlay.dismissSeconds = overlayDismissSecs
+            AppBlocker.overlayEnabled           = overlayEnabled
             hookActive      = WinEventHook.isActive
             nuclearActive   = NuclearMode.isActive
             nuclearPinSet   = nPinSet
@@ -143,6 +149,17 @@ fun SettingsScreen() {
     }
 
     LaunchedEffect(Unit) { reload() }
+
+    fun setOverlayEnabled(enabled: Boolean) {
+        overlayEnabled = enabled
+        AppBlocker.overlayEnabled = enabled
+        if (!enabled) AppBlocker.hideOverlay()
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                Database.setSetting("block_overlay_enabled", enabled.toString())
+            }
+        }
+    }
 
     val settingsListState = rememberLazyListState()
     Box(modifier = Modifier.fillMaxSize()) {
@@ -650,6 +667,23 @@ fun SettingsScreen() {
         // ── Block Overlay ─────────────────────────────────────────────────────
         item {
             SectionCard(title = strings.settingsBlockOverlay) {
+                SettingRow(
+                    label = "Show block overlay",
+                    subtitle = "Show the full-screen and in-app overlay when a blocked window is detected",
+                    trailing = {
+                        Switch(
+                            checked = overlayEnabled,
+                            onCheckedChange = { enabled ->
+                                if (!enabled && globalPinSet) {
+                                    showOverlayPinGate = true
+                                } else {
+                                    setOverlayEnabled(enabled)
+                                }
+                            }
+                        )
+                    }
+                )
+                HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 8.dp))
                 Text(strings.settingsOverlayMessageDesc, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -1217,6 +1251,19 @@ fun SettingsScreen() {
             pinAlreadySet = globalPinSet,
             onDismiss     = { showGlobalPinDialog = false },
             onChanged     = { showGlobalPinDialog = false; reload() }
+        )
+    }
+
+    if (showOverlayPinGate) {
+        PinGateDialog(
+            title    = "Disable block overlay",
+            subtitle = "Enter your Global PIN to hide block overlays. Process blocking will remain active.",
+            allowReset = false,
+            onSuccess = {
+                showOverlayPinGate = false
+                setOverlayEnabled(false)
+            },
+            onDismiss = { showOverlayPinGate = false }
         )
     }
 

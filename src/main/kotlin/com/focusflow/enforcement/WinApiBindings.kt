@@ -30,6 +30,8 @@ interface User32Extra : StdCallLibrary {
     fun GetWindowThreadProcessId(hWnd: HWND, lpdwProcessId: IntArray): Int
     fun GetWindowTextW(hWnd: HWND, lpString: CharArray, nMaxCount: Int): Int
     fun GetWindowTextLengthW(hWnd: HWND): Int
+    fun IsWindowVisible(hWnd: HWND): Boolean
+    fun IsIconic(hWnd: HWND): Boolean
 
     /** Find a top-level window by class name or window title. Returns null if not found. */
     fun FindWindowW(lpClassName: String?, lpWindowName: String?): HWND?
@@ -179,6 +181,29 @@ fun getForegroundProcessNameAndPid(): Pair<String, Long>? {
             ?: return null
         Pair(name, pid)
     } catch (_: Exception) { null }
+}
+
+/**
+ * Returns true only when the current foreground window is visible, not
+ * minimised, and belongs to [pid]. This is intentionally stricter than a
+ * process-name check: background enforcement can kill without showing an
+ * overlay, while the overlay path requires a real visible foreground window.
+ */
+fun isVisibleForegroundWindowForPid(pid: Long): Boolean {
+    if (!isWindows || pid <= 0L) return false
+    return try {
+        val user32 = User32Extra.INSTANCE
+        val hwnd = user32.GetForegroundWindow()
+        if (!user32.IsWindowVisible(hwnd) || user32.IsIconic(hwnd)) {
+            return false
+        }
+
+        val pidArr = IntArray(1)
+        if (user32.GetWindowThreadProcessId(hwnd, pidArr) == 0) return false
+        pidArr[0].toLong() == pid
+    } catch (_: Exception) {
+        false
+    }
 }
 
 /**

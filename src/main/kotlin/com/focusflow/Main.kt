@@ -46,6 +46,7 @@ fun main() = application {
     ProcessMonitor.alwaysOnEnabled   = Database.getSetting("always_on_enforcement") == "true"
     SoundAversion.isEnabled          = Database.getSetting("sound_aversion") != "false"
     FocusSessionService.pomodoroMode = Database.getSetting("pomodoro_mode") == "true"
+    AppBlocker.overlayEnabled        = Database.getSetting("block_overlay_enabled") != "false"
 
     ProcessMonitor.start()
 

@@ -53,6 +53,9 @@ object ProcessMonitor {
     /** Poll interval when WinEventHook is NOT registered (fallback mode). */
     private const val POLL_FALLBACK_MS = 750L
 
+    /** Background process sweep interval for process-name block rules. */
+    private const val BACKGROUND_SWEEP_INTERVAL_MS = 1_000L
+
     /** How often the in-memory block-rule cache is refreshed from SQLite. */
     private const val CACHE_TTL_MS = 2_000L
 
@@ -401,9 +404,19 @@ object ProcessMonitor {
     private const val LAUNCHER_SWEEP_INTERVAL_MS = 250L
 
     @Volatile private var lastLauncherSweepMs = 0L
+    @Volatile private var lastBackgroundSweepMs = 0L
 
     private suspend fun tickPoll() {
         if (!isWindows) return
+
+        // Process-name blocks are enforced independently of window visibility.
+        // This catches a blocked app that launches in the background without
+        // creating a foreground event. The sweep never shows an overlay.
+        val now = System.currentTimeMillis()
+        if (now - lastBackgroundSweepMs >= BACKGROUND_SWEEP_INTERVAL_MS) {
+            lastBackgroundSweepMs = now
+            backgroundSweep()
+        }
 
         // In launcher kiosk mode, run a periodic sweep of ALL running processes
         // in addition to the foreground check. This catches UWP apps whose window
@@ -413,15 +426,63 @@ object ProcessMonitor {
         // is not in the launcher's allowed set or the permanent safe list.
         val launcherAllowed = launcherAllowedProcesses
         if (launcherAllowed.isNotEmpty()) {
-            val now = System.currentTimeMillis()
-            if (now - lastLauncherSweepMs >= LAUNCHER_SWEEP_INTERVAL_MS) {
-                lastLauncherSweepMs = now
+            val launcherNow = System.currentTimeMillis()
+            if (launcherNow - lastLauncherSweepMs >= LAUNCHER_SWEEP_INTERVAL_MS) {
+                lastLauncherSweepMs = launcherNow
                 launcherSweep()
             }
         }
 
         val (processName, pid) = getForegroundProcessNameAndPid() ?: return
         checkProcess(processName, pid)
+    }
+
+    /**
+     * Kills selected process-name blocks even when their windows are not in the
+     * foreground. This is intentionally separate from the foreground path:
+     * background kills have no visible-window context and therefore must never
+     * show the block overlay.
+     */
+    private suspend fun backgroundSweep() {
+        val blocked = buildBlockedProcessSet()
+        if (blocked.isEmpty()) return
+
+        val ownPid = ProcessHandle.current().pid()
+        val foregroundPid = getForegroundProcessNameAndPid()?.second ?: -1L
+        val now = System.currentTimeMillis()
+        try {
+            val processes = ProcessHandle.allProcesses()
+                .filter {
+                    ph -> ph.isAlive &&
+                        ph.pid() != ownPid &&
+                        ph.pid() != foregroundPid &&
+                        ph.info().command().isPresent
+                }
+                .toList()
+
+            for (ph in processes) {
+                val exeName = ph.info().command().orElse(null)
+                    ?.substringAfterLast('\\')
+                    ?.substringAfterLast('/')
+                    ?.lowercase() ?: continue
+
+                // The foreground PID can change after the process list snapshot.
+                // Recheck it so a newly foregrounded blocked app goes through
+                // checkProcess(), which is the only path allowed to show an overlay.
+                if (exeName in blocked &&
+                    !isVisibleForegroundWindowForPid(ph.pid()) &&
+                    tryAcquireCooldown(exeName, now)
+                ) {
+                    enforceBlock(exeName, ph.pid(), showOverlay = false)
+                }
+            }
+        } catch (e: Exception) {
+            EnforcementLog.warn(
+                "ProcessMonitor",
+                "Background process sweep failed — foreground enforcement remains active",
+                e
+            )
+        }
     }
 
     /**
@@ -495,24 +556,13 @@ object ProcessMonitor {
     private suspend fun checkProcess(processName: String, pid: Long = 0L) {
         val lower = processName.lowercase()
         val now   = System.currentTimeMillis()
+        val visibleForegroundWindow = isVisibleForegroundWindowForPid(pid)
 
         // Refresh caches if stale (non-blocking if still fresh)
         refreshCaches()
 
         // ── Build blocked set once ────────────────────────────────────────────
-        val blocked = buildSet<String> {
-            if (alwaysOnEnabled || sessionActive) addAll(cachedEnabledProcesses)
-            addAll(scheduleBlockedProcesses)
-            addAll(standaloneBlockedProcesses)
-            addAll(dailyAllowanceBlockedProcesses)
-            if (sessionActive) addAll(sessionExtraBlockedProcesses)
-            // NOTE: system shells, terminals, task manager, and registry editors
-            // (cmd.exe, powershell.exe, taskmgr.exe, regedit.exe, etc.) are NOT
-            // killed here. That is exclusively Nuclear Mode's job — NuclearMode
-            // maintains its own escapeProcesses set and enforceTick() loop for
-            // those. Adding them here caused them to be killed during any normal
-            // enforcement session, which is wrong.
-        }
+        val blocked = buildBlockedProcessSet()
 
         // ── Launcher kiosk mode — inverse block (kill anything not allowed) ───
         // Resolved BEFORE the standard UWP path so that in pure launcher mode
@@ -556,7 +606,7 @@ object ProcessMonitor {
         // ── 0. VPN process blocking ───────────────────────────────────────────
         if (VpnBlocker.isVpnProcess(resolvedLower)) {
             if (tryAcquireCooldown("vpn:$resolvedLower", now)) {
-                enforceBlock(resolvedName)
+                enforceBlock(resolvedName, pid, visibleForegroundWindow)
             }
             return
         }
@@ -564,7 +614,7 @@ object ProcessMonitor {
         // ── 1. Process-name blocking ──────────────────────────────────────────
         if (blocked.any { resolvedLower == it.lowercase() }) {
             if (tryAcquireCooldown(resolvedLower, now)) {
-                enforceBlock(resolvedName, pid)
+                enforceBlock(resolvedName, pid, visibleForegroundWindow)
             }
             return
         }
@@ -614,9 +664,24 @@ object ProcessMonitor {
         _blockedAttempts.update { it + 1 }
         _lastBlockedApp.value = displayName
 
-        withContext(Dispatchers.Main) {
-            AppBlocker.showOverlay(displayName)
+        if (visibleForegroundWindow) {
+            withContext(Dispatchers.Main) {
+                AppBlocker.showOverlay(displayName)
+            }
         }
+    }
+
+    /**
+     * Builds the process-name block union used by both foreground enforcement
+     * and the background sweep. The normal escape-process exclusions remain
+     * owned by NuclearMode and are intentionally not added here.
+     */
+    private fun buildBlockedProcessSet(): Set<String> = buildSet {
+        if (alwaysOnEnabled || sessionActive) addAll(cachedEnabledProcesses)
+        addAll(scheduleBlockedProcesses)
+        addAll(standaloneBlockedProcesses)
+        addAll(dailyAllowanceBlockedProcesses)
+        if (sessionActive) addAll(sessionExtraBlockedProcesses)
     }
 
     private fun resolveUwpHostedProcess(blocked: Set<String>): String? {
@@ -665,7 +730,11 @@ object ProcessMonitor {
      * Shared kill + log + notify path for process-name block triggers.
      * Kills by PID when available (targeted), falls back to name-based kill.
      */
-    private suspend fun enforceBlock(processName: String, pid: Long = 0L) {
+    private suspend fun enforceBlock(
+        processName: String,
+        pid: Long = 0L,
+        showOverlay: Boolean = false
+    ) {
         if (pid > 0L) killProcessByPid(pid) else killProcessByName(processName)
         SoundAversion.playBlockAlert()
 
@@ -676,8 +745,10 @@ object ProcessMonitor {
         _blockedAttempts.update { it + 1 }
         _lastBlockedApp.value = displayName
 
-        withContext(Dispatchers.Main) {
-            AppBlocker.showOverlay(displayName)
+        if (showOverlay) {
+            withContext(Dispatchers.Main) {
+                AppBlocker.showOverlay(displayName)
+            }
         }
 
         val rule = cachedBlockRules.find { it.processName.equals(processName, ignoreCase = true) }

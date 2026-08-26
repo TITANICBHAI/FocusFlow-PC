@@ -21,6 +21,16 @@ object AppBlocker {
     private var overlayJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    /**
+     * Controls both overlay surfaces:
+     *  - FloatingBlockOverlay outside the main window
+     *  - BlockOverlay inside the Compose window
+     *
+     * This is deliberately independent from enforcement. A disabled overlay
+     * must never disable the process kill or temptation logging.
+     */
+    @Volatile var overlayEnabled: Boolean = true
+
     /** Called by App.kt — invoked with the blocked app name when in-app overlay should appear. */
     var onOverlayShow: ((String) -> Unit)? = null
 
@@ -37,6 +47,8 @@ object AppBlocker {
      * Safe to call from any thread.
      */
     fun showOverlay(appName: String) {
+        if (!overlayEnabled) return
+
         // Primary: standalone floating window — works regardless of FocusFlow window state
         FloatingBlockOverlay.show(appName)
 
