@@ -694,6 +694,9 @@ object ProcessMonitor {
         addAll(standaloneBlockedProcesses)
         addAll(dailyAllowanceBlockedProcesses)
         if (sessionActive) addAll(sessionExtraBlockedProcesses)
+        // VPN clients also need background enforcement. Checking only the
+        // foreground process lets VPN services/daemons keep running silently.
+        if (VpnBlocker.isEnabled) addAll(VpnBlocker.getAllBlockedProcesses())
     }
 
     private data class ProcessTarget(val name: String, val pid: Long)

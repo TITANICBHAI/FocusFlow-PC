@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.GlobalPin
+import com.focusflow.services.PinPolicy
 import com.focusflow.ui.theme.*
 
 private enum class PinSetupStep { CHOOSE, SET_CUSTOM, SHOW_GENERATED }
@@ -118,7 +119,7 @@ fun GlobalPinSetupDialog(onDismiss: () -> Unit) {
                         Text(s.pinSetupCustomBody, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
                         OutlinedTextField(
                             value         = customPin,
-                            onValueChange = { customPin = it; pinError = "" },
+                            onValueChange = { customPin = it.take(PinPolicy.MAX_LENGTH); pinError = "" },
                             label         = { Text(s.pinSetupNewPinLabel) },
                             singleLine    = true,
                             visualTransformation = if (showPin) VisualTransformation.None else PasswordVisualTransformation(),
@@ -223,7 +224,8 @@ fun GlobalPinSetupDialog(onDismiss: () -> Unit) {
                         Button(
                             onClick = {
                                 when {
-                                    customPin.length < 8    -> pinError = s.pinSetupMinChars
+                                     customPin.length < PinPolicy.MIN_LENGTH -> pinError = s.pinSetupMinChars
+                                     customPin.length > PinPolicy.MAX_LENGTH -> pinError = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters"
                                     customPin != confirmPin -> pinError = s.pinSetupNoMatch
                                     else -> { GlobalPin.set(customPin); onDismiss() }
                                 }

@@ -6,7 +6,7 @@ import java.security.MessageDigest
 /**
  * SessionPin
  *
- * SHA-256 PIN gate that must be satisfied before ending a session.
+ * SHA-256 PIN gate (8–28 characters) that must be satisfied before ending a session.
  * Every focus-mode session auto-generates a new PIN via autoGenerate().
  * The plain-text PIN is returned once (so the UI can show it) and never
  * stored — only the SHA-256 hash is persisted.
@@ -18,18 +18,19 @@ object SessionPin {
     fun isSet(): Boolean = Database.getSetting(KEY)?.isNotBlank() == true
 
     fun set(rawPin: String) {
-        require(rawPin.length >= 8) { "PIN must be at least 8 characters" }
+        require(rawPin.length in PinPolicy.MIN_LENGTH..PinPolicy.MAX_LENGTH) {
+            "PIN must be between ${PinPolicy.MIN_LENGTH} and ${PinPolicy.MAX_LENGTH} characters"
+        }
         Database.setSetting(KEY, sha256(rawPin))
     }
 
     /**
-     * Auto-generate a random 10-character alphanumeric PIN, store its hash,
+     * Auto-generate a random 20–28-character alphanumeric PIN, store its hash,
      * and return the plain-text PIN so the UI can display it exactly once.
      * Every call produces a different PIN, so every session is different.
      */
     fun autoGenerate(): String {
-        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
-        val pin = (1..10).map { chars.random() }.joinToString("")
+        val pin = PinPolicy.generate()
         Database.setSetting(KEY, sha256(pin))
         return pin
     }

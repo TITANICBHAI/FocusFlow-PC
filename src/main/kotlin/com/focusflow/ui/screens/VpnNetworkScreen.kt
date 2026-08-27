@@ -176,7 +176,9 @@ fun VpnNetworkScreen() {
 
                 // Known VPN apps collapsible
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable { expandKnownVpn = !expandKnownVpn },
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        withPin { expandKnownVpn = !expandKnownVpn }
+                    },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -249,10 +251,13 @@ fun VpnNetworkScreen() {
                             onClick = {
                                 val name = newCustomVpn.trim()
                                 if (name.isNotBlank()) {
-                                    scope.launch {
-                                        withContext(Dispatchers.IO) { VpnBlocker.addCustomProcess(name) }
-                                        newCustomVpn = ""
-                                        reload()
+                                    withPin {
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { VpnBlocker.addCustomProcess(name) }
+                                            ProcessMonitor.invalidateCaches()
+                                            newCustomVpn = ""
+                                            reload()
+                                        }
                                     }
                                 }
                             },
@@ -452,39 +457,43 @@ fun VpnNetworkScreen() {
                                 targetDisplayName = targetDisp,
                                 enabled           = true
                             )
-                            scope.launch {
-                                var hostsOk = true
-                                var firewallOk = true
-                                withContext(Dispatchers.IO) {
-                                    Database.upsertNetworkCutoffRule(rule)
-                                    // Apply immediately for domain rules
-                                    if (rule.mode == NetworkRuleMode.DOMAIN) {
-                                        if (!HostsBlocker.canWriteHostsFile()) {
-                                            hostsOk = false
-                                        } else {
-                                            val blockResult = HostsBlocker.blockDomain(pat)
-                                            when (blockResult) {
-                                                is HostsBlocker.BlockResult.Success ->
-                                                    HostsBlocker.startMonitor()
-                                                is HostsBlocker.BlockResult.VerificationFail,
-                                                is HostsBlocker.BlockResult.Error ->
-                                                    hostsOk = false
-                                                else -> {}
+                            withPin {
+                                scope.launch {
+                                    var hostsOk = true
+                                    var firewallOk = true
+                                    withContext(Dispatchers.IO) {
+                                        Database.upsertNetworkCutoffRule(rule)
+                                        // Apply immediately for domain rules.
+                                        if (rule.mode == NetworkRuleMode.DOMAIN) {
+                                            if (!HostsBlocker.canWriteHostsFile()) {
+                                                hostsOk = false
+                                            } else {
+                                                val blockResult = HostsBlocker.blockDomain(pat)
+                                                when (blockResult) {
+                                                    is HostsBlocker.BlockResult.Success,
+                                                    is HostsBlocker.BlockResult.AlreadyBlocked ->
+                                                        HostsBlocker.startMonitor()
+                                                    is HostsBlocker.BlockResult.VerificationFail,
+                                                    is HostsBlocker.BlockResult.Error ->
+                                                        hostsOk = false
+                                                    else -> {}
+                                                }
+                                            }
+                                            if (targetProc != null) {
+                                                val added = NetworkBlocker.addRule(targetProc)
+                                                if (!added) firewallOk = false
                                             }
                                         }
-                                        if (targetProc != null) {
-                                            val added = NetworkBlocker.addRule(targetProc)
-                                            if (!added) firewallOk = false
-                                        }
                                     }
+                                    ProcessMonitor.invalidateCaches()
+                                    if (!hostsOk) showAdminError("Hosts file domain blocking")
+                                    if (!firewallOk) showAdminError("Firewall rule creation")
+                                    newPattern       = ""
+                                    newTargetProcess = ""
+                                    newTargetDisplay = ""
+                                    appSpecific      = false
+                                    reload()
                                 }
-                                if (!hostsOk) showAdminError("Hosts file domain blocking")
-                                if (!firewallOk) showAdminError("Firewall rule creation")
-                                newPattern       = ""
-                                newTargetProcess = ""
-                                newTargetDisplay = ""
-                                appSpecific      = false
-                                reload()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Warning),
@@ -519,16 +528,22 @@ fun VpnNetworkScreen() {
                                         }
                                     }
                                 } else {
-                                    scope.launch {
-                                        withContext(Dispatchers.IO) {
-                                            Database.setNetworkCutoffRuleEnabled(rule.id, true)
-                                            if (rule.mode == NetworkRuleMode.DOMAIN) {
-                                                val re = HostsBlocker.blockDomain(rule.pattern)
-                                                if (re is HostsBlocker.BlockResult.Success) HostsBlocker.startMonitor()
-                                                if (rule.targetProcess != null) NetworkBlocker.addRule(rule.targetProcess)
+                                    withPin {
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) {
+                                                Database.setNetworkCutoffRuleEnabled(rule.id, true)
+                                                if (rule.mode == NetworkRuleMode.DOMAIN) {
+                                                    val re = HostsBlocker.blockDomain(rule.pattern)
+                                                    if (re is HostsBlocker.BlockResult.Success ||
+                                                        re is HostsBlocker.BlockResult.AlreadyBlocked) {
+                                                        HostsBlocker.startMonitor()
+                                                    }
+                                                    if (rule.targetProcess != null) NetworkBlocker.addRule(rule.targetProcess)
+                                                }
                                             }
+                                            ProcessMonitor.invalidateCaches()
+                                            reload()
                                         }
-                                        reload()
                                     }
                                 }
                             },
@@ -542,6 +557,7 @@ fun VpnNetworkScreen() {
                                                 if (rule.targetProcess != null) NetworkBlocker.removeRule(rule.targetProcess)
                                             }
                                         }
+                                            ProcessMonitor.invalidateCaches()
                                         reload()
                                     }
                                 }

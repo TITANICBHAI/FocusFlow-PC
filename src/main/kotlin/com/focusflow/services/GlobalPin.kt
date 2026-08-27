@@ -6,7 +6,7 @@ import java.security.MessageDigest
 /**
  * GlobalPin
  *
- * Persistent, always-active PIN gate (minimum 8 characters).
+ * Persistent, always-active PIN gate (8–28 characters).
  * Unlike SessionPin (which is session-scoped), this PIN is permanent and
  * required to REMOVE or DISABLE anything in FocusFlow.
  * Adding is always free; removing always costs the PIN.
@@ -23,17 +23,18 @@ object GlobalPin {
     fun setDeclined()         { Database.setSetting(DECLINED_KEY, "true") }
 
     fun set(rawPin: String) {
-        require(rawPin.length >= 8) { "PIN must be at least 8 characters" }
+        require(rawPin.length in PinPolicy.MIN_LENGTH..PinPolicy.MAX_LENGTH) {
+            "PIN must be between ${PinPolicy.MIN_LENGTH} and ${PinPolicy.MAX_LENGTH} characters"
+        }
         Database.setSetting(KEY, sha256(rawPin))
     }
 
     /**
-     * Auto-generate a random 10-character alphanumeric PIN, store its hash,
+     * Auto-generate a random 20–28-character alphanumeric PIN, store its hash,
      * and return the plain-text once so the UI can display it.
      */
     fun autoGenerate(): String {
-        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
-        val pin = (1..10).map { chars.random() }.joinToString("")
+        val pin = PinPolicy.generate()
         Database.setSetting(KEY, sha256(pin))
         return pin
     }

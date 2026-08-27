@@ -36,6 +36,7 @@ import com.focusflow.services.ChimeStyle
 import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.NuclearPin
+import com.focusflow.services.PinPolicy
 import com.focusflow.services.SessionPin
 import com.focusflow.ui.components.NuclearPinGateDialog
 import com.focusflow.ui.components.NuclearPinSetupDialog
@@ -76,6 +77,7 @@ fun SettingsScreen() {
     // Global PIN state
     var globalPinSet          by remember { mutableStateOf(false) }
     var showGlobalPinDialog   by remember { mutableStateOf(false) }
+    var globalPinRemovalRequested by remember { mutableStateOf(false) }
     var showOverlayPinGate    by remember { mutableStateOf(false) }
     // Session PIN change dialog
     var showChangePinDialog   by remember { mutableStateOf(false) }
@@ -168,6 +170,57 @@ fun SettingsScreen() {
         // ── Language ──────────────────────────────────────────────────────────
         item {
             LanguageSettingsSection()
+        }
+
+        // ── PIN Management ───────────────────────────────────────────────────
+        item {
+            SectionCard(title = "PIN Management") {
+                Text(
+                    "Manage the PINs that protect FocusFlow. Custom PINs are ${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} characters; generated PINs are random and 20–${PinPolicy.MAX_LENGTH} characters.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface2
+                )
+                Spacer(Modifier.height(12.dp))
+
+                PinManagementRow(
+                    name = "Session PIN",
+                    description = if (pinSet) "Required to end an active focus session"
+                                  else "No PIN — anyone can end a session",
+                    active = pinSet,
+                    onSet = { showPinDialog = true },
+                    onChange = { showChangePinDialog = true },
+                    onRemove = { showPinDialog = true }
+                )
+                HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 8.dp))
+                PinManagementRow(
+                    name = "Global PIN",
+                    description = if (globalPinSet) "Required to remove blocks, schedules, and settings"
+                                  else "Not set — removal is unrestricted",
+                    active = globalPinSet,
+                    onSet = {
+                        globalPinRemovalRequested = false
+                        showGlobalPinDialog = true
+                    },
+                    onChange = {
+                        globalPinRemovalRequested = false
+                        showGlobalPinDialog = true
+                    },
+                    onRemove = {
+                        globalPinRemovalRequested = true
+                        showGlobalPinDialog = true
+                    }
+                )
+                HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 8.dp))
+                PinManagementRow(
+                    name = "Nuclear Mode PIN",
+                    description = if (nuclearPinSet) "Required to turn Nuclear Mode off"
+                                  else "Optional: require a PIN to turn Nuclear Mode off",
+                    active = nuclearPinSet,
+                    onSet = { showNuclearPinSetup = true },
+                    onChange = { showNuclearPinSetup = true },
+                    onRemove = { showNuclearPinSetup = true }
+                )
+            }
         }
 
         // ── Enforcement ───────────────────────────────────────────────────────
@@ -616,66 +669,10 @@ fun SettingsScreen() {
             }
         }
 
-        // ── PIN Overview ──────────────────────────────────────────────────────
-        item {
-            SectionCard(title = "PIN Management") {
-                Text(
-                    "All PINs are one-way encrypted (SHA-256). Once set, the value cannot be viewed — only verified or replaced.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurface2
-                )
-                Spacer(Modifier.height(12.dp))
-                listOf(
-                    Triple("Session PIN",      pinSet,       "Guards ending a focus session early"),
-                    Triple("Global PIN",       globalPinSet, "Guards removing blocks and settings"),
-                    Triple("Nuclear Mode PIN", nuclearPinSet,"Guards turning Nuclear Mode off")
-                ).forEach { (name, active, desc) ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Surface3)
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(
-                            if (active) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = null,
-                            tint   = if (active) Success else OnSurface2,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(name, color = OnSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Text(desc, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (active) Success.copy(alpha = 0.15f) else Surface2)
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                if (active) "Active" else "Not set",
-                                color = if (active) Success else OnSurface2,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                }
-            }
-        }
-
         // ── Session PIN ───────────────────────────────────────────────────────
         item {
-            SectionCard(title = strings.settingsSessionPin) {
-                SettingRow(
-                    label    = strings.settingsPinLock,
-                    subtitle = if (pinSet) "Required to end an active session"
-                               else "No PIN — anyone can end a session",
-                    trailing = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (false) { /*
+                        // Session PIN actions are managed in the PIN Management card above.
                             if (pinSet) {
                                 OutlinedButton(
                                     onClick = { showChangePinDialog = true },
@@ -718,6 +715,10 @@ fun SettingsScreen() {
                         }
                     }
                 )
+            }
+        }
+
+            */
             }
         }
 
@@ -987,9 +988,17 @@ fun SettingsScreen() {
     // ── Global PIN manage dialog ──────────────────────────────────────────────
     if (showGlobalPinDialog) {
         GlobalPinManageDialog(
-            pinAlreadySet = globalPinSet,
-            onDismiss     = { showGlobalPinDialog = false },
-            onChanged     = { showGlobalPinDialog = false; reload() }
+            pinAlreadySet       = globalPinSet,
+            startWithRemoval    = globalPinRemovalRequested,
+            onDismiss           = {
+                showGlobalPinDialog = false
+                globalPinRemovalRequested = false
+            },
+            onChanged           = {
+                showGlobalPinDialog = false
+                globalPinRemovalRequested = false
+                reload()
+            }
         )
     }
 
@@ -1009,6 +1018,61 @@ fun SettingsScreen() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+@Composable
+private fun PinManagementRow(
+    name: String,
+    description: String,
+    active: Boolean,
+    onSet: () -> Unit,
+    onChange: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Surface3)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(
+            if (active) Icons.Default.Lock else Icons.Default.LockOpen,
+            contentDescription = null,
+            tint = if (active) Success else OnSurface2,
+            modifier = Modifier.size(18.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(name, color = OnSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text(description, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+            Text(
+                if (active) "Active" else "Not set",
+                color = if (active) Success else OnSurface2,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (active) {
+                OutlinedButton(
+                    onClick = onChange,
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Purple80)
+                ) { Text("Change", color = Purple80) }
+                TextButton(
+                    onClick = onRemove,
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) { Text("Remove", color = Error) }
+            } else {
+                Button(
+                    onClick = onSet,
+                    contentPadding = PaddingValues(horizontal = 14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                ) { Text("Set PIN") }
+            }
+        }
+    }
+}
 
 @Composable
 private fun PomodoroField(label: String, value: String, onValueChange: (String) -> Unit, modifier: Modifier) {
@@ -1204,14 +1268,25 @@ private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: sus
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value         = pin,
-                    onValueChange = { pin = it; error = false },
-                    label         = { Text(if (pinAlreadySet) "Current PIN" else "New PIN (min 8 chars)") },
-                    isError       = error || (!pinAlreadySet && pin.isNotBlank() && pin.length < 8),
+                    onValueChange = {
+                        pin = if (pinAlreadySet) it else it.take(PinPolicy.MAX_LENGTH)
+                        error = false
+                    },
+                    label         = {
+                        Text(if (pinAlreadySet) "Current PIN"
+                             else "New PIN (${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} chars)")
+                    },
+                    isError       = error || (!pinAlreadySet && pin.isNotBlank() && pin.length < PinPolicy.MIN_LENGTH),
                     supportingText = when {
                         error ->
                             { { Text(LocalizationManager.strings.settingsIncorrectPin, color = Error) } }
-                        !pinAlreadySet && pin.isNotBlank() && pin.length < 8 ->
-                            { { Text("PIN must be at least 8 characters (${pin.length}/8)", color = androidx.compose.ui.graphics.Color(0xFFCF6679)) } }
+                        !pinAlreadySet && pin.isNotBlank() && pin.length < PinPolicy.MIN_LENGTH ->
+                            { {
+                                Text(
+                                    "PIN must be at least ${PinPolicy.MIN_LENGTH} characters (${pin.length}/${PinPolicy.MIN_LENGTH})",
+                                    color = androidx.compose.ui.graphics.Color(0xFFCF6679)
+                                )
+                            } }
                         else -> null
                     },
                     modifier      = Modifier.fillMaxWidth(),
@@ -1219,10 +1294,18 @@ private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: sus
                 )
                 if (!pinAlreadySet) {
                     Text(
-                        "The PIN is required to override or end a focus session early. Keep it something memorable but hard to guess.",
+                        "The PIN is required to end a focus session early. Use ${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} characters, or generate a secure 20–${PinPolicy.MAX_LENGTH}-character PIN below.",
                         style = MaterialTheme.typography.bodySmall,
                         color = OnSurface2
                     )
+                    TextButton(
+                        onClick = { pin = PinPolicy.generate(); error = false },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Generate secure PIN", color = Purple80)
+                    }
                 }
             }
         },
@@ -1236,7 +1319,7 @@ private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: sus
                         }
                     }
                 },
-                enabled = if (pinAlreadySet) pin.isNotBlank() else pin.length >= 8,
+                enabled = if (pinAlreadySet) pin.isNotBlank() else pin.length >= PinPolicy.MIN_LENGTH,
                 colors  = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text(LocalizationManager.strings.settingsConfirm) }
         },
@@ -1282,12 +1365,12 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
                             focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
                     )
                 } else {
-                    Text("Choose a new PIN (minimum 8 characters).",
+                        Text("Choose a new PIN (${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} characters), or generate one below.",
                         style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                     OutlinedTextField(
                         value         = newPin,
-                        onValueChange = { newPin = it; error = "" },
-                        label         = { Text("New PIN (min 8 chars)") },
+                        onValueChange = { newPin = it.take(PinPolicy.MAX_LENGTH); error = "" },
+                        label         = { Text("New PIN (${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} chars)") },
                         singleLine    = true,
                         visualTransformation = if (showNew) androidx.compose.ui.text.input.VisualTransformation.None
                                                else androidx.compose.ui.text.input.PasswordVisualTransformation(),
@@ -1297,7 +1380,8 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
                                     null, tint = OnSurface2, modifier = Modifier.size(18.dp))
                             }
                         },
-                        isError  = error.isNotEmpty() || (newPin.isNotBlank() && newPin.length < 8),
+                        isError  = error.isNotEmpty() ||
+                            (newPin.isNotBlank() && newPin.length < PinPolicy.MIN_LENGTH),
                         modifier = Modifier.fillMaxWidth(),
                         colors   = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
@@ -1313,6 +1397,19 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
                         colors   = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
                     )
+                    TextButton(
+                        onClick = {
+                            newPin = PinPolicy.generate()
+                            confirmPin = newPin
+                            showNew = true
+                            error = ""
+                        },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Generate secure PIN", color = Purple80)
+                    }
                 }
                 if (error.isNotEmpty()) Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
             }
@@ -1326,7 +1423,10 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
                             if (ok) { step = 1; error = "" } else error = "Incorrect PIN."
                         } else {
                             when {
-                                newPin.length < 8    -> error = "PIN must be at least 8 characters."
+                                newPin.length < PinPolicy.MIN_LENGTH ->
+                                    error = "PIN must be at least ${PinPolicy.MIN_LENGTH} characters."
+                                newPin.length > PinPolicy.MAX_LENGTH ->
+                                    error = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters."
                                 newPin != confirmPin -> error = "PINs do not match."
                                 else -> {
                                     withContext(Dispatchers.IO) { SessionPin.set(newPin) }
@@ -1336,7 +1436,8 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
                         }
                     }
                 },
-                enabled = if (step == 0) currentPin.isNotBlank() else newPin.length >= 8 && confirmPin.isNotBlank(),
+                enabled = if (step == 0) currentPin.isNotBlank()
+                          else newPin.length >= PinPolicy.MIN_LENGTH && confirmPin.isNotBlank(),
                 colors  = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text(if (step == 0) "Next" else "Save PIN") }
         },
@@ -1350,9 +1451,14 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
 
 // ── Global PIN manage dialog — set, change, or clear ─────────────────────────
 @Composable
-private fun GlobalPinManageDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onChanged: () -> Unit) {
+private fun GlobalPinManageDialog(
+    pinAlreadySet: Boolean,
+    startWithRemoval: Boolean = false,
+    onDismiss: () -> Unit,
+    onChanged: () -> Unit
+) {
     var step       by remember { mutableStateOf(if (pinAlreadySet) 0 else 1) }
-    var clearing   by remember { mutableStateOf(false) }
+    var clearing   by remember { mutableStateOf(startWithRemoval) }
     var currentPin by remember { mutableStateOf("") }
     var newPin     by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
@@ -1399,12 +1505,12 @@ private fun GlobalPinManageDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit,
                             Text("Remove the Global PIN? Blocks and settings can be changed freely without a PIN.",
                                 style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                         } else {
-                            Text("Choose a Global PIN (minimum 8 characters). Required to remove any block or setting.",
+                             Text("Choose a Global PIN (${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} characters), or generate one below. Required to remove any block or setting.",
                                 style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                             OutlinedTextField(
                                 value         = newPin,
-                                onValueChange = { newPin = it; error = "" },
-                                label         = { Text("New PIN (min 8 chars)") },
+                                 onValueChange = { newPin = it.take(PinPolicy.MAX_LENGTH); error = "" },
+                                 label         = { Text("New PIN (${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} chars)") },
                                 singleLine    = true,
                                 visualTransformation = if (showNew) androidx.compose.ui.text.input.VisualTransformation.None
                                                        else androidx.compose.ui.text.input.PasswordVisualTransformation(),
@@ -1414,7 +1520,8 @@ private fun GlobalPinManageDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit,
                                             null, tint = OnSurface2, modifier = Modifier.size(18.dp))
                                     }
                                 },
-                                isError  = error.isNotEmpty() || (newPin.isNotBlank() && newPin.length < 8),
+                                isError  = error.isNotEmpty() ||
+                                    (newPin.isNotBlank() && newPin.length < PinPolicy.MIN_LENGTH),
                                 modifier = Modifier.fillMaxWidth(),
                                 colors   = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
@@ -1430,6 +1537,19 @@ private fun GlobalPinManageDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit,
                                 colors   = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
                             )
+                             TextButton(
+                                 onClick = {
+                                     newPin = PinPolicy.generate()
+                                     confirmPin = newPin
+                                     showNew = true
+                                     error = ""
+                                 },
+                                 contentPadding = PaddingValues(0.dp)
+                             ) {
+                                 Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(16.dp))
+                                 Spacer(Modifier.width(6.dp))
+                                 Text("Generate secure PIN", color = Purple80)
+                             }
                             if (error.isNotEmpty()) Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -1451,7 +1571,10 @@ private fun GlobalPinManageDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit,
                                     onChanged()
                                 } else {
                                     when {
-                                        newPin.length < 8    -> error = "PIN must be at least 8 characters."
+                                         newPin.length < PinPolicy.MIN_LENGTH ->
+                                             error = "PIN must be at least ${PinPolicy.MIN_LENGTH} characters."
+                                         newPin.length > PinPolicy.MAX_LENGTH ->
+                                             error = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters."
                                         newPin != confirmPin -> error = "PINs do not match."
                                         else -> { withContext(Dispatchers.IO) { GlobalPin.set(newPin) }; onChanged() }
                                     }
@@ -1460,7 +1583,10 @@ private fun GlobalPinManageDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit,
                         }
                     }
                 },
-                enabled = when (step) { 0 -> currentPin.isNotBlank(); else -> if (clearing) true else newPin.length >= 8 && confirmPin.isNotBlank() },
+                enabled = when (step) {
+                    0 -> currentPin.isNotBlank()
+                    else -> if (clearing) true else newPin.length >= PinPolicy.MIN_LENGTH && confirmPin.isNotBlank()
+                },
                 colors  = ButtonDefaults.buttonColors(containerColor = if (clearing && step == 1) Error else Purple80)
             ) { Text(when { step == 0 -> "Next"; clearing -> "Remove PIN"; else -> "Save PIN" }) }
         },

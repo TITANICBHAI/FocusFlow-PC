@@ -20,7 +20,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.focusflow.data.Database
-import com.focusflow.data.models.BlockRule
 import com.focusflow.data.models.BlockSchedule
 import com.focusflow.data.models.hasValidTimeRange
 import com.focusflow.data.models.isActiveAt
@@ -45,7 +44,6 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
     var soundAversion    by remember { mutableStateOf(false) }
     var temptationLog    by remember { mutableStateOf(false) }
     var globalPinSet     by remember { mutableStateOf(false) }
-    var alwaysOnRules    by remember { mutableStateOf(listOf<BlockRule>()) }
     var blockSchedules   by remember { mutableStateOf(listOf<BlockSchedule>()) }
 
     var showAddSchedule  by remember { mutableStateOf(false) }
@@ -61,7 +59,6 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 soundAversion = Database.getSetting("sound_aversion") == "true"
                 temptationLog = Database.getSetting("temptation_log") == "true"
                 globalPinSet = GlobalPin.isSet()
-                alwaysOnRules = Database.getBlockRules().filter { it.enabled }
                 blockSchedules = Database.getBlockSchedules()
             }
         }
@@ -168,48 +165,6 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
             ) { newVal ->
                 temptationLog = newVal
                 scope.launch { withContext(Dispatchers.IO) { Database.setSetting("temptation_log", newVal.toString()) } }
-            }
-        }
-
-        // ── Always-On Block List ───────────────────────────────────────────────
-        DefCard(title = strings.defAlwaysOnList) {
-            if (alwaysOnRules.isEmpty()) {
-                Text(strings.defNoAppsBlocked, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    alwaysOnRules.take(8).forEach { rule ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                                .background(Surface3).padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(rule.displayName, color = OnSurface, style = MaterialTheme.typography.bodyMedium)
-                                Text(rule.processName, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                            }
-                            Box(
-                                modifier = Modifier.clip(RoundedCornerShape(4.dp))
-                                    .background(Success.copy(alpha = 0.15f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(strings.defAlwaysOnTag, style = MaterialTheme.typography.bodySmall, color = Success, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                    if (alwaysOnRules.size > 8) {
-                        Text("+ ${alwaysOnRules.size - 8} more…", color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick  = onNavigateToAppBlocker,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Edit in Block Apps →")
             }
         }
 
