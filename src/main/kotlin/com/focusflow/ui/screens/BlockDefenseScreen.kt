@@ -44,24 +44,25 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
     var vpnEnabled       by remember { mutableStateOf(false) }
     var soundAversion    by remember { mutableStateOf(false) }
     var temptationLog    by remember { mutableStateOf(false) }
+    var globalPinSet     by remember { mutableStateOf(false) }
     var alwaysOnRules    by remember { mutableStateOf(listOf<BlockRule>()) }
     var blockSchedules   by remember { mutableStateOf(listOf<BlockSchedule>()) }
-    var overlayMsg       by remember { mutableStateOf("") }
 
     var showAddSchedule  by remember { mutableStateOf(false) }
     var showPinGate      by remember { mutableStateOf(false) }
+    var showVpnInfo      by remember { mutableStateOf(false) }
     var pendingAlwaysOn  by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
             withContext(Dispatchers.IO) {
                 alwaysOn      = Database.getSetting("always_on_enforcement") == "true"
-                vpnEnabled    = Database.getSetting("vpn_enabled") == "true"
+                vpnEnabled    = Database.getSetting("vpn_block_enabled") == "true"
                 soundAversion = Database.getSetting("sound_aversion") == "true"
                 temptationLog = Database.getSetting("temptation_log") == "true"
+                globalPinSet = GlobalPin.isSet()
                 alwaysOnRules = Database.getBlockRules().filter { it.enabled }
                 blockSchedules = Database.getBlockSchedules()
-                overlayMsg    = Database.getSetting("overlay_message") ?: ""
             }
         }
     }
@@ -77,15 +78,15 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
     ) {
         Text(strings.defTitle, style = MaterialTheme.typography.headlineLarge, color = OnSurface)
 
-        // ── System Protection ──────────────────────────────────────────────────
-        DefCard(title = strings.defSystemProtection) {
+        // ── Always-On Enforcement ───────────────────────────────────────────────
+        DefCard(title = strings.defAlwaysOnEnforcement) {
             DefToggleRow(
                 label   = strings.defAlwaysOnEnforcement,
                 checked = alwaysOn,
                 icon    = Icons.Default.Shield,
                 iconColor = if (alwaysOn) Success else OnSurface2
             ) { newVal ->
-                if (!newVal && GlobalPin.isSet()) {
+                if (!newVal && globalPinSet) {
                     pendingAlwaysOn = false
                     showPinGate = true
                 } else {
@@ -102,29 +103,29 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
             Spacer(Modifier.height(6.dp))
 
             DefToggleRow(
-                label   = strings.defSessionPinLock,
-                checked = SessionPin.isSet(),
+                label   = "Global PIN Lock",
+                checked = globalPinSet,
                 icon    = Icons.Default.Lock,
-                iconColor = if (SessionPin.isSet()) Warning else OnSurface2,
+                iconColor = if (globalPinSet) Warning else OnSurface2,
                 enabled = false
             ) {}
 
-            Spacer(Modifier.height(10.dp))
-
-            // Block overlay
-            Text(strings.defOverlayMessage, color = OnSurface2, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = overlayMsg,
-                onValueChange = { overlayMsg = it
-                    scope.launch { withContext(Dispatchers.IO) { Database.setSetting("overlay_message", it) } }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2
-                )
+            Text(
+                if (globalPinSet) "Required to turn Always-On Enforcement off and remove protected blocks."
+                else "Set a Global PIN in Settings to protect Always-On Enforcement from being disabled.",
+                color = OnSurface2,
+                style = MaterialTheme.typography.bodySmall
             )
+
+            TextButton(
+                onClick = onNavigateToAppBlocker,
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+            )
+            {
+                Icon(Icons.Default.Apps, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Manage blocked apps →", color = Purple80)
+            }
         }
 
         // ── VPN & Network Shield ───────────────────────────────────────────────
@@ -134,8 +135,8 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 checked   = vpnEnabled,
                 icon      = Icons.Default.VpnKey,
                 iconColor = if (vpnEnabled) Purple80 else OnSurface2,
-                enabled   = false
-            ) {}
+                enabled   = true
+            ) { showVpnInfo = true }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = onNavigateToVpn,
@@ -208,7 +209,7 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
             ) {
                 Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Edit in App Blocker →")
+                Text("Edit in Block Apps →")
             }
         }
 
@@ -281,6 +282,44 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 ProcessMonitor.alwaysOnEnabled = false
                 scope.launch { withContext(Dispatchers.IO) { Database.setSetting("always_on_enforcement", "false") } }
                 com.focusflow.services.ReviewPromptService.triggerCheck()
+            }
+        )
+    }
+
+    if (showVpnInfo) {
+        AlertDialog(
+            onDismissRequest = { showVpnInfo = false },
+            containerColor = Surface2,
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.VpnKey, null, tint = Error, modifier = Modifier.size(22.dp))
+                    Text("VPN Shield is managed separately", color = OnSurface)
+                }
+            },
+            text = {
+                Text(
+                    "This switch is shown here for status only. Open VPN & Network Shield to enable it. " +
+                        "VPN blocking also needs FocusFlow to run as Administrator on Windows.",
+                    color = OnSurface2,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showVpnInfo = false
+                        onNavigateToVpn()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                ) { Text("Open VPN & Network") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showVpnInfo = false }) {
+                    Text(strings.btnCancel, color = OnSurface2)
+                }
             }
         )
     }

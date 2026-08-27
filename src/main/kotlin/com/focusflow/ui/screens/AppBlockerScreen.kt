@@ -4,6 +4,7 @@ import androidx.compose.foundation.Image
 import com.focusflow.ui.components.EmptyStateCard
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.components.ShortcutTooltip
+import com.focusflow.ui.components.PinGateDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -155,7 +156,7 @@ fun AppIcon(
 }
 
 @Composable
-fun AppBlockerScreen() {
+fun AppBlockerScreen(onNavigateToBlockDefense: () -> Unit = {}) {
     val strings     = LocalizationManager.strings
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf(strings.blockerTabAlwaysBlock, strings.blockerTabDailyAllowance)
@@ -216,7 +217,7 @@ fun AppBlockerScreen() {
         }
 
         when (selectedTab) {
-            0 -> AlwaysBlockTab()
+            0 -> AlwaysBlockTab(onNavigateToBlockDefense)
             1 -> DailyAllowanceTab()
         }
     }
@@ -256,7 +257,7 @@ fun StandaloneBlockScreen() {
 // ── Always Block Tab ───────────────────────────────────────────────────────────
 
 @Composable
-private fun AlwaysBlockTab() {
+private fun AlwaysBlockTab(onNavigateToBlockDefense: () -> Unit) {
     val scope   = rememberCoroutineScope()
     val strings = LocalizationManager.strings
 
@@ -269,6 +270,10 @@ private fun AlwaysBlockTab() {
     var searchQuery   by remember { mutableStateOf("") }
     var showAllInline by remember { mutableStateOf(false) }
     var inlineSearch  by remember { mutableStateOf("") }
+    var alwaysOnEnabled by remember { mutableStateOf(false) }
+    var globalPinSet by remember { mutableStateOf(false) }
+    var showGlobalPinGate by remember { mutableStateOf(false) }
+    var pendingGlobalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun reload() {
         scope.launch {
@@ -278,7 +283,18 @@ private fun AlwaysBlockTab() {
             val runningNames = running.map { it.processName }.toSet()
             blockRules  = rules
             scannedApps = running + curated.filter { it.processName !in runningNames }
+            alwaysOnEnabled = Database.getSetting("always_on_enforcement") == "true"
+            globalPinSet = com.focusflow.services.GlobalPin.isSet()
             isLoading   = false
+        }
+    }
+
+    fun guardedRemoval(action: () -> Unit) {
+        if (globalPinSet) {
+            pendingGlobalAction = action
+            showGlobalPinGate = true
+        } else {
+            action()
         }
     }
 
@@ -342,6 +358,44 @@ private fun AlwaysBlockTab() {
                         color = OnSurface2,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+
+            if (!alwaysOnEnabled) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Error.copy(alpha = 0.14f))
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(Icons.Default.Warning, null, tint = Error, modifier = Modifier.size(22.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "ATTENTION",
+                                color = Error,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                "These apps are saved in your block list, but Always-On Enforcement is OFF. " +
+                                    "Turn it on in Block Defense or the apps will only be blocked during focus sessions.",
+                                color = OnSurface,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(
+                                onClick = onNavigateToBlockDefense,
+                                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                            ) {
+                                Text("Open Block Defense →", color = Error, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -669,19 +723,24 @@ private fun AlwaysBlockTab() {
                         BlockRuleCard(
                             rule = rule,
                             onToggle = { enabled ->
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        Database.upsertBlockRule(rule.copy(enabled = enabled))
+                                val action: () -> Unit = {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            Database.upsertBlockRule(rule.copy(enabled = enabled))
+                                        }
+                                        if (!enabled) NetworkBlocker.removeRule(rule.processName)
+                                        reload()
                                     }
-                                    if (!enabled) NetworkBlocker.removeRule(rule.processName)
-                                    reload()
                                 }
+                                if (enabled) action() else guardedRemoval(action)
                             },
                             onDelete = {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { Database.deleteBlockRule(rule.id) }
-                                    NetworkBlocker.removeRule(rule.processName)
-                                    reload()
+                                guardedRemoval {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { Database.deleteBlockRule(rule.id) }
+                                        NetworkBlocker.removeRule(rule.processName)
+                                        reload()
+                                    }
                                 }
                             }
                         )
@@ -724,6 +783,23 @@ private fun AlwaysBlockTab() {
                     showPicker = false
                     reload()
                 }
+            }
+        )
+    }
+
+    if (showGlobalPinGate) {
+        PinGateDialog(
+            title = "Global PIN required",
+            subtitle = "Enter your Global PIN to disable or remove a blocked app.",
+            allowReset = false,
+            onSuccess = {
+                showGlobalPinGate = false
+                pendingGlobalAction?.invoke()
+                pendingGlobalAction = null
+            },
+            onDismiss = {
+                showGlobalPinGate = false
+                pendingGlobalAction = null
             }
         )
     }
@@ -842,6 +918,9 @@ private fun DailyAllowanceTab() {
     var showPicker  by remember { mutableStateOf(false) }
     var editTarget  by remember { mutableStateOf<DailyAllowance?>(null) }
     var tick        by remember { mutableStateOf(0) }
+    var globalPinSet by remember { mutableStateOf(false) }
+    var showGlobalPinGate by remember { mutableStateOf(false) }
+    var pendingGlobalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun reload() {
         scope.launch {
@@ -852,6 +931,16 @@ private fun DailyAllowanceTab() {
             scannedApps = running + curated.filter { it.processName !in runningNames }
             isLoading   = false
             DailyAllowanceTracker.reload()
+            globalPinSet = withContext(Dispatchers.IO) { com.focusflow.services.GlobalPin.isSet() }
+        }
+    }
+
+    fun guardedRemoval(action: () -> Unit) {
+        if (globalPinSet) {
+            pendingGlobalAction = action
+            showGlobalPinGate = true
+        } else {
+            action()
         }
     }
 
@@ -948,12 +1037,14 @@ private fun DailyAllowanceTab() {
                         isBlockedToday = isBlockedToday,
                         onEdit         = { editTarget = allowance },
                         onDelete       = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) {
-                                    Database.deleteDailyAllowance(allowance.processName)
+                            guardedRemoval {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        Database.deleteDailyAllowance(allowance.processName)
+                                    }
+                                    DailyAllowanceTracker.reload()
+                                    reload()
                                 }
-                                DailyAllowanceTracker.reload()
-                                reload()
                             }
                         }
                     )
@@ -1004,6 +1095,23 @@ private fun DailyAllowanceTab() {
                     editTarget = null
                     reload()
                 }
+            }
+        )
+    }
+
+    if (showGlobalPinGate) {
+        PinGateDialog(
+            title = "Global PIN required",
+            subtitle = "Enter your Global PIN to remove a daily allowance.",
+            allowReset = false,
+            onSuccess = {
+                showGlobalPinGate = false
+                pendingGlobalAction?.invoke()
+                pendingGlobalAction = null
+            },
+            onDismiss = {
+                showGlobalPinGate = false
+                pendingGlobalAction = null
             }
         )
     }
@@ -2014,63 +2122,76 @@ private fun DateTimePicker(
     onMinChange:  (Int) -> Unit
 ) {
     val strings = LocalizationManager.strings
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(Surface3)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Date spinner
-        SpinnerField(
-            value    = "${date.dayOfMonth}",
-            label    = strings.blockerDay,
-            onDec    = { onDateChange(maxOf(date.minusDays(1), minDate)) },
-            onInc    = { onDateChange(date.plusDays(1)) },
-            accentColor = accentColor,
-            modifier = Modifier.weight(1.2f)
-        )
-        Text("/", color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-        SpinnerField(
-            value    = "%02d".format(date.monthValue),
-            label    = strings.blockerMonth,
-            onDec    = { onDateChange(maxOf(date.minusMonths(1).withDayOfMonth(1).also { if (it < minDate) return@SpinnerField }, minDate)) },
-            onInc    = { onDateChange(date.plusMonths(1).withDayOfMonth(minOf(date.dayOfMonth, date.plusMonths(1).lengthOfMonth()))) },
-            accentColor = accentColor,
-            modifier = Modifier.weight(1.2f)
-        )
-        Text("/", color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-        SpinnerField(
-            value    = "${date.year}",
-            label    = strings.blockerYear,
-            onDec    = { onDateChange(maxOf(date.minusYears(1), minDate)) },
-            onInc    = { onDateChange(date.plusYears(1)) },
-            accentColor = accentColor,
-            modifier = Modifier.weight(1.6f)
-        )
-        Spacer(Modifier.width(4.dp))
-        Icon(Icons.Default.Schedule, null, tint = accentColor.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
-        Spacer(Modifier.width(2.dp))
-        // Hour spinner
-        SpinnerField(
-            value    = "%02d".format(hour),
-            label    = strings.blockerHour,
-            onDec    = { onHourChange((hour - 1 + 24) % 24) },
-            onInc    = { onHourChange((hour + 1) % 24) },
-            accentColor = accentColor,
-            modifier = Modifier.weight(1.2f)
-        )
-        Text(":", color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-        // Minute spinner (15-min steps)
-        SpinnerField(
-            value    = "%02d".format(minute),
-            label    = strings.blockerMinute,
-            onDec    = { onMinChange((minute - 15 + 60) % 60) },
-            onInc    = { onMinChange((minute + 15) % 60) },
-            accentColor = accentColor,
-            modifier = Modifier.weight(1.2f)
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.CalendarToday, null, tint = accentColor.copy(alpha = 0.75f), modifier = Modifier.size(15.dp))
+            Text("Date", color = OnSurface2, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+            SpinnerField(
+                value = "%02d".format(date.dayOfMonth),
+                label = strings.blockerDay,
+                onDec = { onDateChange(maxOf(date.minusDays(1), minDate)) },
+                onInc = { onDateChange(date.plusDays(1)) },
+                accentColor = accentColor,
+                modifier = Modifier.weight(1f)
+            )
+            SpinnerField(
+                value = "%02d".format(date.monthValue),
+                label = strings.blockerMonth,
+                onDec = {
+                    val previous = date.minusMonths(1)
+                    onDateChange(maxOf(previous.withDayOfMonth(minOf(date.dayOfMonth, previous.lengthOfMonth())), minDate))
+                },
+                onInc = {
+                    val next = date.plusMonths(1)
+                    onDateChange(next.withDayOfMonth(minOf(date.dayOfMonth, next.lengthOfMonth())))
+                },
+                accentColor = accentColor,
+                modifier = Modifier.weight(1f)
+            )
+            SpinnerField(
+                value = "${date.year}",
+                label = strings.blockerYear,
+                onDec = { onDateChange(maxOf(date.minusYears(1), minDate)) },
+                onInc = { onDateChange(date.plusYears(1)) },
+                accentColor = accentColor,
+                modifier = Modifier.weight(1.35f)
+            )
+        }
+        HorizontalDivider(color = OnSurface2.copy(alpha = 0.12f))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.Schedule, null, tint = accentColor.copy(alpha = 0.75f), modifier = Modifier.size(15.dp))
+            Text("Time", color = OnSurface2, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+            SpinnerField(
+                value = "%02d".format(hour),
+                label = strings.blockerHour,
+                onDec = { onHourChange((hour - 1 + 24) % 24) },
+                onInc = { onHourChange((hour + 1) % 24) },
+                accentColor = accentColor,
+                modifier = Modifier.weight(1f)
+            )
+            Text(":", color = OnSurface2, fontWeight = FontWeight.Bold)
+            SpinnerField(
+                value = "%02d".format(minute),
+                label = strings.blockerMinute,
+                onDec = { onMinChange((minute - 15 + 60) % 60) },
+                onInc = { onMinChange((minute + 15) % 60) },
+                accentColor = accentColor,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.weight(1.35f))
+        }
     }
 }
 

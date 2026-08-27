@@ -53,20 +53,15 @@ fun SettingsScreen() {
     val strings = LocalizationManager.strings
     val scope = rememberCoroutineScope()
 
-    var blockRules       by remember { mutableStateOf(listOf<BlockRule>()) }
-    var blockSchedules   by remember { mutableStateOf(listOf<BlockSchedule>()) }
-    var dailyAllowances  by remember { mutableStateOf(listOf<DailyAllowance>()) }
-    var showAddSchedule  by remember { mutableStateOf(false) }
-    var showAddAllowance by remember { mutableStateOf(false) }
     var alwaysOn         by remember { mutableStateOf(false) }
     var startWithWin     by remember { mutableStateOf(false) }
     var soundEnabled       by remember { mutableStateOf(true) }
     var soundVolume        by remember { mutableStateOf(1.0f) }
+    var aversionSound      by remember { mutableStateOf(ChimeStyle.DEFAULT) }
     var overlayMessage     by remember { mutableStateOf("Stay focused. You've got this.") }
     var overlayDismissSecs by remember { mutableStateOf(4) }
     var overlayEnabled     by remember { mutableStateOf(true) }
     var pinSet               by remember { mutableStateOf(false) }
-    var showAddRule          by remember { mutableStateOf(false) }
     var showPinDialog        by remember { mutableStateOf(false) }
     var hookActive           by remember { mutableStateOf(false) }
     var nuclearActive        by remember { mutableStateOf(false) }
@@ -96,9 +91,6 @@ fun SettingsScreen() {
 
     fun reload() {
         scope.launch {
-            val rules      = withContext(Dispatchers.IO) { Database.getBlockRules() }
-            val schedules  = withContext(Dispatchers.IO) { Database.getBlockSchedules() }
-            val allowances = withContext(Dispatchers.IO) { Database.getDailyAllowances() }
             val ao         = withContext(Dispatchers.IO) { Database.getSetting("always_on_enforcement") == "true" }
             val sound      = withContext(Dispatchers.IO) { Database.getSetting("sound_aversion") != "false" }
             val overlay    = withContext(Dispatchers.IO) { Database.getSetting("overlay_message") ?: "Stay focused. You've got this." }
@@ -110,6 +102,7 @@ fun SettingsScreen() {
             val pc         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_cycles") ?: "4" }
             val wc         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_work_chime")  ?: ChimeStyle.DEFAULT.name }
             val bc         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_break_chime") ?: ChimeStyle.DEFAULT.name }
+            val ac         = withContext(Dispatchers.IO) { Database.getSetting("aversion_sound_style") ?: ChimeStyle.DEFAULT.name }
             val lockUntil   = withContext(Dispatchers.IO) { Database.getSetting("focus_lock_until_timer") == "true" }
             val crashRep    = withContext(Dispatchers.IO) { Database.getSetting("crash_reports_enabled") != "false" }
             val vol         = withContext(Dispatchers.IO) { Database.getSetting("sound_volume")?.toFloatOrNull() ?: 1.0f }
@@ -117,9 +110,6 @@ fun SettingsScreen() {
             val showOverlay = withContext(Dispatchers.IO) { Database.getSetting("block_overlay_enabled") != "false" }
             val nPinSet     = withContext(Dispatchers.IO) { NuclearPin.isSet() }
             val gPinSet     = withContext(Dispatchers.IO) { GlobalPin.isSet() }
-            blockRules      = rules
-            blockSchedules  = schedules
-            dailyAllowances = allowances
             alwaysOn        = ao
             startWithWin    = sww
             soundEnabled    = sound
@@ -142,8 +132,10 @@ fun SettingsScreen() {
             pomodoroCycles  = pc
             workChime  = runCatching { ChimeStyle.valueOf(wc) }.getOrDefault(ChimeStyle.DEFAULT)
             breakChime = runCatching { ChimeStyle.valueOf(bc) }.getOrDefault(ChimeStyle.DEFAULT)
+            aversionSound = runCatching { ChimeStyle.valueOf(ac) }.getOrDefault(ChimeStyle.DEFAULT)
             SoundAversion.workChimeStyle  = workChime
             SoundAversion.breakChimeStyle = breakChime
+            SoundAversion.blockAlertStyle = aversionSound
             focusLockUntilTimer = lockUntil
             crashReportsEnabled = crashRep
         }
@@ -219,7 +211,7 @@ fun SettingsScreen() {
                         Switch(
                             checked = alwaysOn,
                             onCheckedChange = { enabled ->
-                                if (!enabled && SessionPin.isSet()) {
+                                if (!enabled && globalPinSet) {
                                     pendingAlwaysOnValue = false
                                     showAlwaysOnPinDialog = true
                                 } else {
@@ -474,6 +466,51 @@ fun SettingsScreen() {
                             modifier = Modifier.width(38.dp)
                         )
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.Warning, null, tint = Warning, modifier = Modifier.size(16.dp))
+                        Text(
+                            "Aversion sound",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurface2,
+                            modifier = Modifier.width(104.dp)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ChimeStyle.entries.forEach { style ->
+                                FilterChip(
+                                    selected = aversionSound == style,
+                                    onClick = {
+                                        aversionSound = style
+                                        SoundAversion.blockAlertStyle = style
+                                        scope.launch(Dispatchers.IO) {
+                                            Database.setSetting("aversion_sound_style", style.name)
+                                        }
+                                    },
+                                    label = {
+                                        Text(style.label, style = MaterialTheme.typography.bodySmall)
+                                    },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Warning.copy(alpha = 0.18f),
+                                        selectedLabelColor = Warning,
+                                        containerColor = Surface3,
+                                        labelColor = OnSurface2
+                                    )
+                                )
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = { SoundAversion.playBlockAlert() },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.VolumeUp, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Preview", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
                 HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 8.dp))
                 SettingRow(
@@ -491,177 +528,6 @@ fun SettingsScreen() {
                         }
                     }
                 )
-            }
-        }
-
-        // ── Blocked Apps ──────────────────────────────────────────────────────
-        item {
-            SectionCard(title = "${strings.settingsBlockedApps} (${blockRules.size})") {
-                Text(
-                    "These apps are killed instantly when detected during a session. You can type a process name or pick from running apps.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurface2
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Quick presets ────────────────────────────────────────────
-                Text(strings.settingsQuickAddApps, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Spacer(Modifier.height(6.dp))
-                val presets = listOf(
-                    "Discord"     to "discord.exe",
-                    "Steam"       to "steam.exe",
-                    "Spotify"     to "Spotify.exe",
-                    "Twitch"      to "twitch.exe",
-                    "Epic Games"  to "EpicGamesLauncher.exe",
-                    "WhatsApp"    to "WhatsApp.exe",
-                    "Telegram"    to "Telegram.exe",
-                    "Battle.net"  to "Battle.net Launcher.exe"
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    presets.chunked(4).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            row.forEach { (name, proc) ->
-                                val alreadyAdded = blockRules.any { it.processName.equals(proc, ignoreCase = true) }
-                                OutlinedButton(
-                                    onClick = {
-                                        if (!alreadyAdded) scope.launch {
-                                            withContext(Dispatchers.IO) {
-                                                Database.upsertBlockRule(
-                                                    BlockRule(UUID.randomUUID().toString(), proc.lowercase(), name, true, false)
-                                                )
-                                            }
-                                            reload()
-                                        }
-                                    },
-                                    enabled = !alreadyAdded,
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    if (alreadyAdded) {
-                                        Icon(Icons.Default.Check, null, modifier = Modifier.size(12.dp))
-                                        Spacer(Modifier.width(3.dp))
-                                    }
-                                    Text(name, style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Surface3))
-                Spacer(Modifier.height(12.dp))
-
-                if (blockRules.isEmpty()) {
-                    Text(strings.settingsNoAppsBlocked, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        blockRules.forEach { rule ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Surface3)
-                                    .padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(rule.displayName, color = OnSurface)
-                                    Text(rule.processName, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    if (rule.blockNetwork) {
-                                        Icon(Icons.Default.WifiOff, null, tint = Warning, modifier = Modifier.size(16.dp))
-                                    }
-                                    Switch(
-                                        checked = rule.enabled,
-                                        onCheckedChange = { enabled ->
-                                            scope.launch {
-                                                withContext(Dispatchers.IO) {
-                                                    Database.upsertBlockRule(rule.copy(enabled = enabled))
-                                                }
-                                                if (!enabled) NetworkBlocker.removeRule(rule.processName)
-                                                reload()
-                                            }
-                                        },
-                                        modifier = Modifier.height(24.dp)
-                                    )
-                                    ShortcutTooltip("Delete block rule") {
-                                        IconButton(
-                                            onClick = {
-                                                scope.launch {
-                                                    withContext(Dispatchers.IO) {
-                                                        Database.deleteBlockRule(rule.id)
-                                                    }
-                                                    NetworkBlocker.removeRule(rule.processName)
-                                                    reload()
-                                                }
-                                            },
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(Icons.Default.Delete, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // ── Fix 9: Overlay dismiss duration moved here from Sound ──────
-                HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 4.dp))
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(Icons.Default.Timer, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Block Overlay Duration", style = MaterialTheme.typography.bodySmall, color = OnSurface)
-                            Text("How long the overlay stays on screen after blocking an app", style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp), color = OnSurface2)
-                        }
-                        Text("${overlayDismissSecs}s", style = MaterialTheme.typography.bodySmall, color = Purple80, fontWeight = FontWeight.SemiBold)
-                    }
-                    Slider(
-                        value = overlayDismissSecs.toFloat(),
-                        onValueChange = {
-                            overlayDismissSecs = it.toInt()
-                            FloatingBlockOverlay.dismissSeconds = it.toInt()
-                        },
-                        onValueChangeFinished = {
-                            scope.launch { withContext(Dispatchers.IO) { Database.setSetting("overlay_dismiss_seconds", overlayDismissSecs.toString()) } }
-                        },
-                        valueRange = 2f..15f,
-                        steps     = 12,
-                        modifier  = Modifier.fillMaxWidth(),
-                        colors    = SliderDefaults.colors(thumbColor = Purple80, activeTrackColor = Purple80)
-                    )
-                }
-                HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 4.dp))
-                Spacer(Modifier.height(8.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = { showAddRule = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Purple80)
-                    ) {
-                        Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.settingsAddManually)
-                    }
-                    OutlinedButton(onClick = { showAddRule = true }) {
-                        Icon(Icons.Default.Apps, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(strings.settingsPickFromApps)
-                    }
-                }
             }
         }
 
@@ -702,6 +568,51 @@ fun SettingsScreen() {
                         unfocusedBorderColor = OnSurface2
                     )
                 )
+                HorizontalDivider(color = Surface3, modifier = Modifier.padding(vertical = 10.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(Icons.Default.Timer, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Block Overlay Duration", style = MaterialTheme.typography.bodySmall, color = OnSurface)
+                            Text(
+                                "How long the overlay stays on screen after blocking an app",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                color = OnSurface2
+                            )
+                        }
+                        Text(
+                            "${overlayDismissSecs}s",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Purple80,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Slider(
+                        value = overlayDismissSecs.toFloat(),
+                        onValueChange = {
+                            overlayDismissSecs = it.toInt()
+                            FloatingBlockOverlay.dismissSeconds = it.toInt()
+                        },
+                        onValueChangeFinished = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    Database.setSetting("overlay_dismiss_seconds", overlayDismissSecs.toString())
+                                }
+                            }
+                        },
+                        valueRange = 2f..15f,
+                        steps = 12,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = SliderDefaults.colors(thumbColor = Purple80, activeTrackColor = Purple80)
+                    )
+                }
             }
         }
 
@@ -843,139 +754,6 @@ fun SettingsScreen() {
                         Icon(Icons.Default.Lock, null, tint = Warning, modifier = Modifier.size(16.dp))
                         Text(strings.settingsLockEndDisabled, style = MaterialTheme.typography.bodySmall, color = Warning)
                     }
-                }
-            }
-        }
-
-        // ── Block Schedules ───────────────────────────────────────────────────
-        item {
-            SectionCard(title = "${strings.settingsBlockSchedules} (${blockSchedules.size})") {
-                Text(strings.settingsScheduleDesc, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Spacer(Modifier.height(12.dp))
-                val activeNow = BlockScheduleService.activeScheduleNames
-                if (blockSchedules.isEmpty()) {
-                    Text(strings.settingsNoSchedules, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        blockSchedules.forEach { sched ->
-                            val validTimeRange = sched.hasValidTimeRange()
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Surface3).padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(sched.name, color = OnSurface)
-                                        if (sched.name in activeNow) {
-                                            Spacer(Modifier.width(8.dp))
-                                            Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Success.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                                Text(strings.settingsActive, style = MaterialTheme.typography.bodySmall, color = Success)
-                                            }
-                                        }
-                                    }
-                                    val days = listOf("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
-                                    val dayStr = sched.daysOfWeek.mapNotNull { days.getOrNull(it - 1) }.joinToString(", ")
-                                    Text(
-                                        "$dayStr  %02d:%02d–%02d:%02d%s".format(
-                                            sched.startHour, sched.startMinute,
-                                            sched.endHour, sched.endMinute,
-                                            if (validTimeRange) "" else " · Invalid time"
-                                        ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (validTimeRange) OnSurface2 else Error
-                                    )
-                                    if (sched.processNames.isNotEmpty()) Text("${sched.processNames.size} ${strings.settingsAppsCount}", style = MaterialTheme.typography.bodySmall, color = Purple60)
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Switch(
-                                        checked = sched.enabled,
-                                        // Invalid legacy schedules remain recoverable:
-                                        // an enabled one can be turned off, but a
-                                        // disabled one cannot be enabled until its
-                                        // time values are repaired.
-                                        enabled = sched.enabled || validTimeRange,
-                                        onCheckedChange = { enabled ->
-                                            scope.launch {
-                                                withContext(Dispatchers.IO) {
-                                                    Database.upsertBlockSchedule(sched.copy(enabled = enabled))
-                                                }
-                                                BlockScheduleService.forceCheck()
-                                                reload()
-                                            }
-                                        },
-                                        modifier = Modifier.height(24.dp)
-                                    )
-                                    ShortcutTooltip("Delete schedule") {
-                                        IconButton(
-                                            onClick = {
-                                                scope.launch {
-                                                    withContext(Dispatchers.IO) {
-                                                        Database.deleteBlockSchedule(sched.id)
-                                                    }
-                                                    BlockScheduleService.forceCheck()
-                                                    reload()
-                                                }
-                                            },
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(Icons.Default.Delete, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = { showAddSchedule = true }, colors = ButtonDefaults.buttonColors(containerColor = Purple80)) {
-                    Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(strings.settingsAddSchedule)
-                }
-            }
-        }
-
-        // ── Daily Allowances ──────────────────────────────────────────────────
-        item {
-            SectionCard(title = "${strings.settingsDailyAllowances} (${dailyAllowances.size})") {
-                Text(strings.settingsAllowanceDescLong, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Spacer(Modifier.height(12.dp))
-                if (dailyAllowances.isEmpty()) {
-                    Text(strings.settingsNoAllowances, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        dailyAllowances.forEach { a ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Surface3).padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(a.displayName, color = OnSurface)
-                                    Text("${a.processName}  ·  ${a.allowanceMinutes}m/day", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                                }
-                                ShortcutTooltip("Delete allowance") {
-                                    IconButton(
-                                        onClick = {
-                                            scope.launch {
-                                                withContext(Dispatchers.IO) {
-                                                    Database.deleteDailyAllowance(a.processName)
-                                                }
-                                                DailyAllowanceTracker.reload()
-                                                reload()
-                                            }
-                                        },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(Icons.Default.Delete, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = { showAddAllowance = true }, colors = ButtonDefaults.buttonColors(containerColor = Purple80)) {
-                    Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(strings.settingsAddAllowance)
                 }
             }
         }
@@ -1156,47 +934,6 @@ fun SettingsScreen() {
                 alwaysOn = false
                 ProcessMonitor.alwaysOnEnabled = false
                 scope.launch { withContext(Dispatchers.IO) { Database.setSetting("always_on_enforcement", "false") } }
-            }
-        )
-    }
-
-    if (showAddRule) {
-        AddRuleDialog(
-            onDismiss = { showAddRule = false },
-            onSave    = { rule ->
-                scope.launch {
-                    withContext(Dispatchers.IO) { Database.upsertBlockRule(rule) }
-                    reload()
-                }
-                showAddRule = false
-            }
-        )
-    }
-
-    if (showAddSchedule) {
-        AddScheduleDialog(
-            onDismiss = { showAddSchedule = false },
-            onSave    = { sched ->
-                scope.launch {
-                    withContext(Dispatchers.IO) { Database.upsertBlockSchedule(sched) }
-                    BlockScheduleService.forceCheck()
-                    reload()
-                }
-                showAddSchedule = false
-            }
-        )
-    }
-
-    if (showAddAllowance) {
-        AddAllowanceDialog(
-            onDismiss = { showAddAllowance = false },
-            onSave    = { a ->
-                scope.launch {
-                    withContext(Dispatchers.IO) { Database.upsertDailyAllowance(a) }
-                    DailyAllowanceTracker.reload()
-                    reload()
-                }
-                showAddAllowance = false
             }
         )
     }
@@ -1751,10 +1488,10 @@ private fun AlwaysOnPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(LocalizationManager.strings.settingsEnterPinToDisable, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                Text("Enter your Global PIN to disable Always-On Enforcement.", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 OutlinedTextField(
                     value = pin, onValueChange = { pin = it; error = false },
-                    label = { Text(LocalizationManager.strings.settingsPinLabel) }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Global PIN") }, modifier = Modifier.fillMaxWidth(),
                     isError = error, singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
                 )
@@ -1763,7 +1500,7 @@ private fun AlwaysOnPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit)
         },
         confirmButton = {
             Button(
-                onClick = { if (SessionPin.verify(pin)) onVerified() else error = true },
+                onClick = { if (GlobalPin.verify(pin)) onVerified() else error = true },
                 colors  = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text(LocalizationManager.strings.settingsConfirm) }
         },

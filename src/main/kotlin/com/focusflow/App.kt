@@ -298,7 +298,9 @@ fun App() {
                                 )
                                 Screen.FOCUS           -> FocusScreen(preloadTask = focusPreloadTask)
                                 Screen.FOCUS_LAUNCHER  -> FocusLauncherScreen()
-                                Screen.BLOCK_APPS      -> AppBlockerScreen()
+                                Screen.BLOCK_APPS      -> AppBlockerScreen(
+                                    onNavigateToBlockDefense = { currentScreen = Screen.BLOCK_DEFENSE }
+                                )
                                 Screen.STATS          -> StatsScreen()
                                 Screen.NOTES          -> DailyNotesScreen()
                                 Screen.HABITS         -> HabitsScreen()

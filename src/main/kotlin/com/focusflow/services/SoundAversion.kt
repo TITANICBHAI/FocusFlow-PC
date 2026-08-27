@@ -60,6 +60,9 @@ object SoundAversion {
     /** Chime played when a Pomodoro break begins. */
     @Volatile var breakChimeStyle: ChimeStyle = ChimeStyle.DEFAULT
 
+    /** Sound preset used when a blocked app is detected. */
+    @Volatile var blockAlertStyle: ChimeStyle = ChimeStyle.DEFAULT
+
     // ── Layer 2: Sound event library ─────────────────────────────────────────
 
     /** Harsh 880 Hz buzz — immediate aversive feedback when an app is blocked. */
@@ -67,11 +70,29 @@ object SoundAversion {
         if (!isEnabled) return
         scope.launch {
             tryPlay {
-                playNote(880.0, 0.10, volume = 0.90f)
-                delay(30)
-                playNote(1100.0, 0.08, volume = 0.85f)
-                delay(30)
-                playNote(880.0, 0.14, volume = 0.90f)
+                when (blockAlertStyle) {
+                    ChimeStyle.DEFAULT -> {
+                        playNote(880.0, 0.10, volume = 0.90f)
+                        delay(30)
+                        playNote(1100.0, 0.08, volume = 0.85f)
+                        delay(30)
+                        playNote(880.0, 0.14, volume = 0.90f)
+                    }
+                    ChimeStyle.SOFT_BELL -> {
+                        playNote(330.0, 0.18, volume = 0.42f)
+                        delay(40)
+                        playNote(392.0, 0.18, volume = 0.45f)
+                        delay(40)
+                        playNote(494.0, 0.30, volume = 0.48f)
+                    }
+                    ChimeStyle.DIGITAL -> {
+                        playNote(800.0, 0.06, volume = 0.50f)
+                        delay(15)
+                        playNote(1000.0, 0.08, volume = 0.55f)
+                    }
+                    ChimeStyle.DEEP -> playNote(220.0, 0.40, volume = 0.65f)
+                    ChimeStyle.MINIMAL -> playNote(440.0, 0.10, volume = 0.28f)
+                }
             }
         }
     }
