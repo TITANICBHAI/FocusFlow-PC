@@ -11,4 +11,5 @@
 - [Discord crash delivery](discord-crash-delivery.md) — Fatal crash telemetry must complete its bounded webhook request before JVM exit.
 - [Enforcement PIN ownership](enforcement-pin-ownership.md) — Global PIN protects persistent enforcement changes; Session PIN only protects ending focus sessions.
 - [Windows network enforcement boundaries](windows-network-enforcement.md) — Hosts and firewall cutoffs need elevation and cannot guarantee browser URL enforcement against Secure DNS or existing connections.
+- [Windows uninstall protection and Store packaging](windows-uninstall-protection.md) — MSIX removal is OS-controlled; direct installers can guard normal uninstall flows but not administrators or offline removal.
 - [Focus Launcher task brief](focus-launcher-task-brief.md) — Imported migration plan and live comparison govern future dedicated-window launcher work.
