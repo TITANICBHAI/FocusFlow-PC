@@ -8,37 +8,34 @@
 
 ## Overall status
 
-**Not started in the current implementation.** The application still uses the
-legacy single-window `FocusLauncherOverlay` architecture. The task brief
-describes a migration to dedicated undecorated launcher windows per monitor,
-with foreground-aware Z-order, configurable breaks, and a session PIN.
+**Implementation complete; Windows runtime verification pending.** The
+application now uses dedicated undecorated launcher windows per monitor, with
+foreground-aware Z-order, configurable breaks, a taskbar guard, and a
+one-time session PIN. Kotlin compilation and the Replit desktop workflow pass.
 
 ## Task-by-task comparison
 
 | Task | Status | Current implementation | Remaining work |
 |---|---|---|---|
-| T-01 — `SetWindowPos` binding | ⬜ Missing | `User32Extra` exposes `ShowWindow`, but no `SetWindowPos`, topmost handles, or `SWP_*` flags. | Add the JNA declaration and constants. |
-| T-02 — launcher foreground callback | ⬜ Missing | `ProcessMonitor.onForegroundChanged()` performs enforcement only; there is no launcher callback field or invocation. | Add the volatile callback and notify it for launcher foreground changes. |
-| T-03 — `FocusLauncherService` overhaul | ⬜ Missing | The service uses `BREAK_USED_KEY`, a fixed five-minute `BREAK_SECONDS`, the two-argument `enter()`, and no overlay/break-count/session-PIN flows or taskbar guard. | Apply the state, PIN, configurable-break, callback, and taskbar-guard changes from the brief. |
-| T-04 — `LauncherWindow.kt` | ⬜ Missing | No `src/main/kotlin/com/focusflow/ui/launcher/` package exists. | Add the multi-monitor window host and Win32 Z-order handling. |
-| T-05 — `LauncherContent.kt` | ⬜ Missing | No dedicated launcher content file exists; content is still in `FocusLauncherOverlay.kt`. | Add the launcher UI, app tiles, hard-lock controls, break screen, secondary-screen lock, and PIN dialog. |
-| T-06 — `Main.kt` integration | ⬜ Old architecture | `Main.kt` still derives `isKioskMode`, toggles the main window between floating/fullscreen, and sets `alwaysOnTop = isKioskMode`. | Render `LauncherWindowHost()` and hide the normal main window while the launcher is active. |
-| T-07 — setup screen | 🟨 Partial | The picker loads apps from block rules and daily allowances, and the confirm dialog calls `enter()` directly. | Load all curated apps, add break count/duration chips, and show the generated session PIN before entering. |
-| T-08 — remove legacy overlay | ⬜ Not done | `FocusLauncherOverlay.kt` exists and `App.kt` imports/calls both `FocusLauncherOverlay` and `FocusLauncherBreakBanner`. | Remove the call sites, then delete the legacy overlay file. |
+| T-01 — `SetWindowPos` binding | ✅ Complete | `User32Extra` now exposes `SetWindowPos`, topmost handles, and `SWP_*` flags. | Verified by successful Kotlin compilation. |
+| T-02 — launcher foreground callback | ✅ Complete | `ProcessMonitor` now exposes a volatile launcher callback and invokes it before enforcement cooldown filtering. | Verified by successful Kotlin compilation. |
+| T-03 — `FocusLauncherService` overhaul | ✅ Complete | The service now supports taskbar guarding, foreground-aware visibility, configurable break counts/durations, and one-time session PINs. | Verified by successful Kotlin compilation. |
+| T-04 — `LauncherWindow.kt` | ✅ Complete | Added the multi-monitor undecorated window host with Win32 Z-order handling. | Verified by successful Kotlin compilation. |
+| T-05 — `LauncherContent.kt` | ✅ Complete | Added launcher UI, app tiles, hard-lock controls, break screen, secondary-screen lock, and PIN dialog. | Verified by successful Kotlin compilation. |
+| T-06 — `Main.kt` integration | ✅ Complete | `Main.kt` renders `LauncherWindowHost()` and hides the normal main window while the launcher is active. | Verified by successful Kotlin compilation. |
+| T-07 — setup screen | ✅ Complete | The picker loads curated installed apps, restores selection, configures breaks, and shows the generated session PIN before entering. | Verified by successful Kotlin compilation. |
+| T-08 — remove legacy overlay | ✅ Complete | Removed the legacy overlay call sites and deleted `FocusLauncherOverlay.kt`. | Verified by successful Kotlin compilation and source reference check. |
 
 ## Evidence from the current code
 
-- `WinApiBindings.kt` ends its `User32Extra` interface at `ShowWindow`; no
-  `SetWindowPos` declaration is present.
-- `ProcessMonitor.kt` has `launcherAllowedProcesses`, but no
-  `onLauncherForegroundChanged` callback.
-- `FocusLauncherService.enter()` currently accepts only
-  `(apps, durationMinutes)`.
-- `FocusLauncherScreen.kt` currently constructs the initial list from
-  `Database.getBlockRules()` and `Database.getDailyAllowances()`.
-- `Main.kt` currently uses the old `LaunchedEffect(isKioskMode, launcherBreak)`
-  and fullscreens the primary application window.
-- `App.kt` still renders the legacy overlay inside the root content box.
+- `User32Extra` now includes `SetWindowPos`, topmost handles, and `SWP_*` flags.
+- `ProcessMonitor` now emits launcher foreground callbacks before cooldown filtering.
+- `FocusLauncherService.enter()` now accepts break count and duration and owns the
+  launcher visibility, taskbar guard, and session-PIN state.
+- `FocusLauncherScreen.kt` now loads curated installed apps and stages a one-time
+  session PIN before starting.
+- `Main.kt` now hides the normal window and hosts dedicated launcher windows.
+- `App.kt` no longer renders the legacy overlay.
 
 ## Verification checklist
 
@@ -46,7 +43,7 @@ These checks are intentionally not marked complete by static comparison alone.
 The Windows-only behavior must be exercised after implementation on an elevated
 Windows build.
 
-- [ ] App starts normally, no crash
+- [x] App starts normally, no crash (successful Kotlin build and restarted desktop workflow)
 - [x] Normal main window is configured at 1100×720
 - [ ] Start a launcher session → main window hides to tray
 - [ ] Launcher window appears fullscreen, undecorated, and without close controls
@@ -60,6 +57,9 @@ Windows build.
 - [ ] Break ends automatically and enforcement re-engages
 - [ ] Secondary monitors show the lock screen
 - [ ] A crash during a session restores the taskbar on next launch
+
+> The unchecked launcher behavior items require an elevated Windows runtime and
+> cannot be exercised in the Linux Replit environment.
 
 ## Scope exclusions from the brief
 

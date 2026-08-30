@@ -25,6 +25,12 @@ import java.util.concurrent.TimeUnit
 interface User32Extra : StdCallLibrary {
     companion object {
         val INSTANCE: User32Extra = Native.load("user32", User32Extra::class.java, W32APIOptions.DEFAULT_OPTIONS)
+        val HWND_TOPMOST   = HWND(Pointer(-1))
+        val HWND_NOTOPMOST = HWND(Pointer(-2))
+        const val SWP_NOSIZE     = 0x0001
+        const val SWP_NOMOVE     = 0x0002
+        const val SWP_NOACTIVATE = 0x0010
+        const val SWP_SHOWWINDOW = 0x0040
     }
 
     fun GetForegroundWindow(): HWND
@@ -49,6 +55,13 @@ interface User32Extra : StdCallLibrary {
 
     /** Show, hide, or change the state of a window. SW_HIDE=0, SW_SHOW=5. */
     fun ShowWindow(hWnd: HWND, nCmdShow: Int): Boolean
+
+    fun SetWindowPos(
+        hWnd: HWND,
+        hWndInsertAfter: HWND?,
+        X: Int, Y: Int, cx: Int, cy: Int,
+        uFlags: Int
+    ): Boolean
 }
 
 interface Psapi : StdCallLibrary {

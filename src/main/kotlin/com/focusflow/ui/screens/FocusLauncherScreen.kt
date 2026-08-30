@@ -54,6 +54,10 @@ fun FocusLauncherScreen() {
     var isLoading        by remember { mutableStateOf(true) }
     var confirmEnter     by remember { mutableStateOf(false) }
     var showAdminWarning by remember { mutableStateOf(false) }
+    var breaksAllowed     by remember { mutableStateOf(1) }
+    var breakDurationMins by remember { mutableStateOf(5) }
+    var showPinBeforeEnter by remember { mutableStateOf(false) }
+    var generatedPin       by remember { mutableStateOf("") }
 
     // Checked once on composition — running "net session" is a blocking call so we
     // do it inside remember{} rather than on every recomposition.
@@ -65,30 +69,17 @@ fun FocusLauncherScreen() {
 
     LaunchedEffect(Unit) {
         val apps = withContext(Dispatchers.IO) {
-            val fromRules = Database.getBlockRules().map { rule ->
-                FocusLauncherApp(
-                    processName = rule.processName,
-                    displayName = rule.displayName,
-                    exePath     = InstalledAppsScanner.getExePathFor(rule.processName)
-                )
-            }
-            val fromAllowances = Database.getDailyAllowances().map { da ->
-                FocusLauncherApp(
-                    processName = da.processName,
-                    displayName = da.displayName,
-                    exePath     = InstalledAppsScanner.getExePathFor(da.processName)
-                )
-            }
-            (fromRules + fromAllowances)
-                .distinctBy { it.processName.lowercase() }
+            InstalledAppsScanner.getCuratedApps()
+                .map { FocusLauncherApp(it.processName, it.displayName, it.exePath) }
                 .sortedBy { it.displayName }
         }
         availableApps = apps
 
-        // Load persisted selection; fall back to all-selected if none saved yet
+        // Restore the last selection, intersected with apps currently installed.
         val persisted = withContext(Dispatchers.IO) { Database.getSetting("launcher_selected_apps") }
         selectedApps = if (persisted != null && persisted.isNotBlank()) {
-            val saved     = persisted.split(",").filter { it.isNotBlank() }.toSet()
+            val saved     = persisted.split(",").filter { it.isNotBlank() }
+                .map { it.trim().lowercase() }.toSet()
             val available = apps.map { it.processName.lowercase() }.toSet()
             val matching  = available.intersect(saved)
             if (matching.isEmpty()) available else matching
@@ -262,7 +253,7 @@ fun FocusLauncherScreen() {
             Text(strings.launcherAppsToInclude, color = OnSurface, fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(4.dp))
-            Text("Pulled from your FocusFlow lists. Uncheck any you don't want this session.",
+            Text("Installed apps detected on this computer. Uncheck any you don't want this session.",
                 color = OnSurface2, style = MaterialTheme.typography.bodySmall)
         }
 
@@ -393,6 +384,42 @@ fun FocusLauncherScreen() {
                             color      = if (selected) Color.White else OnSurface2,
                             style      = MaterialTheme.typography.bodySmall,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                    }
+                }
+            }
+        }
+
+        // ── Break configuration ──────────────────────────────────────────────
+        item {
+            Text("Breaks", color = OnSurface, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0 to "None", 1 to "1", 2 to "2", -1 to "∞").forEach { (count, label) ->
+                    FilterChip(
+                        selected = breaksAllowed == count,
+                        onClick = { breaksAllowed = count },
+                        label = { Text(label) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Purple80.copy(alpha = .2f),
+                            selectedLabelColor = Purple80
+                        )
+                    )
+                }
+            }
+            if (breaksAllowed != 0) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(3, 5, 10, 15).forEach { mins ->
+                        FilterChip(
+                            selected = breakDurationMins == mins,
+                            onClick = { breakDurationMins = mins },
+                            label = { Text("${mins}m") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Purple80.copy(alpha = .2f),
+                                selectedLabelColor = Purple80
+                            )
+                        )
                     }
                 }
             }
@@ -536,7 +563,11 @@ fun FocusLauncherScreen() {
                         color = OnSurface2, style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "You get one 5-minute break per day. Exit requires your GlobalPin if hard-locked.",
+                        when {
+                            breaksAllowed == 0 -> "Breaks are disabled for this session."
+                            breaksAllowed == -1 -> "Breaks are unlimited; each lasts $breakDurationMins minutes."
+                            else -> "$breaksAllowed break${if (breaksAllowed == 1) "" else "s"} available; each lasts $breakDurationMins minutes."
+                        },
                         color = Warning, style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -548,7 +579,11 @@ fun FocusLauncherScreen() {
                         val saved = appsForSession.joinToString(",") { it.processName.lowercase() }
                         scope.launch(Dispatchers.IO) {
                             Database.setSetting("launcher_selected_apps", saved)
-                            FocusLauncherService.enter(appsForSession, duration)
+                            val pin = FocusLauncherService.preparePin()
+                            withContext(Dispatchers.Main) {
+                                generatedPin = pin
+                                showPinBeforeEnter = true
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
@@ -558,6 +593,70 @@ fun FocusLauncherScreen() {
                 TextButton(onClick = { confirmEnter = false }) {
                     Text(strings.btnCancel, color = OnSurface2)
                 }
+            }
+        )
+    }
+
+    // ── One-time session PIN ──────────────────────────────────────────────────
+    if (showPinBeforeEnter) {
+        val duration = DURATION_PRESETS[durationIndex].second
+        AlertDialog(
+            onDismissRequest = { },
+            containerColor = Surface2,
+            shape = RoundedCornerShape(20.dp),
+            icon = {
+                Icon(Icons.Default.Key, null, tint = Purple80, modifier = Modifier.size(32.dp))
+            },
+            title = {
+                Text("Your Session PIN", color = OnSurface, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Write this down — you'll need it to take breaks and end the session.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Surface3)
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            generatedPin,
+                            color = Purple80,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        "This PIN will not be shown again.",
+                        color = Warning,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPinBeforeEnter = false
+                        generatedPin = ""
+                        val appsForSession = availableApps.filter {
+                            it.processName.lowercase() in selectedApps
+                        }
+                        scope.launch(Dispatchers.IO) {
+                            FocusLauncherService.enter(
+                                apps = appsForSession,
+                                durationMinutes = duration,
+                                breaksAllowed = breaksAllowed,
+                                breakSeconds = breakDurationMins * 60
+                            )
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                ) { Text("I've noted it — Start") }
             }
         )
     }

@@ -15,6 +15,7 @@ import com.focusflow.enforcement.WatchdogInstaller
 import com.focusflow.enforcement.FloatingBlockOverlay
 import com.focusflow.services.*
 import com.focusflow.services.FocusLauncherService
+import com.focusflow.ui.launcher.LauncherWindowHost
 
 fun main() = application {
     // ── Crash reporter — MUST be first, before any other service ──────────────
@@ -105,29 +106,11 @@ fun main() = application {
         placement = WindowPlacement.Floating
     )
 
-    val launcherActive   by FocusLauncherService.isActive.collectAsState()
-    val launcherBreak    by FocusLauncherService.breakActive.collectAsState()
-    val isKioskMode      = launcherActive && !launcherBreak
-
-    LaunchedEffect(isKioskMode, launcherBreak) {
-        when {
-            isKioskMode -> {
-                // Full kiosk: go fullscreen and keep the window visible/on-top.
-                windowVisible = true
-                windowState.placement = WindowPlacement.Fullscreen
-            }
-            launcherBreak -> {
-                // Break is active while a session is still running.
-                // Taskbar has been restored by FocusLauncherService.startBreak() but
-                // the window is still fullscreen from kiosk mode — restore it to a
-                // normal floating window so the user can actually reach their desktop.
-                windowState.placement = WindowPlacement.Floating
-            }
-            !launcherActive -> {
-                // Session fully ended: return window to floating.
-                windowState.placement = WindowPlacement.Floating
-            }
-        }
+    val launcherActive by FocusLauncherService.isActive.collectAsState()
+    LaunchedEffect(launcherActive) {
+        // LauncherWindowHost owns the fullscreen session windows. Keep the
+        // normal FocusFlow window hidden until the session ends.
+        windowVisible = !launcherActive
     }
 
     // Dynamic title: tracks active session countdown in the OS window title bar
@@ -255,10 +238,11 @@ fun main() = application {
     }
     val appIcon = if (iconAvailable) painterResource("focusflow_256.png") else null
 
+    LauncherWindowHost()
+
     if (windowVisible) {
         Window(
             onCloseRequest = {
-                if (isKioskMode) return@Window  // Cannot close window during kiosk mode
                 if (SystemTrayManager.isSupported) {
                     windowVisible = false
                     SystemTrayManager.showNotification(
@@ -270,9 +254,9 @@ fun main() = application {
                 }
             },
             state       = windowState,
-            title       = if (isKioskMode) "FocusFlow — Kiosk Mode" else windowTitle,
+            title       = windowTitle,
             icon        = appIcon,
-            alwaysOnTop = isKioskMode
+            alwaysOnTop = false
         ) {
             App()
         }

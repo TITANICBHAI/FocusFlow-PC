@@ -46,8 +46,6 @@ import com.focusflow.ui.components.AndroidPromoDialog
 import com.focusflow.ui.components.BlockOverlay
 import com.focusflow.ui.components.EdgeExtensionPromoDialog
 import com.focusflow.ui.components.openEdgeExtensionStore
-import com.focusflow.ui.components.FocusLauncherBreakBanner
-import com.focusflow.ui.components.FocusLauncherOverlay
 import com.focusflow.ui.components.GlobalPinSetupDialog
 import com.focusflow.ui.components.OsBanner
 import com.focusflow.ui.components.OnboardingDialog
@@ -222,12 +220,6 @@ fun App() {
         }
     }
 
-    // During any launcher session (kiosk active OR break active), the fullscreen
-    // overlay covers the UI. ThemeToggleButton is declared AFTER FocusLauncherOverlay
-    // in the Box, giving it higher hit-test priority in Compose. Hide it completely
-    // while the launcher is running so no UI element can receive clicks above the overlay.
-    val launcherActive by FocusLauncherService.isActive.collectAsState()
-
     FocusFlowTheme {
         val sessionState by FocusSessionService.state.collectAsState()
         val navigate: (Screen) -> Unit = { dest ->
@@ -256,7 +248,6 @@ fun App() {
                 }
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                FocusLauncherBreakBanner()
                 OsBanner()
 
                 Row(modifier = Modifier.weight(1f)) {
@@ -323,33 +314,25 @@ fun App() {
                 }
             }
 
-            FocusLauncherOverlay()
-
             BlockOverlay(
                 visible   = overlayVisible,
                 appName   = overlayAppName,
                 onDismiss = { AppBlocker.hideOverlay() }
             )
 
-            // Hidden during any launcher session — the overlay must be fully impenetrable.
-            // ThemeToggleButton is declared after FocusLauncherOverlay in this Box, which
-            // gives it higher Compose hit-test priority; hiding it prevents clicks from
-            // leaking through the overlay to the theme toggle in the top-right corner.
-            if (!launcherActive) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 10.dp, end = 14.dp)
-                ) {
-                    if (!isAdmin && currentScreen in ADMIN_BUTTON_SCREENS) {
-                        RestartAsAdminButton(
-                            activeAdminFeatures = activeAdminFeatures
-                        )
-                    }
-                    ThemeToggleButton()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 10.dp, end = 14.dp)
+            ) {
+                if (!isAdmin && currentScreen in ADMIN_BUTTON_SCREENS) {
+                    RestartAsAdminButton(
+                        activeAdminFeatures = activeAdminFeatures
+                    )
                 }
+                ThemeToggleButton()
             }
         }
 

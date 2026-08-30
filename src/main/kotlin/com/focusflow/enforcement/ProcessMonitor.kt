@@ -113,6 +113,13 @@ object ProcessMonitor {
     @Volatile var launcherAllowedProcesses: Set<String> = emptySet()
 
     /**
+     * Set by FocusLauncherService while a launcher session is active.
+     * Called for every foreground change so the launcher can lower itself for
+     * allowed apps and reclaim topmost ordering for other processes.
+     */
+    @Volatile var onLauncherForegroundChanged: ((processName: String) -> Unit)? = null
+
+    /**
      * System processes that are always safe in launcher mode — never kill these.
      *
      * Covers six categories:
@@ -325,6 +332,13 @@ object ProcessMonitor {
     fun onForegroundChanged(processName: String, pid: Long = 0L) {
         if (!isAnyEnforcementActive()) return
         val lower = processName.lowercase()
+
+        // The launcher needs every foreground transition, including allowed
+        // processes. Do this before the enforcement cooldown gate.
+        if (launcherAllowedProcesses.isNotEmpty()) {
+            onLauncherForegroundChanged?.invoke(processName)
+        }
+
         val now   = System.currentTimeMillis()
         // Fast pre-check: discard obvious repeat events before spending coroutine
         // overhead. This prevents a rapid window-switching storm from queuing
