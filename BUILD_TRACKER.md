@@ -231,6 +231,31 @@ focusflow-pc/
 
 ---
 
+## Imported Focus Launcher Task Plan
+
+The implementation brief imported from the workspace attachment is preserved
+at [AGENT_TASKS_1788110587234.md](AGENT_TASKS_1788110587234.md). Its live
+comparison and checklist are tracked separately in
+[AGENT_TASKS_1788110587234_TRACKING.md](AGENT_TASKS_1788110587234_TRACKING.md).
+
+Current status: the plan is **not started** against the current code. The app
+still uses the legacy single-window `FocusLauncherOverlay`; T-01 through T-06
+and T-08 are missing, while T-07 is only partially aligned. Do not mark a task
+complete until its compile/runtime condition in the imported brief is verified.
+
+### Imported plan task checklist
+
+- [ ] T-01 — Add `SetWindowPos` to `User32Extra`
+- [ ] T-02 — Add the launcher foreground callback to `ProcessMonitor`
+- [ ] T-03 — Overhaul `FocusLauncherService`
+- [ ] T-04 — Create `LauncherWindow.kt`
+- [ ] T-05 — Create `LauncherContent.kt`
+- [ ] T-06 — Integrate launcher windows in `Main.kt`
+- [ ] T-07 — Update `FocusLauncherScreen.kt`
+- [ ] T-08 — Remove `FocusLauncherOverlay.kt`
+
+---
+
 ## Build Instructions
 
 ```bash
