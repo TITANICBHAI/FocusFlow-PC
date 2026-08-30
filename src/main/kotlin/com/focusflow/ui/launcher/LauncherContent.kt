@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -59,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.services.FocusLauncherApp
 import com.focusflow.services.FocusLauncherService
+import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.theme.Error
 import com.focusflow.ui.theme.OnSurface
 import com.focusflow.ui.theme.OnSurface2
@@ -89,20 +92,30 @@ private fun MainLauncherScreen() {
     val canBreak by FocusLauncherService.canTakeBreak.collectAsState()
     val breaksUsed by FocusLauncherService.breaksUsed.collectAsState()
     val breaksTotal by FocusLauncherService.breaksTotal.collectAsState()
+    val gridState = rememberLazyGridState()
     var showPinForExit by remember { mutableStateOf(false) }
     var showConfirmExit by remember { mutableStateOf(false) }
     var showPinForBreak by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         LauncherTopBar(hardLocked)
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 148.dp),
-            modifier = Modifier.weight(1f).padding(horizontal = 24.dp),
-            contentPadding = PaddingValues(vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            items(apps, key = { it.processName.lowercase() }) { AppTile(it) }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 148.dp),
+                state = gridState,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                contentPadding = PaddingValues(vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(apps, key = { it.processName.lowercase() }) { AppTile(it) }
+            }
+            FfVerticalScrollbar(
+                gridState = gridState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(end = 8.dp)
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth()

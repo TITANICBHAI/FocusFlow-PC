@@ -54,7 +54,15 @@ internal val CHANGELOG = listOf(
             "IMP" to "Keyword Blocker help now explains that regular keyword matches can close the entire browser and recommends Network Cutoff Rules when users need to keep tabs and unsaved work open",
             "REMOVED" to "Resource Monitor Service and feature-usage telemetry — FocusFlow no longer collects or sends periodic JVM/OS health snapshots, threshold alerts, or feature activity events",
             "FIX" to "Discord crash reporting now completes its bounded webhook request before the JVM exits, preventing fatal reports from being lost",
-            "FIX" to "Feedback delivery now checks Discord responses and reports failures instead of showing a false success state"
+            "FIX" to "Feedback delivery now checks Discord responses and reports failures instead of showing a false success state",
+            "NEW" to "Focus Launcher now uses dedicated undecorated fullscreen windows on every monitor, with a secondary-screen lock view and the normal FocusFlow window hidden during sessions",
+            "NEW" to "Focus Launcher sessions now support a one-time generated session PIN for ending sessions, unlocking Hard Lock, and starting breaks",
+            "NEW" to "Launcher sessions now support no-break, fixed-count, or unlimited break plans with configurable 3, 5, 10, or 15-minute break durations",
+            "IMP" to "Launcher window Z-order now follows the foreground app: selected apps can be used normally while other foreground processes bring the launcher back to the top",
+            "IMP" to "Taskbar hiding is continuously guarded during launcher mode and automatically released during breaks, session exit, and crash recovery",
+            "IMP" to "Focus Launcher app selection now detects installed curated apps and restores the user's previous selection",
+            "IMP" to "Focus Launcher now shows the same always-visible scrollbar used throughout the app, making long app lists easy to navigate",
+            "REMOVED" to "Replaced the legacy single-window Focus Launcher overlay with the dedicated multi-monitor launcher window architecture"
         )
     ),
     ChangelogEntry(
