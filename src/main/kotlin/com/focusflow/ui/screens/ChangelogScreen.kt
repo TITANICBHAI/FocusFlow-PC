@@ -31,11 +31,15 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
-        version    = "1.1.9",
+        version    = "2.0.0",
         date       = "August 2026",
         badge      = "NEW",
         badgeColor = Purple80,
         changes    = listOf(
+            "SEC" to "Direct EXE/MSI installations now block common uninstall processes while Nuclear Mode is active, helping prevent ordinary uninstall attempts during protected focus periods",
+            "SEC" to "Protected quit and uninstall flows now respect active Standalone Blocks, Always-On Global PIN protection, Focus Session or Focus Launcher Session PINs, and Nuclear Mode PINs",
+            "IMP" to "MSIX installations are explicitly exempt from direct-installer uninstall protection because Windows controls Store package removal",
+            "NEW" to "Dashboard notice explains how to switch from the Microsoft Store package to the latest GitHub EXE when anti-uninstall protection is needed",
             "NEW" to "Block Schedules now let you select installed apps, search the app list, add custom process names, and edit, enable, disable, or delete recurring schedules",
             "SEC" to "Global PIN protection now covers schedule changes, keyword changes, VPN and Network Shield changes, Always-On disabling, and disabling Windows startup",
             "NEW" to "Global PIN management is available directly in Block Defense, including set, change, generate, and remove actions",

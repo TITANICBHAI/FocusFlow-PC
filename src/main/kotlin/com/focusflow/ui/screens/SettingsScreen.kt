@@ -822,7 +822,7 @@ fun SettingsScreen() {
 
         item {
             SectionCard(title = strings.settingsAbout) {
-                Text("FocusFlow PC v1.1.9", color = OnSurface)
+                Text("FocusFlow PC v2.0.0", color = OnSurface)
                 Spacer(Modifier.height(4.dp))
                 Text("Kotlin 1.9.22 + Compose Multiplatform Desktop 1.6.1", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 Text("Enforcement: JNA Win32 + WinEventHook + Nuclear Mode + Windows Firewall", style = MaterialTheme.typography.bodySmall, color = OnSurface2)

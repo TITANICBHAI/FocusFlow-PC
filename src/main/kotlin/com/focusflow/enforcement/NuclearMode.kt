@@ -315,9 +315,14 @@ object NuclearMode {
         }
 
         if (!silent) {
+            val uninstallNotice = if (InstallVariant.isWindowsDirectInstall) {
+                " Common EXE/MSI uninstallers are blocked while Nuclear Mode is active."
+            } else {
+                ""
+            }
             SystemTrayManager.showNotification(
                 "Nuclear Mode ON",
-                "All escape routes are blocked. Stay focused.",
+                "All escape routes are blocked.$uninstallNotice Stay focused.",
                 TrayIcon.MessageType.WARNING
             )
             SystemTrayManager.updateTooltip("FocusFlow — NUCLEAR MODE ACTIVE")

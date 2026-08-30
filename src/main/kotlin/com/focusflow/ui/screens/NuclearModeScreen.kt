@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.enforcement.NuclearMode
+import com.focusflow.enforcement.InstallVariant
 import com.focusflow.services.NuclearPin
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.components.NuclearPinGateDialog
@@ -141,7 +142,10 @@ fun NuclearModeScreen() {
                         Spacer(Modifier.height(2.dp))
                         Text(
                             if (nuclearActive)
-                                "Monitoring ${NuclearMode.escapeProcessCount} escape routes every 500 ms"
+                                if (InstallVariant.isWindowsDirectInstall)
+                                    "Monitoring ${NuclearMode.escapeProcessCount} escape routes every 500 ms, including EXE/MSI uninstallers"
+                                else
+                                    "Monitoring ${NuclearMode.escapeProcessCount} escape routes every 500 ms"
                             else
                                 "Enable to block Task Manager, terminals, registry editors and ${NuclearMode.escapeProcessCount - 3} more",
                             style = MaterialTheme.typography.bodySmall,
@@ -181,7 +185,10 @@ fun NuclearModeScreen() {
 
                 Text(
                     "⚠ Nuclear Mode kills system utilities every 500 ms. " +
-                    "Use during deep work sessions only — you must disable it from within FocusFlow.",
+                    if (InstallVariant.isWindowsDirectInstall)
+                        "It also blocks common EXE/MSI uninstallers until you disable it from within FocusFlow."
+                    else
+                        "Use during deep work sessions only — you must disable it from within FocusFlow.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Warning
                 )
@@ -342,6 +349,15 @@ fun NuclearModeScreen() {
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurface2
                 )
+                if (InstallVariant.isWindowsDirectInstall) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "On direct EXE/MSI installs, common uninstallers are included in this protection. " +
+                            "MSIX package removal remains controlled by Windows.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Warning
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 // Display in a 2-column grid using chunked rows
                 val names = NuclearMode.escapeProcessNames.sorted()
