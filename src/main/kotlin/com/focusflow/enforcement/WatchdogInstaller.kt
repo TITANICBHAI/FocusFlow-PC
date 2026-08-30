@@ -20,6 +20,9 @@ import java.io.File
  */
 object WatchdogInstaller {
 
+    // This is crash recovery only. A Windows administrator or third-party
+    // uninstaller can still remove scheduled tasks and application files.
+
     private const val TASK_NAME         = "FocusFlowWatchdog"
     private const val GUARD_TASK_NAME   = "FocusFlowTaskbarGuard"
 

@@ -111,8 +111,8 @@ object NetworkBlocker {
     fun addRule(processName: String): Boolean {
         if (!isWindows || !isRunningAsAdmin()) return false
 
-        val lower    = processName.lowercase()
-        val baseName = processName.removeSuffix(".exe").trim()
+        val lower    = normalizeProcessName(processName)
+        val baseName = lower.removeSuffix(".exe")
         val ruleName = RULE_PREFIX + baseName
 
         if (activeRules.contains(lower)) return true   // Already applied
@@ -128,21 +128,29 @@ object NetworkBlocker {
             "Remove-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue"
         )
 
-        runPowerShell("""
+        val created = runPowerShell("""
             New-NetFirewallRule `
                 -DisplayName '$ruleName' `
                 -Direction Outbound `
                 -Action Block `
                 -Program '$exePath' `
+                -Profile Any `
                 -Enabled True `
-                -ErrorAction SilentlyContinue | Out-Null
+                -ErrorAction Stop | Out-Null
         """.trimIndent())
 
-        // Verify the rule actually exists in the firewall
-        val verified = verifyRuleExists(ruleName)
+        // Verify the rule actually exists and is an enabled outbound block.
+        // Previously the create command's exit code was discarded and a stale
+        // enabled rule with the same display name could be treated as success.
+        val verified = created && verifyRuleExists(ruleName)
         if (verified) {
             activeRules.add(lower)
             pendingRules.remove(lower)
+        } else {
+            EnforcementLog.warn(
+                "NetworkBlocker",
+                "Firewall rule was not confirmed for $processName (path=$exePath)"
+            )
         }
         return verified
     }
@@ -150,7 +158,8 @@ object NetworkBlocker {
     private fun verifyRuleExists(ruleName: String): Boolean {
         val count = runPowerShellAndRead(
             "(Get-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue " +
-            "| Where-Object { \$_.Enabled -eq 'True' } | Measure-Object).Count"
+            "| Where-Object { \$_.Enabled -eq 'True' -and \$_.Direction -eq 'Outbound' " +
+            "-and \$_.Action -eq 'Block' } | Measure-Object).Count"
         )?.trim()?.toIntOrNull() ?: return false
         return count > 0
     }
@@ -160,13 +169,13 @@ object NetworkBlocker {
      */
     fun removeRule(processName: String) {
         if (!isWindows) return
-        val baseName = processName.removeSuffix(".exe").trim()
+        val baseName = normalizeProcessName(processName).removeSuffix(".exe")
         val ruleName = RULE_PREFIX + baseName
         runPowerShell(
             "Remove-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue"
         )
-        activeRules.remove(processName.lowercase())
-        pendingRules.remove(processName.lowercase())
+        activeRules.remove(normalizeProcessName(processName))
+        pendingRules.remove(normalizeProcessName(processName))
     }
 
     /**
@@ -220,7 +229,7 @@ object NetworkBlocker {
     // ── Queries ───────────────────────────────────────────────────────────────
 
     fun isBlocked(processName: String): Boolean =
-        activeRules.contains(processName.lowercase())
+        activeRules.contains(normalizeProcessName(processName))
 
     fun activeRuleCount(): Int = activeRules.size
 
@@ -228,13 +237,21 @@ object NetworkBlocker {
 
     // ── PowerShell helpers ────────────────────────────────────────────────────
 
-    private fun runPowerShell(script: String) {
+    private fun runPowerShell(script: String): Boolean {
         try {
-            ProcessBuilder(
+            val process = ProcessBuilder(
                 "powershell", "-NonInteractive", "-NoProfile",
                 "-ExecutionPolicy", "Bypass", "-Command", script
-            ).redirectErrorStream(true).start().waitFor()
-        } catch (_: Exception) {}
+            ).redirectErrorStream(true).start()
+            // Drain the merged output before waiting.  A failed firewall command
+            // can write enough diagnostic text to fill the pipe; closing it
+            // immediately would leave waitFor() blocked and make enforcement
+            // appear to hang.
+            process.inputStream.bufferedReader().readText()
+            return process.waitFor() == 0
+        } catch (_: Exception) {
+            return false
+        }
     }
 
     private fun runPowerShellAndRead(script: String): String? {
@@ -248,4 +265,11 @@ object NetworkBlocker {
             text.takeIf { it.isNotBlank() }
         } catch (_: Exception) { null }
     }
+
+    private fun normalizeProcessName(processName: String): String =
+        processName.trim()
+            .substringAfterLast('\\')
+            .substringAfterLast('/')
+            .lowercase()
+            .let { if (it.endsWith(".exe")) it else "$it.exe" }
 }

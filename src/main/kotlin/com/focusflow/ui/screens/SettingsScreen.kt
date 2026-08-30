@@ -79,6 +79,7 @@ fun SettingsScreen() {
     var showGlobalPinDialog   by remember { mutableStateOf(false) }
     var globalPinRemovalRequested by remember { mutableStateOf(false) }
     var showOverlayPinGate    by remember { mutableStateOf(false) }
+    var showStartupPinGate    by remember { mutableStateOf(false) }
     // Session PIN change dialog
     var showChangePinDialog   by remember { mutableStateOf(false) }
 
@@ -140,6 +141,16 @@ fun SettingsScreen() {
             SoundAversion.blockAlertStyle = aversionSound
             focusLockUntilTimer = lockUntil
             crashReportsEnabled = crashRep
+        }
+    }
+
+    fun setStartupEnabled(enabled: Boolean) {
+        startWithWin = enabled
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                if (enabled) WindowsStartupManager.enable()
+                else WindowsStartupManager.disable()
+            }
         }
     }
 
@@ -459,12 +470,10 @@ fun SettingsScreen() {
                             checked  = startWithWin,
                             enabled  = isWindows,
                             onCheckedChange = { enabled ->
-                                startWithWin = enabled
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        if (enabled) WindowsStartupManager.enable()
-                                        else         WindowsStartupManager.disable()
-                                    }
+                                if (!enabled && GlobalPin.isSet()) {
+                                    showStartupPinGate = true
+                                } else {
+                                    setStartupEnabled(enabled)
                                 }
                             }
                         )
@@ -1012,6 +1021,18 @@ fun SettingsScreen() {
                 setOverlayEnabled(false)
             },
             onDismiss = { showOverlayPinGate = false }
+        )
+    }
+
+    if (showStartupPinGate) {
+        PinGateDialog(
+            title    = "Global PIN required",
+            subtitle = "Enter your Global PIN to disable FocusFlow at Windows login.",
+            onSuccess = {
+                showStartupPinGate = false
+                setStartupEnabled(false)
+            },
+            onDismiss = { showStartupPinGate = false }
         )
     }
 

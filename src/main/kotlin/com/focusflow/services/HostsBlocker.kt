@@ -30,6 +30,8 @@ object HostsBlocker {
 
     /** Subdomains written for every blocked root domain. */
     private val SUBDOMAINS = listOf("", "www.", "m.", "mobile.", "app.")
+    /** Both address families must be covered; otherwise IPv6-capable browsers can bypass. */
+    private val LOOPBACK_ADDRESSES = listOf("127.0.0.1", "0.0.0.0", "::1")
 
     private val monitorScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // @Volatile: startMonitor() writes on the Compose application thread; stopMonitor()
@@ -78,10 +80,12 @@ object HostsBlocker {
                 var anyAdded = false
                 SUBDOMAINS.forEach { prefix ->
                     val fqdn = "$prefix$root"
-                    val line = "127.0.0.1  $fqdn  $MARKER\n"
-                    if (!existing.contains("127.0.0.1  $fqdn  $MARKER")) {
-                        sb.append(line)
-                        anyAdded = true
+                    LOOPBACK_ADDRESSES.forEach { address ->
+                        val line = "$address  $fqdn  $MARKER\n"
+                        if (!existing.contains("$address  $fqdn  $MARKER")) {
+                            sb.append(line)
+                            anyAdded = true
+                        }
                     }
                 }
 
@@ -105,8 +109,8 @@ object HostsBlocker {
             synchronized(writeLock) {
                 val hostsFile = java.io.File(HOSTS_PATH)
                 val lines     = normalizeContent(hostsFile.readText()).lines()
-                val exactEntries = SUBDOMAINS.map { prefix ->
-                    "127.0.0.1  $prefix$root  $MARKER"
+                val exactEntries = LOOPBACK_ADDRESSES.flatMap { address ->
+                    SUBDOMAINS.map { prefix -> "$address  $prefix$root  $MARKER" }
                 }.toSet()
                 val filtered = lines.filter { it.trim() !in exactEntries }
                 atomicWriteHosts(hostsFile, filtered.joinToString("\n") + "\n")
@@ -139,8 +143,12 @@ object HostsBlocker {
                 .lines()
                 .filter { it.contains(MARKER) }
                 .mapNotNull { line ->
-                    line.trim()
-                        .removePrefix("127.0.0.1").trim()
+                    val trimmed = line.trim()
+                    val address = LOOPBACK_ADDRESSES.firstOrNull { host ->
+                        trimmed.startsWith("$host ")
+                    } ?: return@mapNotNull null
+                    trimmed
+                        .removePrefix(address).trim()
                         .substringBefore(MARKER).trim()
                         .takeIf { it.isNotBlank() }
                 }
@@ -181,7 +189,9 @@ object HostsBlocker {
             val root    = domain.lowercase().removePrefix("www.").trim()
             val content = normalizeContent(java.io.File(HOSTS_PATH).readText())
             val present = SUBDOMAINS.count { prefix ->
-                content.contains("127.0.0.1  $prefix$root  $MARKER")
+                LOOPBACK_ADDRESSES.all { address ->
+                    content.contains("$address  $prefix$root  $MARKER")
+                }
             }
             present.toFloat() / SUBDOMAINS.size.toFloat()
         } catch (_: Exception) { 0f }

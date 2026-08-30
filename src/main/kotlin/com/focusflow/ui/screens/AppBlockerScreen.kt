@@ -58,6 +58,9 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.Instant
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 // ── Brand colors for known apps ────────────────────────────────────────────────
@@ -2109,7 +2112,8 @@ private fun TimedBlockTab() {
     }
 }
 
-/** Compact date + time spinner row. */
+/** Calendar + clock date/time selector used by both start and end fields. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DateTimePicker(
     date: LocalDate,
@@ -2122,76 +2126,133 @@ private fun DateTimePicker(
     onMinChange:  (Int) -> Unit
 ) {
     val strings = LocalizationManager.strings
+    var showDateDialog by remember { mutableStateOf(false) }
+    var showTimeDialog by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                val picked = Instant.ofEpochMilli(utcTimeMillis)
+                    .atZone(ZoneOffset.UTC)
+                    .toLocalDate()
+                return picked >= minDate
+            }
+        }
+    )
+    val timePickerState = rememberTimePickerState(
+        initialHour = hour,
+        initialMinute = minute,
+        is24Hour = true
+    )
+    val dateLabel = date.format(DateTimeFormatter.ofPattern("EEE, dd MMM yyyy"))
+    val timeLabel = "%02d:%02d".format(hour, minute)
+
     Column(
         modifier = Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(Surface3)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(Icons.Default.CalendarToday, null, tint = accentColor.copy(alpha = 0.75f), modifier = Modifier.size(15.dp))
-            Text("Date", color = OnSurface2, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-            SpinnerField(
-                value = "%02d".format(date.dayOfMonth),
-                label = strings.blockerDay,
-                onDec = { onDateChange(maxOf(date.minusDays(1), minDate)) },
-                onInc = { onDateChange(date.plusDays(1)) },
-                accentColor = accentColor,
-                modifier = Modifier.weight(1f)
-            )
-            SpinnerField(
-                value = "%02d".format(date.monthValue),
-                label = strings.blockerMonth,
-                onDec = {
-                    val previous = date.minusMonths(1)
-                    onDateChange(maxOf(previous.withDayOfMonth(minOf(date.dayOfMonth, previous.lengthOfMonth())), minDate))
-                },
-                onInc = {
-                    val next = date.plusMonths(1)
-                    onDateChange(next.withDayOfMonth(minOf(date.dayOfMonth, next.lengthOfMonth())))
-                },
-                accentColor = accentColor,
-                modifier = Modifier.weight(1f)
-            )
-            SpinnerField(
-                value = "${date.year}",
-                label = strings.blockerYear,
-                onDec = { onDateChange(maxOf(date.minusYears(1), minDate)) },
-                onInc = { onDateChange(date.plusYears(1)) },
-                accentColor = accentColor,
-                modifier = Modifier.weight(1.35f)
-            )
+            Icon(Icons.Default.CalendarToday, null, tint = accentColor.copy(alpha = 0.75f), modifier = Modifier.size(18.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Date", color = OnSurface2, style = MaterialTheme.typography.labelSmall)
+                Text(dateLabel, color = OnSurface, fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = { showDateDialog = true },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor)
+            ) {
+                Text("Change")
+            }
         }
         HorizontalDivider(color = OnSurface2.copy(alpha = 0.12f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(Icons.Default.Schedule, null, tint = accentColor.copy(alpha = 0.75f), modifier = Modifier.size(15.dp))
-            Text("Time", color = OnSurface2, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-            SpinnerField(
-                value = "%02d".format(hour),
-                label = strings.blockerHour,
-                onDec = { onHourChange((hour - 1 + 24) % 24) },
-                onInc = { onHourChange((hour + 1) % 24) },
-                accentColor = accentColor,
-                modifier = Modifier.weight(1f)
-            )
-            Text(":", color = OnSurface2, fontWeight = FontWeight.Bold)
-            SpinnerField(
-                value = "%02d".format(minute),
-                label = strings.blockerMinute,
-                onDec = { onMinChange((minute - 15 + 60) % 60) },
-                onInc = { onMinChange((minute + 15) % 60) },
-                accentColor = accentColor,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(Modifier.weight(1.35f))
+            Icon(Icons.Default.Schedule, null, tint = accentColor.copy(alpha = 0.75f), modifier = Modifier.size(18.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Time", color = OnSurface2, style = MaterialTheme.typography.labelSmall)
+                Text(timeLabel, color = OnSurface, fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = { showTimeDialog = true },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor)
+            ) {
+                Text("Change")
+            }
         }
+    }
+
+    if (showDateDialog) {
+        DatePickerDialog(
+            onDismissRequest = { showDateDialog = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { selected ->
+                            val picked = Instant.ofEpochMilli(selected).atZone(ZoneOffset.UTC).toLocalDate()
+                            onDateChange(if (picked < minDate) minDate else picked)
+                        }
+                        showDateDialog = false
+                    }
+                ) { Text("Apply", color = accentColor) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDateDialog = false }) {
+                    Text(strings.btnCancel, color = OnSurface2)
+                }
+            }
+        ) {
+            DatePicker(
+                state = datePickerState,
+                showModeToggle = false,
+                colors = DatePickerDefaults.colors(
+                    containerColor = Surface2,
+                    selectedDayContainerColor = accentColor,
+                    selectedDayContentColor = Surface
+                )
+            )
+        }
+    }
+
+    if (showTimeDialog) {
+        AlertDialog(
+            onDismissRequest = { showTimeDialog = false },
+            containerColor = Surface2,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Schedule, null, tint = accentColor, modifier = Modifier.size(18.dp))
+                    Text("Select time", color = OnSurface, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TimePicker(state = timePickerState)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onHourChange(timePickerState.hour)
+                        onMinChange(timePickerState.minute)
+                        showTimeDialog = false
+                    }
+                ) { Text("Apply", color = accentColor) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimeDialog = false }) {
+                    Text(strings.btnCancel, color = OnSurface2)
+                }
+            }
+        )
     }
 }
 

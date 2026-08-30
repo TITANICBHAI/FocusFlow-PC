@@ -91,11 +91,11 @@ private val HOW_TO_SECTIONS = listOf(
         icon  = Icons.Default.TextFields,
         title = "Keyword Blocker",
         steps = listOf(
-            "The Keyword Blocker watches browser tab titles and URLs for terms you define.",
+            "The desktop Keyword Blocker watches the foreground browser window title for terms you define.",
             "Go to Keyword Blocker in the sidebar and add words or phrases (e.g. 'trending', 'casino').",
             "Use Quick Presets to instantly add curated sets: Doomscroll Bait, Shopping, NSFW, etc.",
             "Toggle the blocker on/off without losing your keyword list.",
-            "No browsing data is stored — only the current tab title is checked locally."
+            "For URL-level browser protection, install the official FocusFlow Edge extension from the Keyword Blocker screen."
         )
     ),
     HowToSection(

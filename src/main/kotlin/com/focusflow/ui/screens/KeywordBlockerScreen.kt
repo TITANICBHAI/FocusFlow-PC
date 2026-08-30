@@ -2,6 +2,8 @@ package com.focusflow.ui.screens
 
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.components.ShortcutTooltip
+import com.focusflow.ui.components.PinGateDialog
+import com.focusflow.ui.components.openEdgeExtensionStore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,13 +22,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.data.models.NetworkCutoffRule
+import com.focusflow.data.models.NetworkRuleMode
+import com.focusflow.data.models.Screen
+import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.i18n.LocalizationManager
+import com.focusflow.services.GlobalPin
 import com.focusflow.services.KeywordMatchLogger
+import com.focusflow.ui.LocalNavigate
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 private data class KeywordPreset(
     val label: String,
@@ -55,12 +64,30 @@ fun KeywordBlockerScreen() {
     var expandLog            by remember { mutableStateOf(true) }
     var recentMatches        by remember { mutableStateOf(KeywordMatchLogger.getRecent()) }
     var showClearAllConfirm  by remember { mutableStateOf(false) }
+    var networkSuggestionCount by remember { mutableStateOf(0) }
+    var showPinGate           by remember { mutableStateOf(false) }
+    var pendingPinAction      by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val navigate = LocalNavigate.current
+
+    fun withPin(action: () -> Unit) {
+        if (GlobalPin.isSet()) {
+            pendingPinAction = action
+            showPinGate = true
+        } else {
+            action()
+        }
+    }
 
     fun reload() {
         scope.launch {
             withContext(Dispatchers.IO) {
                 enabled  = Database.isKeywordBlockerEnabled()
                 keywords = Database.getBlockedKeywords()
+                val networkKeywords = Database.getNetworkCutoffRules()
+                    .filter { it.mode == NetworkRuleMode.KEYWORD }
+                    .map { it.pattern.lowercase() }
+                    .toSet()
+                networkSuggestionCount = keywords.count { it.lowercase() !in networkKeywords }
             }
         }
     }
@@ -73,9 +100,39 @@ fun KeywordBlockerScreen() {
     }
 
     fun toggleEnabled(v: Boolean) {
-        scope.launch {
-            withContext(Dispatchers.IO) { Database.setKeywordBlockerEnabled(v) }
-            enabled = v
+        withPin {
+            scope.launch {
+                withContext(Dispatchers.IO) { Database.setKeywordBlockerEnabled(v) }
+                enabled = v
+            }
+        }
+    }
+
+    fun addKeywordsToNetworkShield() {
+        withPin {
+            scope.launch {
+                val added = withContext(Dispatchers.IO) {
+                    val existing = Database.getNetworkCutoffRules()
+                        .filter { it.mode == NetworkRuleMode.KEYWORD }
+                        .map { it.pattern.lowercase() }
+                        .toSet()
+                    val missing = keywords.filter { it.lowercase() !in existing }
+                    missing.forEach { keyword ->
+                        Database.upsertNetworkCutoffRule(
+                            NetworkCutoffRule(
+                                id = UUID.randomUUID().toString(),
+                                pattern = keyword.lowercase(),
+                                mode = NetworkRuleMode.KEYWORD,
+                                enabled = true
+                            )
+                        )
+                    }
+                    missing.size
+                }
+                ProcessMonitor.invalidateCaches()
+                networkSuggestionCount = (networkSuggestionCount - added).coerceAtLeast(0)
+                navigate(Screen.VPN_NETWORK)
+            }
         }
     }
 
@@ -123,10 +180,29 @@ fun KeywordBlockerScreen() {
                     )
                 }
                 Text(
-                    "Keywords are matched against the foreground window title on Windows. When a match is detected, the browser window is closed.",
+                    "Keywords are matched against the foreground window title on Windows. When a match is detected, the browser window is closed. FocusFlow cannot read a browser tab's URL or page description without a browser extension.",
                     color = OnSurface2,
                     style = MaterialTheme.typography.bodySmall
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Extension, null, tint = Purple80, modifier = Modifier.size(16.dp))
+                    Text(
+                        "Need URL-level browser protection? Use the official FocusFlow Edge extension.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = { openEdgeExtensionStore() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Install", color = Purple80, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 HorizontalDivider(color = Warning.copy(alpha = 0.15f), thickness = 1.dp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Default.Warning, null, tint = Warning, modifier = Modifier.size(13.dp).padding(top = 2.dp))
@@ -173,6 +249,56 @@ fun KeywordBlockerScreen() {
                 )
             }
 
+            // ── Network Shield suggestion ─────────────────────────────────────
+            if (keywords.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Purple80.copy(alpha = 0.08f))
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Shield, null, tint = Purple80, modifier = Modifier.size(18.dp))
+                        Text(
+                            "Also suggest these for Network Shield?",
+                            color = OnSurface,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        "Keyword blocking closes the matching browser window. Network Shield is a softer alternative: it keeps the app open and cuts its network access when the title matches. Nothing is added automatically.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { addKeywordsToNetworkShield() },
+                            enabled = networkSuggestionCount > 0,
+                            colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (networkSuggestionCount > 0)
+                                    "Add $networkSuggestionCount missing"
+                                else
+                                    "Already added"
+                            )
+                        }
+                        TextButton(onClick = { navigate(Screen.VPN_NETWORK) }) {
+                            Text("Open Network Shield", color = Purple80)
+                        }
+                    }
+                }
+            }
+
             // ── Add keyword ───────────────────────────────────────────────────
             Column(
                 modifier = Modifier.fillMaxWidth()
@@ -199,8 +325,10 @@ fun KeywordBlockerScreen() {
                             val kw = newKeyword.trim().lowercase()
                             if (kw.isNotEmpty() && !keywords.contains(kw)) {
                                 val updated = keywords + kw
-                                save(updated)
-                                newKeyword = ""
+                                withPin {
+                                    save(updated)
+                                    newKeyword = ""
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Purple80)
@@ -243,7 +371,7 @@ fun KeywordBlockerScreen() {
                             Text(kw, color = OnSurface, style = MaterialTheme.typography.bodyMedium)
                             ShortcutTooltip("Remove keyword") {
                                 IconButton(
-                                    onClick = { save(keywords - kw) },
+                                    onClick = { withPin { save(keywords - kw) } },
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(Icons.Default.Close, contentDescription = "Remove", tint = OnSurface2, modifier = Modifier.size(16.dp))
@@ -443,14 +571,14 @@ fun KeywordBlockerScreen() {
                             }
                             Spacer(Modifier.width(12.dp))
                             if (allAdded) {
-                                TextButton(onClick = { save(keywords - preset.keywords.toSet()) }) {
+                                TextButton(onClick = { withPin { save(keywords - preset.keywords.toSet()) } }) {
                                     Text(strings.kwbRemove, color = Error)
                                 }
                             } else {
                                 Button(
                                     onClick = {
                                         val merged = (keywords + preset.keywords).distinct()
-                                        save(merged)
+                                        withPin { save(merged) }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                                 ) {
@@ -487,7 +615,12 @@ fun KeywordBlockerScreen() {
             },
             confirmButton = {
                 Button(
-                    onClick = { save(emptyList()); showClearAllConfirm = false },
+                    onClick = {
+                        withPin {
+                            save(emptyList())
+                            showClearAllConfirm = false
+                        }
+                    },
                     colors  = ButtonDefaults.buttonColors(containerColor = Error)
                 ) { Text("Clear All") }
             },
@@ -495,6 +628,23 @@ fun KeywordBlockerScreen() {
                 TextButton(onClick = { showClearAllConfirm = false }) {
                     Text(strings.btnCancel, color = OnSurface2)
                 }
+            }
+        )
+    }
+
+    if (showPinGate) {
+        PinGateDialog(
+            title = "Global PIN required",
+            subtitle = "Enter your Global PIN to change keyword enforcement.",
+            onSuccess = {
+                showPinGate = false
+                pendingPinAction?.invoke()
+                pendingPinAction = null
+                com.focusflow.services.ReviewPromptService.triggerCheck()
+            },
+            onDismiss = {
+                showPinGate = false
+                pendingPinAction = null
             }
         )
     }

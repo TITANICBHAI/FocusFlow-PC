@@ -10,3 +10,4 @@
 - [Bug fixes audit round 8 — comprehensive diagnostic](bug-fixes-audit-2026-06-05-round8.md) — 3 functional bugs fixed: session taskId never passed to FocusSessionService.start() (all 3 paths), deleteWithUndo optimistic-removal UX, keyword count hardcoded 0 in enforcement panel. ProcessMonitor, SessionPin, GlobalPin, Settings, Dashboard all confirmed clean.
 - [Discord crash delivery](discord-crash-delivery.md) — Fatal crash telemetry must complete its bounded webhook request before JVM exit.
 - [Enforcement PIN ownership](enforcement-pin-ownership.md) — Global PIN protects persistent enforcement changes; Session PIN only protects ending focus sessions.
+- [Windows network enforcement boundaries](windows-network-enforcement.md) — Hosts and firewall cutoffs need elevation and cannot guarantee browser URL enforcement against Secure DNS or existing connections.

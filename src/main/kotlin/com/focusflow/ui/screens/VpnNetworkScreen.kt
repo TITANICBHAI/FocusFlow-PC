@@ -130,6 +130,11 @@ fun VpnNetworkScreen() {
                 "Block VPN clients and manage domain/keyword network cut-off rules.",
                 style = MaterialTheme.typography.bodyMedium, color = OnSurface2
             )
+            Text(
+                "Network rules require Administrator access. Domain rules use the Windows hosts file; browser Secure DNS, VPN routing, cached DNS, and existing connections can bypass or delay a cutoff.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Warning
+            )
 
             // ── VPN Shield ────────────────────────────────────────────────────────
             VpnSection(
@@ -162,9 +167,11 @@ fun VpnNetworkScreen() {
                                     }
                                 }
                             } else {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { VpnBlocker.isEnabled = true }
-                                    vpnEnabled = true
+                                withPin {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { VpnBlocker.isEnabled = true }
+                                        vpnEnabled = true
+                                    }
                                 }
                             }
                         },
