@@ -164,6 +164,7 @@ fun main() = application {
     // trigger a Windows "Not Responding" dialog.
     val doShutdown: () -> Unit = {
         Thread({
+            if (!UninstallProtectionService.authorizeQuit()) return@Thread
             FocusLauncherService.exit()
             KillSwitchService.deactivate()
             FocusSessionService.end(completed = false)

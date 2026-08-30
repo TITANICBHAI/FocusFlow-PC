@@ -3,6 +3,7 @@ package com.focusflow.enforcement
 import com.focusflow.data.Database
 import com.focusflow.services.SoundAversion
 import com.focusflow.services.SystemTrayManager
+import com.focusflow.services.UninstallProtectionService
 import kotlinx.coroutines.*
 import java.awt.TrayIcon
 import java.util.concurrent.ConcurrentHashMap
@@ -32,6 +33,13 @@ import com.focusflow.enforcement.killProcessesByName
  */
 object NuclearMode {
 
+    private val directInstallerProcesses = setOf(
+        "msiexec.exe",
+        "unins000.exe",
+        "uninstall.exe",
+        "uninstaller.exe"
+    )
+
     /** Processes that could be used to escape focus enforcement. */
     private val escapeProcesses = setOf(
         // Task management / process viewers
@@ -52,8 +60,10 @@ object NuclearMode {
         "mmc.exe", "eventvwr.exe",
         "wscript.exe", "cscript.exe", "mshta.exe",
         "wmic.exe", "winrm.exe",
-        // Installers (could download bypass tools)
-        "winget.exe", "msiexec.exe"
+        // Installers (could download bypass tools). Direct-installer
+        // uninstallers are also watched while Nuclear Mode is active.
+        "winget.exe", "msiexec.exe",
+        "unins000.exe", "uninstall.exe", "uninstaller.exe"
     )
 
     /**
@@ -142,7 +152,7 @@ object NuclearMode {
                         .lowercase()
                         .takeIf { it.isNotBlank() }
                 }
-                .filter { it in escapeProcesses }
+                .filter { it in escapeProcesses && shouldBlockInstallerProcess(it) }
                 .toSet()
         } catch (_: Exception) {
             emptySet()
@@ -158,7 +168,7 @@ object NuclearMode {
                     val cmd = ph.info().command().orElse(null) ?: return@mapNotNull null
                     java.io.File(cmd).name.lowercase().takeIf { it.isNotBlank() }
                 }
-                .filter { it in escapeProcesses }
+                .filter { it in escapeProcesses && shouldBlockInstallerProcess(it) }
                 .toSet()
         } catch (_: Exception) { emptySet() }
     }
@@ -182,9 +192,21 @@ object NuclearMode {
                     }
                     if (matchesKnownPath) java.io.File(rawPath).name.lowercase() else null
                 }
-                .filter { it.isNotBlank() }
+                .filter { it.isNotBlank() && shouldBlockInstallerProcess(it) }
                 .toSet()
         } catch (_: Exception) { emptySet() }
+    }
+
+    /**
+     * Installer processes are part of the direct EXE/MSI protection only.
+     * Store/MSIX removal is owned by Windows and must not be interfered with.
+     */
+    private fun shouldBlockInstallerProcess(processName: String): Boolean {
+        if (InstallVariant.isMsix && processName in directInstallerProcesses) return false
+        if (InstallVariant.isWindowsDirectInstall && processName in directInstallerProcesses) {
+            return !UninstallProtectionService.authorizeUninstallAttempt()
+        }
+        return true
     }
 
     // ── Layer 2: Kill (batch) + log ──────────────────────────────────────────
@@ -222,12 +244,14 @@ object NuclearMode {
     private fun applyFirewallLock() {
         if (!isRunningAsAdmin()) return
         escapeProcesses
+            .filter { InstallVariant.isWindowsDirectInstall || it !in directInstallerProcesses }
             .filter { it.endsWith(".exe") }
             .forEach { exe -> NetworkBlocker.addRule(exe) }
     }
 
     private fun removeFirewallLock() {
         escapeProcesses
+            .filter { InstallVariant.isWindowsDirectInstall || it !in directInstallerProcesses }
             .filter { it.endsWith(".exe") }
             .forEach { exe -> NetworkBlocker.removeRule(exe) }
     }

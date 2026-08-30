@@ -7,4 +7,4 @@ Microsoft Store/MSIX distribution must preserve the Windows-managed package life
 
 **Why:** Public FocusMe documentation and Reddit reports indicate that protected focus sessions can block ordinary uninstall/settings paths, while Windows and third-party administrative tools still provide escape routes. Microsoft Store policy also requires products not to compromise device security or functionality.
 
-**How to apply:** Keep Store/MSIX and direct EXE/MSI as separate distribution channels. Treat any direct-channel uninstall guard as optional, explicit, reversible, and fail-open during crashes; do not use it as a reason to claim MSIX itself is uninstall-proof.
+**How to apply:** Keep Store/MSIX and direct EXE/MSI as separate distribution channels. Runtime package detection must exempt MSIX from quit gates, uninstaller-process blocking, and installer firewall rules. Direct-channel protection belongs on normal quit plus Nuclear Mode's common uninstaller process path; keep it optional, explicit, reversible, and fail-open during crashes.

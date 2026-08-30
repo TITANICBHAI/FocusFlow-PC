@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
@@ -31,6 +32,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
@@ -40,9 +45,11 @@ import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.FocusInsightsService
 import com.focusflow.services.FocusSessionService
 import com.focusflow.services.SessionPin
+import com.focusflow.enforcement.InstallVariant
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.components.TaskCard
+import com.focusflow.ui.components.openUrl
 import com.focusflow.ui.theme.*
 import androidx.compose.ui.input.key.*
 import com.focusflow.ui.LocalNavigate
@@ -73,6 +80,7 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
     var blockedAttempts  by remember { mutableStateOf(0) }
     var insights         by remember { mutableStateOf(FocusInsightsService.Insights()) }
     var showWhatsNew     by remember { mutableStateOf(false) }
+    var showExeProtectionNotice by remember { mutableStateOf(false) }
     var showDonateDialog by remember { mutableStateOf(false) }
     val strings = LocalizationManager.strings
 
@@ -87,6 +95,9 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
             val al  = withContext(Dispatchers.IO) { Database.getDailyAllowances() }
             val ba  = withContext(Dispatchers.IO) { Database.getTemptationsInRange(today.toString(), today.toString()) }
             val lsv = withContext(Dispatchers.IO) { Database.getSetting("last_seen_version") }
+            val exeNoticeDismissed = withContext(Dispatchers.IO) {
+                Database.getSetting(EXE_PROTECTION_NOTICE_DISMISSED) == "true"
+            }
             tasks           = t
             streak          = s
             focusToday      = ft
@@ -104,6 +115,10 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
                 }
                 showWhatsNew = true
             }
+            // Store/MSIX users are the audience for this one-time direct-installer
+            // notice. EXE/MSI users do not need to be told to switch channels.
+            showExeProtectionNotice =
+                InstallVariant.isWindows && InstallVariant.isMsix && !exeNoticeDismissed
         }
     }
 
@@ -197,17 +212,40 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
                 }
             }
 
-            // ── What's New banner ─────────────────────────────────────────────
+            // ── Release and installer notices ─────────────────────────────────
             val navigate = LocalNavigate.current
-            AnimatedVisibility(
-                visible = showWhatsNew,
-                enter   = expandVertically(tween(350, easing = FastOutSlowInEasing)) + fadeIn(tween(300)),
-                exit    = shrinkVertically(tween(280)) + fadeOut(tween(220))
-            ) {
-                WhatsNewBanner(
-                    onViewChangelog = { showWhatsNew = false; navigate(Screen.CHANGELOG) },
-                    onDismiss       = { showWhatsNew = false }
-                )
+            if (showWhatsNew || showExeProtectionNotice) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    AnimatedVisibility(
+                        visible = showWhatsNew,
+                        modifier = Modifier.weight(1f),
+                        enter   = expandVertically(tween(350, easing = FastOutSlowInEasing)) + fadeIn(tween(300)),
+                        exit    = shrinkVertically(tween(280)) + fadeOut(tween(220))
+                    ) {
+                        WhatsNewBanner(
+                            onViewChangelog = { showWhatsNew = false; navigate(Screen.CHANGELOG) },
+                            onDismiss       = { showWhatsNew = false }
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = showExeProtectionNotice,
+                        modifier = Modifier.weight(1f),
+                        enter   = expandVertically(tween(350, easing = FastOutSlowInEasing)) + fadeIn(tween(300)),
+                        exit    = shrinkVertically(tween(280)) + fadeOut(tween(220))
+                    ) {
+                        ExeProtectionNotice(
+                            onDismiss = {
+                                showExeProtectionNotice = false
+                                scope.launch(Dispatchers.IO) {
+                                    Database.setSetting(EXE_PROTECTION_NOTICE_DISMISSED, "true")
+                                }
+                            }
+                        )
+                    }
+                }
             }
 
             // ── Scrollable content ────────────────────────────────────────────
@@ -711,6 +749,69 @@ private fun WhatsNewBanner(
             ) {
                 Text("Dismiss", color = OnSurface2, style = MaterialTheme.typography.bodySmall)
             }
+        }
+    }
+}
+
+private const val EXE_PROTECTION_NOTICE_DISMISSED = "exe_protection_notice_dismissed"
+private const val FOCUSFLOW_PC_GITHUB_RELEASES =
+    "https://github.com/TITANICBHAI/FocusFlow-PC/releases/latest"
+
+@Composable
+private fun ExeProtectionNotice(onDismiss: () -> Unit) {
+    val noticeText = buildAnnotatedString {
+        append("For stronger anti-uninstall protection, download the latest EXE from ")
+        pushStringAnnotation(tag = "URL", annotation = FOCUSFLOW_PC_GITHUB_RELEASES)
+        withStyle(
+            SpanStyle(
+                color = Purple80,
+                fontWeight = FontWeight.SemiBold,
+                textDecoration = TextDecoration.Underline
+            )
+        ) {
+            append("TITANICBHAI/FocusFlow-PC on GitHub")
+        }
+        pop()
+        append(" and enable Nuclear Mode after installing it.")
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Warning.copy(alpha = 0.10f))
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Warning.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Default.Security, contentDescription = null, tint = Warning, modifier = Modifier.size(20.dp))
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                "Want anti-uninstall protection?",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = OnSurface
+            )
+            ClickableText(
+                text = noticeText,
+                style = MaterialTheme.typography.bodySmall.copy(color = OnSurface2),
+                onClick = { offset ->
+                    noticeText
+                        .getStringAnnotations("URL", offset, offset)
+                        .firstOrNull()
+                        ?.let { openUrl(it.item) }
+                }
+            )
+        }
+        IconButton(onClick = onDismiss) {
+            Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = OnSurface2)
         }
     }
 }
