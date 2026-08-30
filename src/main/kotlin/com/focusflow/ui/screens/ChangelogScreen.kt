@@ -31,10 +31,33 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
-        version    = "1.1.8",
+        version    = "1.1.9",
         date       = "August 2026",
         badge      = "NEW",
         badgeColor = Purple80,
+        changes    = listOf(
+            "NEW" to "Block Schedules now let you select installed apps, search the app list, add custom process names, and edit, enable, disable, or delete recurring schedules",
+            "SEC" to "Global PIN protection now covers schedule changes, keyword changes, VPN and Network Shield changes, Always-On disabling, and disabling Windows startup",
+            "NEW" to "Global PIN management is available directly in Block Defense, including set, change, generate, and remove actions",
+            "IMP" to "Block Schedule enforcement now applies the selected apps through the same process-monitoring path as Standalone Block, Daily Allowance, and Always-On Enforcement",
+            "IMP" to "VPN Shield, domain blocking, Network Shield keyword rules, and the regular Keyword Blocker remain independent enforcement layers with clear status and protection controls",
+            "FIX" to "Network firewall rules now normalize process names, validate direction/action/profile state, retry unresolved executable paths, and drain PowerShell output safely",
+            "FIX" to "Hosts blocking now writes both IPv4 and IPv6 loopback entries and correctly handles all loopback address forms",
+            "NEW" to "Keyword Blocker now provides an explicit, PIN-protected way to suggest terms for Network Shield without copying or changing rules automatically",
+            "NEW" to "Keyword Blocker links directly to the official FocusFlow Microsoft Edge extension for browser URL coverage",
+            "IMP" to "Blocking documentation now distinguishes native foreground-title matching from browser URL and page-description matching, which requires the browser extension",
+            "IMP" to "Windows enforcement screens explain administrator requirements and the practical limits of hosts/firewall blocking against Secure DNS, VPN routing, cached connections, and third-party uninstallers",
+            "IMP" to "Keyword Blocker help now explains that regular keyword matches can close the entire browser and recommends Network Cutoff Rules when users need to keep tabs and unsaved work open",
+            "REMOVED" to "Resource Monitor Service and feature-usage telemetry — FocusFlow no longer collects or sends periodic JVM/OS health snapshots, threshold alerts, or feature activity events",
+            "FIX" to "Discord crash reporting now completes its bounded webhook request before the JVM exits, preventing fatal reports from being lost",
+            "FIX" to "Feedback delivery now checks Discord responses and reports failures instead of showing a false success state"
+        )
+    ),
+    ChangelogEntry(
+        version    = "1.1.8",
+        date       = "August 2026",
+        badge      = "STABLE",
+        badgeColor = Success,
         changes    = listOf(
             "REMOVED" to "Resource Monitor Service and feature-usage telemetry — FocusFlow no longer collects or sends periodic JVM/OS health snapshots, threshold alerts, or feature activity events",
             "NEW" to "Microsoft Edge extension promotion — shown once on the 20th app launch with a direct link to the official FocusFlow Edge Add-ons listing",

@@ -28,6 +28,7 @@ import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BlockScheduleService
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.SessionPin
+import com.focusflow.ui.components.BlockScheduleEditorDialog
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -46,10 +47,12 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
     var globalPinSet     by remember { mutableStateOf(false) }
     var blockSchedules   by remember { mutableStateOf(listOf<BlockSchedule>()) }
 
-    var showAddSchedule  by remember { mutableStateOf(false) }
-    var showPinGate      by remember { mutableStateOf(false) }
-    var showVpnInfo      by remember { mutableStateOf(false) }
-    var pendingAlwaysOn  by remember { mutableStateOf(false) }
+    var showAddSchedule    by remember { mutableStateOf(false) }
+    var scheduleBeingEdited by remember { mutableStateOf<BlockSchedule?>(null) }
+    var showPinGate        by remember { mutableStateOf(false) }
+    var pendingPinAction   by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showGlobalPinDialog by remember { mutableStateOf(false) }
+    var showVpnInfo        by remember { mutableStateOf(false) }
 
     fun reload() {
         scope.launch {
@@ -62,6 +65,57 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 blockSchedules = Database.getBlockSchedules()
             }
         }
+    }
+
+    fun withGlobalPin(action: () -> Unit) {
+        if (globalPinSet) {
+            pendingPinAction = action
+            showPinGate = true
+        } else {
+            action()
+        }
+    }
+
+    fun saveAlwaysOn(enabled: Boolean) {
+        alwaysOn = enabled
+        ProcessMonitor.alwaysOnEnabled = enabled
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                Database.setSetting("always_on_enforcement", enabled.toString())
+            }
+        }
+        if (!enabled) {
+            com.focusflow.services.ReviewPromptService.triggerCheck()
+        }
+    }
+
+    fun saveSchedule(schedule: BlockSchedule) {
+        scope.launch {
+            withContext(Dispatchers.IO) { Database.upsertBlockSchedule(schedule) }
+            BlockScheduleService.forceCheck()
+            scheduleBeingEdited = null
+            showAddSchedule = false
+            reload()
+        }
+    }
+
+    fun setScheduleEnabled(schedule: BlockSchedule, enabled: Boolean) {
+        val action = { saveSchedule(schedule.copy(enabled = enabled)) }
+        if (enabled) action() else withGlobalPin(action)
+    }
+
+    fun deleteSchedule(schedule: BlockSchedule) {
+        withGlobalPin {
+            scope.launch {
+                withContext(Dispatchers.IO) { Database.deleteBlockSchedule(schedule.id) }
+                BlockScheduleService.forceCheck()
+                reload()
+            }
+        }
+    }
+
+    fun openScheduleEditor(schedule: BlockSchedule) {
+        withGlobalPin { scheduleBeingEdited = schedule }
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -84,16 +138,9 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 iconColor = if (alwaysOn) Success else OnSurface2
             ) { newVal ->
                 if (!newVal && globalPinSet) {
-                    pendingAlwaysOn = false
-                    showPinGate = true
+                    withGlobalPin { saveAlwaysOn(false) }
                 } else {
-                    alwaysOn = newVal
-                    ProcessMonitor.alwaysOnEnabled = newVal
-                    scope.launch {
-                        withContext(Dispatchers.IO) {
-                            Database.setSetting("always_on_enforcement", newVal.toString())
-                        }
-                    }
+                    saveAlwaysOn(newVal)
                 }
             }
 
@@ -122,6 +169,137 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
                 Icon(Icons.Default.Apps, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Manage blocked apps →", color = Purple80)
+            }
+        }
+
+        // ── Global PIN ──────────────────────────────────────────────────────────
+        DefCard(title = "Global PIN protection") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    Icons.Default.Lock,
+                    null,
+                    tint = if (globalPinSet) Warning else OnSurface2,
+                    modifier = Modifier.size(22.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (globalPinSet) "Global PIN is active" else "Global PIN is not set",
+                        color = OnSurface,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        if (globalPinSet) {
+                            "Required to disable or remove protected schedules, blocks, and enforcement settings."
+                        } else {
+                            "Protect schedules, blocks, and enforcement settings from being disabled."
+                        },
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Button(
+                    onClick = { showGlobalPinDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (globalPinSet) Error.copy(alpha = 0.85f) else Purple80
+                    )
+                ) {
+                    Text(if (globalPinSet) "Change / Clear" else "Set PIN")
+                }
+            }
+        }
+
+        // ── Block Schedules ────────────────────────────────────────────────────
+        DefCard(title = strings.defBlockSchedules) {
+            Text(
+                "Choose the apps to block and the recurring hours when they should be blocked. " +
+                    "This uses the same process enforcement as Always-On during the schedule.",
+                color = OnSurface2,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(8.dp))
+            if (blockSchedules.isEmpty()) {
+                Text(strings.defNoSchedules, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val now = LocalDateTime.now()
+                    blockSchedules.forEach { schedule ->
+                        val validTimeRange = schedule.hasValidTimeRange()
+                        val activeNow = schedule.isActiveAt(now)
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (activeNow) Warning.copy(alpha = 0.1f) else Surface3)
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        schedule.name,
+                                        color = OnSurface,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    if (activeNow) {
+                                        Text(
+                                            strings.defScheduleActive,
+                                            color = Warning,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                val days = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+                                val dayStr = schedule.daysOfWeek.mapNotNull { days.getOrNull(it - 1) }.joinToString(", ")
+                                Text(
+                                    "$dayStr  %02d:%02d–%02d:%02d · ${schedule.processNames.size} app${if (schedule.processNames.size == 1) "" else "s"}%s".format(
+                                        schedule.startHour,
+                                        schedule.startMinute,
+                                        schedule.endHour,
+                                        schedule.endMinute,
+                                        if (validTimeRange) "" else " · Invalid time"
+                                    ),
+                                    color = if (validTimeRange) OnSurface2 else Error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            IconButton(
+                                onClick = { openScheduleEditor(schedule) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, "Edit schedule", tint = OnSurface2, modifier = Modifier.size(16.dp))
+                            }
+                            IconButton(
+                                onClick = { deleteSchedule(schedule) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, "Delete schedule", tint = Error, modifier = Modifier.size(16.dp))
+                            }
+                            Switch(
+                                checked = schedule.enabled,
+                                onCheckedChange = { setScheduleEnabled(schedule, it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Surface,
+                                    checkedTrackColor = Warning
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { showAddSchedule = true }) {
+                Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(strings.defAddSchedule, color = Purple80)
             }
         }
 
@@ -168,55 +346,6 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
             }
         }
 
-        // ── Block Schedules ────────────────────────────────────────────────────
-        DefCard(title = strings.defBlockSchedules) {
-            if (blockSchedules.isEmpty()) {
-                Text(strings.defNoSchedules, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val now = LocalDateTime.now()
-                    blockSchedules.forEach { sched ->
-                        val validTimeRange = sched.hasValidTimeRange()
-                        val activeNow = sched.isActiveAt(now)
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                                .background(if (activeNow) Warning.copy(alpha = 0.1f) else Surface3)
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column {
-                                Text(sched.name, color = OnSurface, style = MaterialTheme.typography.bodyMedium)
-                                val days = listOf("Mon","Tue","Wed","Thu","Fri","Sat","Sun")
-                                val dayStr = sched.daysOfWeek.mapNotNull { days.getOrNull(it-1) }.joinToString(", ")
-                                Text(
-                                    "$dayStr  %02d:%02d–%02d:%02d%s".format(
-                                        sched.startHour, sched.startMinute,
-                                        sched.endHour, sched.endMinute,
-                                        if (validTimeRange) "" else " · Invalid time"
-                                    ),
-                                    color = if (validTimeRange) OnSurface2 else Error,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            if (activeNow) {
-                                Box(modifier = Modifier.clip(RoundedCornerShape(4.dp))
-                                    .background(Warning.copy(alpha = 0.18f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                    Text(strings.defScheduleActive, color = Warning, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { showAddSchedule = true }) {
-                Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(strings.defAddSchedule, color = Purple80)
-            }
-        }
-
         Spacer(Modifier.height(16.dp))
     }
     FfVerticalScrollbar(
@@ -228,15 +357,28 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
     // ── PIN gate to turn off Always-On ─────────────────────────────────────────
     if (showPinGate) {
         PinGateDialog(
-            title    = strings.defPinRequired,
-            subtitle = strings.defEnterPin,
-            onDismiss = { showPinGate = false },
+            title    = "Global PIN required",
+            subtitle = "Enter your Global PIN to change protected enforcement settings.",
+            onDismiss = {
+                showPinGate = false
+                pendingPinAction = null
+            },
             onVerified = {
                 showPinGate = false
-                alwaysOn = false
-                ProcessMonitor.alwaysOnEnabled = false
-                scope.launch { withContext(Dispatchers.IO) { Database.setSetting("always_on_enforcement", "false") } }
-                com.focusflow.services.ReviewPromptService.triggerCheck()
+                pendingPinAction?.invoke()
+                pendingPinAction = null
+            }
+        )
+    }
+
+    if (showGlobalPinDialog) {
+        GlobalPinManageDialog(
+            pinAlreadySet = globalPinSet,
+            onDismiss = { showGlobalPinDialog = false },
+            onChanged = {
+                showGlobalPinDialog = false
+                globalPinSet = GlobalPin.isSet()
+                reload()
             }
         )
     }
@@ -279,18 +421,18 @@ fun BlockDefenseScreen(onNavigateToVpn: () -> Unit = {}, onNavigateToAppBlocker:
         )
     }
 
-    // ── Add schedule dialog ─────────────────────────────────────────────────────
+    // ── Schedule editor dialogs ────────────────────────────────────────────────
     if (showAddSchedule) {
-        AddScheduleDialogBD(
+        BlockScheduleEditorDialog(
             onDismiss = { showAddSchedule = false },
-            onSave    = { sched ->
-                scope.launch {
-                    withContext(Dispatchers.IO) { Database.upsertBlockSchedule(sched) }
-                    BlockScheduleService.forceCheck()
-                    reload()
-                    showAddSchedule = false
-                }
-            }
+            onSave = ::saveSchedule
+        )
+    }
+    scheduleBeingEdited?.let { schedule ->
+        BlockScheduleEditorDialog(
+            initialSchedule = schedule,
+            onDismiss = { scheduleBeingEdited = null },
+            onSave = ::saveSchedule
         )
     }
 }
@@ -378,103 +520,5 @@ private fun PinGateDialog(title: String, subtitle: String, onDismiss: () -> Unit
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(LocalizationManager.strings.btnCancel, color = OnSurface2) }
         }
-    )
-}
-
-@Composable
-private fun AddScheduleDialogBD(onDismiss: () -> Unit, onSave: (BlockSchedule) -> Unit) {
-    val strings  = LocalizationManager.strings
-    val days     = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    var name     by remember { mutableStateOf("") }
-    var selected by remember { mutableStateOf(setOf("Mon", "Tue", "Wed", "Thu", "Fri")) }
-    var startH   by remember { mutableStateOf("9") }
-    var startM   by remember { mutableStateOf("0") }
-    var endH     by remember { mutableStateOf("17") }
-    var endM     by remember { mutableStateOf("0") }
-    var validationError by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor   = Surface2,
-        title = { Text(strings.defAddBlockSchedule, color = OnSurface) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = name, onValueChange = { name = it; validationError = false },
-                    label = { Text(strings.defScheduleName) },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2)
-                )
-                Text(strings.defDaysLabel, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    days.forEach { d ->
-                        FilterChip(
-                            selected = d in selected,
-                            onClick  = {
-                                selected = if (d in selected) selected - d else selected + d
-                            },
-                            label    = { Text(d, style = MaterialTheme.typography.bodySmall) }
-                        )
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = startH, onValueChange = { startH = it.filter(Char::isDigit).take(2); validationError = false },
-                        label = { Text(strings.defStartH) }, modifier = Modifier.weight(1f), singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                    OutlinedTextField(value = startM, onValueChange = { startM = it.filter(Char::isDigit).take(2); validationError = false },
-                        label = { Text(strings.defStartM) }, modifier = Modifier.weight(1f), singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                    OutlinedTextField(value = endH, onValueChange = { endH = it.filter(Char::isDigit).take(2); validationError = false },
-                        label = { Text(strings.defEndH) }, modifier = Modifier.weight(1f), singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                    OutlinedTextField(value = endM, onValueChange = { endM = it.filter(Char::isDigit).take(2); validationError = false },
-                        label = { Text(strings.defEndM) }, modifier = Modifier.weight(1f), singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2))
-                }
-                if (validationError) {
-                    Text(
-                        "Use hours 0–23 and minutes 0–59. End time may be 24:00.",
-                        color = Error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val startHourValue = startH.toIntOrNull()
-                    val startMinuteValue = startM.toIntOrNull()
-                    val endHourValue = endH.toIntOrNull()
-                    val endMinuteValue = endM.toIntOrNull()
-                    val valid = name.isNotBlank() &&
-                        selected.isNotEmpty() &&
-                        startHourValue != null && startMinuteValue != null &&
-                        endHourValue != null && endMinuteValue != null &&
-                        startHourValue in 0..23 &&
-                        startMinuteValue in 0..59 &&
-                        endHourValue in 0..24 &&
-                        endMinuteValue in 0..59 &&
-                        (endHourValue != 24 || endMinuteValue == 0)
-
-                    if (valid) {
-                        onSave(BlockSchedule(
-                            id          = java.util.UUID.randomUUID().toString(),
-                            name        = name,
-                            daysOfWeek  = selected.map { days.indexOf(it) + 1 }.sorted(),
-                            startHour   = startHourValue!!,
-                            startMinute = startMinuteValue!!,
-                            endHour     = endHourValue!!,
-                            endMinute   = endMinuteValue!!,
-                            enabled     = true
-                        ))
-                    } else {
-                        validationError = true
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Purple80)
-            ) { Text(strings.btnSave) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.btnCancel, color = OnSurface2) } }
     )
 }

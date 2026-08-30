@@ -60,7 +60,7 @@ private val HOW_TO_SECTIONS = listOf(
             "Start a session from the Focus tab. Choose a task or type a custom goal.",
             "Enable Pomodoro mode to work in timed intervals with automatic break reminders.",
             "During a session, all apps on your block list are killed if they appear.",
-            "Set a PIN in Settings to prevent yourself from ending sessions early.",
+            "Set it in Settings → PIN Management → Session PIN to prevent yourself from ending sessions early.",
             "Session notes let you capture thoughts or blockers mid-session.",
             "When done, your actual vs planned time is logged automatically."
         )
@@ -89,13 +89,17 @@ private val HOW_TO_SECTIONS = listOf(
     ),
     HowToSection(
         icon  = Icons.Default.TextFields,
-        title = "Keyword Blocker",
+        title = "Keyword Blocking: How It Works & Limits",
         steps = listOf(
             "The desktop Keyword Blocker watches the foreground browser window title for terms you define.",
             "Go to Keyword Blocker in the sidebar and add words or phrases (e.g. 'trending', 'casino').",
             "Use Quick Presets to instantly add curated sets: Doomscroll Bait, Shopping, NSFW, etc.",
             "Toggle the blocker on/off without losing your keyword list.",
-            "For URL-level browser protection, install the official FocusFlow Edge extension from the Keyword Blocker screen."
+            "Important: when a regular keyword matches, FocusFlow may close the whole browser process. This can close every tab and lose unsaved work.",
+            "If you want to keep the browser open, use Block Defense → VPN & Network Shield → Network Cutoff Rules → Keyword. Network Cutoff blocks the matching app's internet connection without killing the browser.",
+            "Native matching only sees foreground window titles. It cannot reliably read the current URL, page description, or page content.",
+            "For URL-level browser protection, install the official FocusFlow Edge extension from the Keyword Blocker screen.",
+            "Network Cutoff also needs administrator access and can be affected by VPNs, Secure DNS/DoH, cached connections, and other Windows networking limits."
         )
     ),
     HowToSection(
@@ -107,7 +111,7 @@ private val HOW_TO_SECTIONS = listOf(
             "Sound Aversion: plays an unpleasant tone when a blocked app launches — conditions avoidance over time.",
             "Overlay Message: customize the text shown when a blocked app is intercepted.",
             "Temptation Log: every blocked-app attempt is silently recorded and visible in Stats.",
-            "Session PIN: set a PIN in Settings so ending a focus session requires entering it — removes the 'just quit' temptation."
+            "Session PIN: set it at Settings → PIN Management → Session PIN. Ending a focus session then requires entering it — removing the 'just quit' temptation."
         )
     ),
     HowToSection(
