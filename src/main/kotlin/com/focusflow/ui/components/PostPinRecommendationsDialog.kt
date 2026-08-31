@@ -3,6 +3,8 @@ package com.focusflow.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Language
@@ -20,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.focusflow.enforcement.InstallVariant
 import com.focusflow.ui.theme.*
 
 /**
@@ -48,10 +49,15 @@ fun PostPinRecommendationsDialog(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Surface,
-            modifier = Modifier.width(560.dp)
+            modifier = Modifier
+                .width(560.dp)
+                .heightIn(max = 560.dp)
         ) {
+            val scrollState = rememberScrollState()
             Column(
-                modifier = Modifier.padding(30.dp),
+                modifier = Modifier
+                    .padding(30.dp)
+                    .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Box(
@@ -103,15 +109,13 @@ fun PostPinRecommendationsDialog(
                     onAction = onOpenNetworkShield
                 )
 
-                if (InstallVariant.isMsix) {
-                    RecommendationCard(
-                        icon = Icons.Default.Language,
-                        title = "Optional: use the direct EXE or MSI build",
-                        body = "MSIX/Store removal is controlled by Windows. The direct EXE/MSI builds add a FocusFlow gate to normal uninstall paths and share the same protection checks as tray Quit. EXE is simplest; MSI suits managed IT deployment. Administrators can still remove software.",
-                        actionLabel = "View EXE/MSI releases",
-                        onAction = onOpenReleases
-                    )
-                }
+                RecommendationCard(
+                    icon = Icons.Default.Language,
+                    title = "For Windows: stronger uninstall protection",
+                    body = "MSIX/Store removal is controlled by Windows. The direct EXE/MSI builds add a FocusFlow gate to normal uninstall paths and share the same protection checks as tray Quit. EXE is simplest; MSI suits managed IT deployment. Administrators can still remove software.",
+                    actionLabel = "View EXE/MSI releases",
+                    onAction = onOpenReleases
+                )
 
                 TextButton(
                     onClick = onDismiss,
