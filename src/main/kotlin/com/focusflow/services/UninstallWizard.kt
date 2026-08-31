@@ -27,6 +27,15 @@ object UninstallWizard {
             return
         }
 
+        if (!UninstallProtectionService.prepareForUninstallWizard()) {
+            showMessage(
+                "FocusFlow uninstall",
+                "FocusFlow could not read its protection state safely.\n\n" +
+                    "The application was not removed."
+            )
+            return
+        }
+
         if (!confirmStart()) return
         if (!UninstallProtectionService.authorizeUninstallWizard()) return
 

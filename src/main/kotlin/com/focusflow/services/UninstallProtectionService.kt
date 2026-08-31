@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.data.Database
 import com.focusflow.enforcement.InstallVariant
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
@@ -32,6 +33,27 @@ object UninstallProtectionService {
     }
 
     /**
+     * Prepare the standalone uninstall-wizard JVM to read the same persisted
+     * state as the running app. The wizard starts before the normal application
+     * bootstrap, so its StateFlows would otherwise all look inactive.
+     *
+     * This is intentionally not used for MSIX: package removal is owned by
+     * Windows and must not be intercepted by FocusFlow.
+     */
+    fun prepareForUninstallWizard(): Boolean {
+        if (!InstallVariant.isWindowsDirectInstall) return true
+
+        return runCatching {
+            if (!Database.isReady) Database.init()
+            if (!Database.isReady) return false
+
+            ProcessMonitor.alwaysOnEnabled =
+                Database.getSetting("always_on_enforcement") == "true"
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
      * Returns true when the user has satisfied every active protection.
      *
      * The stock jpackage uninstaller cannot call Compose code before removing
@@ -53,6 +75,14 @@ object UninstallProtectionService {
      */
     fun authorizeUninstallWizard(): Boolean {
         if (!InstallVariant.isWindowsDirectInstall) return true
+        if (!Database.isReady) {
+            showMessage(
+                "Uninstall protection unavailable",
+                "FocusFlow could not read its protection state safely. " +
+                    "The application was not removed."
+            )
+            return false
+        }
         return authorizeRequirements(activeRequirements(Action.UNINSTALL))
     }
 
@@ -108,13 +138,30 @@ object UninstallProtectionService {
         val result = mutableListOf<Requirement>()
 
         runCatching {
-            if (StandaloneBlockService.isActive) {
-                result += Requirement.WaitForStandalone(StandaloneBlockService.remainingMs())
+            val persistedUntil = Database.getSetting("standalone_block_until")
+                ?.toLongOrNull() ?: 0L
+            val persistedStart = Database.getSetting("standalone_block_start")
+                ?.toLongOrNull() ?: 0L
+            val persistedProcesses = Database.getSetting("standalone_block_processes")
+                .orEmpty()
+            val persistedActive =
+                persistedProcesses.isNotBlank() &&
+                    persistedUntil > System.currentTimeMillis() &&
+                    (persistedStart == 0L || persistedStart <= System.currentTimeMillis())
+
+            if (StandaloneBlockService.isActive || persistedActive) {
+                val remaining = if (StandaloneBlockService.isActive) {
+                    StandaloneBlockService.remainingMs()
+                } else {
+                    (persistedUntil - System.currentTimeMillis()).coerceAtLeast(0L)
+                }
+                result += Requirement.WaitForStandalone(remaining)
             }
         }
 
         runCatching {
-            if (ProcessMonitor.alwaysOnEnabled && GlobalPin.isSet()) {
+            val persistedAlwaysOn = Database.getSetting("always_on_enforcement") == "true"
+            if ((ProcessMonitor.alwaysOnEnabled || persistedAlwaysOn) && GlobalPin.isSet()) {
                 result += Requirement.Pin(
                     feature = "Always-On enforcement",
                     prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
@@ -124,7 +171,11 @@ object UninstallProtectionService {
         }
 
         runCatching {
-            if (FocusSessionService.state.value.isActive || FocusLauncherService.isActive.value) {
+            val persistedFocusSession = Database.hasUnfinishedFocusSession()
+            if (FocusSessionService.state.value.isActive ||
+                FocusLauncherService.isActive.value ||
+                persistedFocusSession
+            ) {
                 if (action == Action.QUIT && SessionPin.isSet()) {
                     result += Requirement.Pin(
                         feature = "Focus session",
@@ -150,7 +201,8 @@ object UninstallProtectionService {
         }
 
         runCatching {
-            if (NuclearMode.isActive) {
+            val persistedNuclearMode = Database.getSetting("nuclear_mode") == "true"
+            if (NuclearMode.isActive || persistedNuclearMode) {
                 if (NuclearPin.isSet()) {
                     result += Requirement.Pin(
                         feature = "Nuclear Mode",

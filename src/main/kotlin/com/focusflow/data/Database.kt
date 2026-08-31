@@ -851,6 +851,29 @@ object Database {
         } catch (_: Exception) { null }
     }
 
+    /**
+     * Returns true when a focus session has been started but has not yet written
+     * its final end time. The uninstall wizard runs in a separate JVM, so it
+     * cannot inspect FocusSessionService's in-memory StateFlow.
+     */
+    @Synchronized fun hasUnfinishedFocusSession(): Boolean {
+        if (!isReady) return false
+        return try {
+            connection.prepareStatement(
+                """
+                SELECT 1
+                FROM focus_sessions
+                WHERE end_time IS NULL AND completed = 0
+                LIMIT 1
+                """.trimIndent()
+            ).use { ps ->
+                ps.executeQuery().use { rs -> rs.next() }
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     @Synchronized fun setSetting(key: String, value: String) {
         if (!isReady) return
         try {

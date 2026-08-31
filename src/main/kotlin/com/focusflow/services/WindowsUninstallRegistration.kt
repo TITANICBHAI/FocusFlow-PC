@@ -137,8 +137,38 @@ object WindowsUninstallRegistration {
         return null
     }
 
-    private fun currentExecutable(): File? =
-        runCatching {
-            ProcessHandle.current().info().command().orElse(null)?.let(::File)
-        }.getOrNull()
+    /**
+     * Resolve the installed jpackage launcher rather than the bundled JVM.
+     *
+     * A jpackage-launched app commonly reports runtime\bin\java.exe as the
+     * current process command. Registering that path would make Windows start
+     * java.exe directly, without the launcher-generated classpath and VM args.
+     */
+    private fun currentExecutable(): File? = runCatching {
+        val command = ProcessHandle.current().info().command().orElse(null)
+            ?.let(::File)
+        val commandName = command?.name.orEmpty()
+
+        if (command != null &&
+            command.exists() &&
+            commandName.equals("FocusFlow.exe", ignoreCase = true)
+        ) {
+            return@runCatching command
+        }
+
+        val resourcesDir = System.getProperty("compose.application.resources.dir")
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::File)
+        val installRootFromResources = resourcesDir
+            ?.parentFile
+            ?.takeIf { it.name.equals("app", ignoreCase = true) }
+        val installRootFromRuntime = command
+            ?.parentFile
+            ?.parentFile
+            ?.takeIf { it.name.equals("runtime", ignoreCase = true) }
+
+        listOfNotNull(installRootFromResources, installRootFromRuntime)
+            .map { File(it, "FocusFlow.exe") }
+            .firstOrNull { it.exists() }
+    }.getOrNull()
 }
