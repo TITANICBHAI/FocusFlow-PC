@@ -111,6 +111,21 @@ Requires JDK 17+.
 ./gradlew createDistributable
 ```
 
+### Windows install and uninstall flow
+
+The EXE and MSI packages use the standard minimal `jpackage` install wizard.
+After the installed app is launched once, FocusFlow registers a small
+FocusFlow-owned uninstall wizard in the Windows uninstall entry. The wizard
+does not replace Windows Installer: it checks active Standalone Blocks,
+Always-On/active-session/Nuclear Mode protection, then hands the original MSI
+or EXE removal command back to Windows.
+
+The same protection gate is used by the tray icon's **Quit** action. A
+Standalone Block must finish, and configured PIN protections must be
+authorized. Nuclear Mode without a Nuclear PIN must first be disabled from
+inside FocusFlow. Microsoft Store/MSIX removal remains Windows-controlled and
+is intentionally not intercepted.
+
 Cross-compilation is not supported by jpackage. Use GitHub Actions for Windows EXE/MSI/MSIX.
 
 ---

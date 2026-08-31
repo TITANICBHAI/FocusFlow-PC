@@ -19,9 +19,11 @@ object UninstallProtectionService {
     private const val AUTHORIZATION_WINDOW_MS = 30_000L
     private val authorizedUninstallUntilMs = AtomicLong(0L)
     private val uninstallPromptLock = Any()
+    private enum class Action { QUIT, UNINSTALL }
 
     private sealed interface Requirement {
         data class WaitForStandalone(val remainingMs: Long) : Requirement
+        data class Blocked(val feature: String, val message: String) : Requirement
         data class Pin(
             val feature: String,
             val prompt: String,
@@ -40,29 +42,18 @@ object UninstallProtectionService {
     fun authorizeQuit(): Boolean {
         if (!InstallVariant.isWindowsDirectInstall) return true
 
-        val requirements = activeRequirements()
-        if (requirements.isEmpty()) return true
+        return authorizeRequirements(activeRequirements(Action.QUIT))
+    }
 
-        // A standalone block is a hard time condition, not a PIN prompt.
-        // Do not sleep here: the quit request is rejected and the running block
-        // continues to enforce normally.
-        val standalone = requirements.filterIsInstance<Requirement.WaitForStandalone>().firstOrNull()
-        if (standalone != null) {
-            showMessage(
-                "Uninstall protection is active",
-                "A Standalone Block is active. FocusFlow must remain installed until it ends.\n\n" +
-                    "Time remaining: ${formatRemaining(standalone.remainingMs)}"
-            )
-            return false
-        }
-
-        // Ask each distinct credential in a stable order.  Multiple active
-        // protections therefore cannot be bypassed by satisfying only one.
-        requirements.filterIsInstance<Requirement.Pin>().forEach { requirement ->
-            if (!promptForPin(requirement)) return false
-        }
-
-        return true
+    /**
+     * Entry point used by the custom EXE/MSI uninstall wizard.
+     *
+     * This intentionally allows uninstall when no protection is active. When
+     * protection is active it uses the same requirements as tray Quit.
+     */
+    fun authorizeUninstallWizard(): Boolean {
+        if (!InstallVariant.isWindowsDirectInstall) return true
+        return authorizeRequirements(activeRequirements(Action.UNINSTALL))
     }
 
     /**
@@ -82,7 +73,7 @@ object UninstallProtectionService {
             val refreshedNow = System.currentTimeMillis()
             if (authorizedUninstallUntilMs.get() > refreshedNow) return true
 
-            val requirements = activeRequirements()
+            val requirements = activeRequirements(Action.UNINSTALL)
             val standalone = requirements
                 .filterIsInstance<Requirement.WaitForStandalone>()
                 .firstOrNull()
@@ -95,10 +86,13 @@ object UninstallProtectionService {
                 return false
             }
 
-            // Nuclear Mode itself blocks an uninstall unless the user has
-            // explicitly satisfied every configured feature PIN.
+            // This method is called from Nuclear Mode's 500ms process scan.
+            // Nuclear Mode is itself a hard requirement when no Nuclear PIN
+            // exists; otherwise a valid PIN opens a short MSI window.
             val pins = requirements.filterIsInstance<Requirement.Pin>()
-            if (pins.isEmpty()) return false
+            val blocked = requirements.filterIsInstance<Requirement.Blocked>().firstOrNull()
+            if (blocked != null) return false
+            if (pins.isEmpty()) return true
             pins.forEach { requirement ->
                 if (!promptForPin(requirement)) return false
             }
@@ -110,7 +104,7 @@ object UninstallProtectionService {
         }
     }
 
-    private fun activeRequirements(): List<Requirement> {
+    private fun activeRequirements(action: Action): List<Requirement> {
         val result = mutableListOf<Requirement>()
 
         runCatching {
@@ -130,28 +124,86 @@ object UninstallProtectionService {
         }
 
         runCatching {
-            if ((FocusSessionService.state.value.isActive || FocusLauncherService.isActive.value) &&
-                SessionPin.isSet()
-            ) {
-                result += Requirement.Pin(
-                    feature = "Focus session",
-                    prompt = "Enter the Session PIN to quit or uninstall during the active focus session:",
-                    verify = SessionPin::verify
-                )
+            if (FocusSessionService.state.value.isActive || FocusLauncherService.isActive.value) {
+                if (action == Action.QUIT && SessionPin.isSet()) {
+                    result += Requirement.Pin(
+                        feature = "Focus session",
+                        prompt = "Enter the Session PIN to quit during the active focus session:",
+                        verify = SessionPin::verify
+                    )
+                } else if (action == Action.UNINSTALL) {
+                    if (GlobalPin.isSet()) {
+                        result += Requirement.Pin(
+                            feature = "Global PIN",
+                            prompt = "Enter the Global PIN to uninstall while a focus session is active:",
+                            verify = GlobalPin::verify
+                        )
+                    } else {
+                        result += Requirement.Blocked(
+                            feature = "Focus session",
+                            message = "FocusFlow cannot be uninstalled during an active focus session. " +
+                                "Let the session end, or set a Global PIN before starting the session."
+                        )
+                    }
+                }
             }
         }
 
         runCatching {
-            if (NuclearMode.isActive && NuclearPin.isSet()) {
-                result += Requirement.Pin(
-                    feature = "Nuclear Mode",
-                    prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
-                    verify = NuclearPin::verify
-                )
+            if (NuclearMode.isActive) {
+                if (NuclearPin.isSet()) {
+                    result += Requirement.Pin(
+                        feature = "Nuclear Mode",
+                        prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
+                        verify = NuclearPin::verify
+                    )
+                } else {
+                    result += Requirement.Blocked(
+                        feature = "Nuclear Mode",
+                        message = "Disable Nuclear Mode from within FocusFlow before quitting or uninstalling."
+                    )
+                }
             }
         }
 
         return result
+    }
+
+    private fun authorizeRequirements(
+        requirements: List<Requirement>
+    ): Boolean {
+        if (requirements.isEmpty()) return true
+
+        // A standalone block is a hard time condition, not a PIN prompt.
+        // Do not sleep here: the action is rejected and the running block
+        // continues to enforce normally.
+        val standalone = requirements.filterIsInstance<Requirement.WaitForStandalone>().firstOrNull()
+        if (standalone != null) {
+            showMessage(
+                "Uninstall protection is active",
+                "A Standalone Block is active. FocusFlow must remain installed until it ends.\n\n" +
+                    "Time remaining: ${formatRemaining(standalone.remainingMs)}"
+            )
+            return false
+        }
+
+        val blocked = requirements.filterIsInstance<Requirement.Blocked>().firstOrNull()
+        if (blocked != null) {
+            showMessage(
+                "Action blocked",
+                "${blocked.message}\n\n" +
+                    "FocusFlow will keep running and your Windows installation is unchanged."
+            )
+            return false
+        }
+
+        // Ask each distinct credential in a stable order. Multiple active
+        // protections therefore cannot be bypassed by satisfying only one.
+        requirements.filterIsInstance<Requirement.Pin>().forEach { requirement ->
+            if (!promptForPin(requirement)) return false
+        }
+
+        return true
     }
 
     private fun promptForPin(requirement: Requirement.Pin): Boolean {

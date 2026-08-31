@@ -17,7 +17,16 @@ import com.focusflow.services.*
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.ui.launcher.LauncherWindowHost
 
-fun main() = application {
+fun main(args: Array<String>) = application {
+    // Windows Settings and the MSI uninstall entry point to the installed
+    // executable with this flag. The wizard performs protection checks and
+    // then hands the original removal command back to Windows Installer.
+    if (UninstallWizardFlag.isRequested(args)) {
+        UninstallWizard.run()
+        exitApplication()
+        return@application
+    }
+
     // ── Crash reporter — MUST be first, before any other service ──────────────
     // Installs handlers for:
     //   • All Java/Kotlin threads (Thread.setDefaultUncaughtExceptionHandler)
@@ -44,6 +53,12 @@ fun main() = application {
 
     // Auto-backup: daily rolling backup of SQLite database
     AutoBackupService.start()
+
+    // jpackage supplies the initial Windows uninstall entry. Register a
+    // FocusFlow-owned wrapper on direct EXE/MSI installations so Windows
+    // Settings and package-manager uninstall commands pass through the same
+    // gate as tray Quit. MSIX is intentionally excluded.
+    WindowsUninstallRegistration.ensureRegistered()
 
     ProcessMonitor.alwaysOnEnabled   = Database.getSetting("always_on_enforcement") == "true"
     SoundAversion.isEnabled          = Database.getSetting("sound_aversion") != "false"
