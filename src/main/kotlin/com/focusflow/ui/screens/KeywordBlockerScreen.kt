@@ -65,6 +65,7 @@ fun KeywordBlockerScreen() {
     var recentMatches        by remember { mutableStateOf(KeywordMatchLogger.getRecent()) }
     var showClearAllConfirm  by remember { mutableStateOf(false) }
     var networkSuggestionCount by remember { mutableStateOf(0) }
+    var showExtensionSuggestion by remember { mutableStateOf(true) }
     var showPinGate           by remember { mutableStateOf(false) }
     var pendingPinAction      by remember { mutableStateOf<(() -> Unit)?>(null) }
     val navigate = LocalNavigate.current
@@ -88,6 +89,8 @@ fun KeywordBlockerScreen() {
                     .map { it.pattern.lowercase() }
                     .toSet()
                 networkSuggestionCount = keywords.count { it.lowercase() !in networkKeywords }
+                showExtensionSuggestion =
+                    Database.getSetting(EXTENSION_SUGGESTION_DISMISSED) != "true"
             }
         }
     }
@@ -184,23 +187,51 @@ fun KeywordBlockerScreen() {
                     color = OnSurface2,
                     style = MaterialTheme.typography.bodySmall
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(Icons.Default.Extension, null, tint = Purple80, modifier = Modifier.size(16.dp))
-                    Text(
-                        "Need URL-level browser protection? Use the official FocusFlow Edge extension.",
-                        color = OnSurface2,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = { openEdgeExtensionStore() },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                if (showExtensionSuggestion) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Install", color = Purple80, style = MaterialTheme.typography.bodySmall)
+                        Icon(Icons.Default.Extension, null, tint = Purple80, modifier = Modifier.size(16.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                "Optional: URL-level browser protection",
+                                color = OnSurface,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "The FocusFlow Edge extension can read the current page URL. Install it only if window-title matching is not enough.",
+                                color = OnSurface2,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        TextButton(
+                            onClick = { openEdgeExtensionStore() },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("View", color = Purple80, style = MaterialTheme.typography.bodySmall)
+                        }
+                        IconButton(
+                            onClick = {
+                                showExtensionSuggestion = false
+                                scope.launch(Dispatchers.IO) {
+                                    Database.setSetting(EXTENSION_SUGGESTION_DISMISSED, "true")
+                                }
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Dismiss extension suggestion",
+                                tint = OnSurface2,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
                 HorizontalDivider(color = Warning.copy(alpha = 0.15f), thickness = 1.dp)
@@ -270,9 +301,15 @@ fun KeywordBlockerScreen() {
                         )
                     }
                     Text(
-                        "Keyword blocking closes the matching browser window. Network Shield is a softer alternative: it keeps the app open and cuts its network access when the title matches. Nothing is added automatically.",
+                        "Keyword blocking closes the matching browser window, which can risk unsaved work. Network Shield is an optional alternative: the app stays open, but that app loses network access when its title matches. Nothing is added automatically, and the rules require Administrator access.",
                         color = OnSurface2,
                         style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Use Network Shield when preserving the window matters more than keeping that app online. Existing connections, VPNs, Secure DNS, or cached content may reduce how immediate a cutoff feels.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp
                     )
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -649,3 +686,5 @@ fun KeywordBlockerScreen() {
         )
     }
 }
+
+private const val EXTENSION_SUGGESTION_DISMISSED = "keyword_extension_suggestion_dismissed"

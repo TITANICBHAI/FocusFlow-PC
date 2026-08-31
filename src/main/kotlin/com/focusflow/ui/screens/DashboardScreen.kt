@@ -755,12 +755,14 @@ private fun WhatsNewBanner(
 
 private const val EXE_PROTECTION_NOTICE_DISMISSED = "exe_protection_notice_dismissed"
 private const val FOCUSFLOW_PC_GITHUB_RELEASES =
-    "https://github.com/TITANICBHAI/FocusFlow-PC/releases/latest"
+    "https://github.com/TITANICBHAI/FocusFlow-PC/releases"
 
 @Composable
 private fun ExeProtectionNotice(onDismiss: () -> Unit) {
     val noticeText = buildAnnotatedString {
-        append("For stronger anti-uninstall protection, download the latest EXE from ")
+        append("Optional: direct EXE/MSI builds add a FocusFlow uninstall gate for normal Windows uninstall paths. ")
+        append("They can keep an active Standalone Block, focus session, Always-On, or Nuclear Mode from being bypassed casually, and use the same protection checks as tray Quit. ")
+        append("Download the EXE or MSI from ")
         pushStringAnnotation(tag = "URL", annotation = FOCUSFLOW_PC_GITHUB_RELEASES)
         withStyle(
             SpanStyle(
@@ -769,10 +771,11 @@ private fun ExeProtectionNotice(onDismiss: () -> Unit) {
                 textDecoration = TextDecoration.Underline
             )
         ) {
-            append("TITANICBHAI/FocusFlow-PC on GitHub")
+            append("the latest releases page")
         }
         pop()
-        append(" and enable Nuclear Mode after installing it.")
+        append(". The EXE is simplest for most users; MSI is useful for managed or IT deployments. " +
+            "This is not administrator-proof, and MSIX/Store removal remains Windows-controlled.")
     }
 
     Row(

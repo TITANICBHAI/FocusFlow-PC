@@ -47,6 +47,8 @@ import com.focusflow.ui.components.BlockOverlay
 import com.focusflow.ui.components.EdgeExtensionPromoDialog
 import com.focusflow.ui.components.openEdgeExtensionStore
 import com.focusflow.ui.components.GlobalPinSetupDialog
+import com.focusflow.ui.components.PostPinRecommendationsDialog
+import com.focusflow.ui.components.openUrl
 import com.focusflow.ui.components.OsBanner
 import com.focusflow.ui.components.OnboardingDialog
 import com.focusflow.services.ReviewPromptService
@@ -67,6 +69,9 @@ import com.focusflow.ui.LocalNavigate
 
 private const val APP_VERSION = "2.0.0"
 private const val EDGE_EXTENSION_PROMO_DISMISSED = "edge_extension_promo_dismissed"
+private const val POST_PIN_RECOMMENDATIONS_SHOWN = "post_pin_recommendations_shown"
+private const val DIRECT_RELEASES_URL =
+    "https://github.com/TITANICBHAI/FocusFlow-PC/releases"
 
 /**
  * Screens where the floating "Restart as Admin" button is shown.
@@ -98,6 +103,8 @@ fun App() {
     var showGlobalPinSetup  by remember { mutableStateOf(false) }
     var showAndroidPromo    by remember { mutableStateOf(false) }
     var showEdgeExtensionPromo by remember { mutableStateOf(false) }
+    var showPostPinRecommendations by remember { mutableStateOf(false) }
+    var postPinRecommendationsShown by remember { mutableStateOf(false) }
     val showReviewPrompt    by ReviewPromptService.shouldShow.collectAsState()
     var showTelemetryConsent     by remember { mutableStateOf(false) }
     var showRegistryOrphanDialog by remember { mutableStateOf(false) }
@@ -133,8 +140,8 @@ fun App() {
             val openCount = (Database.getSetting("app_open_count")?.toIntOrNull() ?: 0) + 1
             Database.setSetting("app_open_count", openCount.toString())
 
-            // PIN prompt: open 3+ only — user has had a session to explore before being asked to secure.
-            val pn = !GlobalPin.isSet() && !GlobalPin.isDeclined() && openCount >= 3
+            // PIN prompt: show on the second app open, after the first-run onboarding.
+            val pn = !GlobalPin.isSet() && !GlobalPin.isDeclined() && openCount >= 2
 
             // 30-day cooldown: store last-shown date instead of a permanent boolean.
             val lastShownDateStr = Database.getSetting("android_promo_shown_date")
@@ -163,19 +170,22 @@ fun App() {
             val showEdgeExtension = !fl
                 && openCount == 20
                 && Database.getSetting(EDGE_EXTENSION_PROMO_DISMISSED) != "true"
+            val recommendationsShown =
+                Database.getSetting(POST_PIN_RECOMMENDATIONS_SHOWN) == "true"
 
             if (showAndroid) {
                 Database.setSetting("android_promo_shown_date", java.time.LocalDate.now().toString())
                 Database.setSetting("android_promo_last_version", APP_VERSION)
             }
 
-            listOf(fl, pn, showAndroid, showConsent, showEdgeExtension)
+            listOf(fl, pn, showAndroid, showConsent, showEdgeExtension, recommendationsShown)
         }
         val firstLaunch  = launchData[0]
         val pinNeeded    = launchData[1]
         val androidPromo = launchData[2]
         val needsConsent = launchData[3]
         val edgeExtensionPromo = launchData[4]
+        postPinRecommendationsShown = launchData[5]
 
         if (firstLaunch) showOnboarding = true
         if (pinNeeded && !firstLaunch) showGlobalPinSetup = true
@@ -348,7 +358,28 @@ fun App() {
         }
 
         if (showGlobalPinSetup) {
-            GlobalPinSetupDialog(onDismiss = { showGlobalPinSetup = false })
+            GlobalPinSetupDialog(
+                onDismiss = { showGlobalPinSetup = false },
+                onComplete = {
+                    showGlobalPinSetup = false
+                    if (!postPinRecommendationsShown) {
+                        postPinRecommendationsShown = true
+                        showPostPinRecommendations = true
+                        scope.launch(Dispatchers.IO) {
+                            Database.setSetting(POST_PIN_RECOMMENDATIONS_SHOWN, "true")
+                        }
+                    }
+                }
+            )
+        }
+
+        if (showPostPinRecommendations) {
+            PostPinRecommendationsDialog(
+                onOpenExtension = { openEdgeExtensionStore() },
+                onOpenNetworkShield = { showPostPinRecommendations = false; navigate(Screen.VPN_NETWORK) },
+                onOpenReleases = { openUrl(DIRECT_RELEASES_URL) },
+                onDismiss = { showPostPinRecommendations = false }
+            )
         }
 
         if (showAndroidPromo) {
