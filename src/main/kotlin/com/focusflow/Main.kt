@@ -35,6 +35,13 @@ fun main(args: Array<String>) = application {
     // Writes a detailed report to Desktop/~/.focusflow/tmpdir with a Swing dialog.
     CrashReporter.install()
 
+    // Register the wrapper before database/service bootstrap. The Windows
+    // uninstall entry is created by jpackage during installation, while this
+    // launch is the first opportunity for FocusFlow to point it at --uninstall.
+    // Keeping this independent of Database.init() prevents a database recovery
+    // problem from leaving the stock uninstaller exposed.
+    WindowsUninstallRegistration.ensureRegistered()
+
     // ── Startup registry janitor ───────────────────────────────────────────────
     // Unconditionally remove any leftover registry lockdown keys from a previous
     // session that was terminated before RegistryLockdown.disable() could run
@@ -53,12 +60,6 @@ fun main(args: Array<String>) = application {
 
     // Auto-backup: daily rolling backup of SQLite database
     AutoBackupService.start()
-
-    // jpackage supplies the initial Windows uninstall entry. Register a
-    // FocusFlow-owned wrapper on direct EXE/MSI installations so Windows
-    // Settings and package-manager uninstall commands pass through the same
-    // gate as tray Quit. MSIX is intentionally excluded.
-    WindowsUninstallRegistration.ensureRegistered()
 
     ProcessMonitor.alwaysOnEnabled   = Database.getSetting("always_on_enforcement") == "true"
     SoundAversion.isEnabled          = Database.getSetting("sound_aversion") != "false"

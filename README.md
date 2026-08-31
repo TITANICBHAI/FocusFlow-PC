@@ -114,9 +114,11 @@ Requires JDK 17+.
 ### Windows install and uninstall flow
 
 The EXE and MSI packages use the standard minimal `jpackage` install wizard.
-After the installed app is launched once, FocusFlow registers a small
-FocusFlow-owned uninstall wizard in the Windows uninstall entry. The wizard
-does not replace Windows Installer: it checks active Standalone Blocks,
+On the first launch after installation, FocusFlow registers a small
+FocusFlow-owned uninstall wizard in the Windows uninstall entry. This
+registration happens before normal database/service startup, so the app only
+needs to start successfully once; it does not need to finish onboarding. The
+wizard does not replace Windows Installer: it checks active Standalone Blocks,
 Always-On/active-session/Nuclear Mode protection, then hands the original MSI
 or EXE removal command back to Windows.
 

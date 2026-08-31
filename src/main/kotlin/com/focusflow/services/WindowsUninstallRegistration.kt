@@ -67,6 +67,7 @@ object WindowsUninstallRegistration {
                     ?.takeIf { it.isNotBlank() }
                     ?: existing.takeIf { it.isNotBlank() }
                     ?: continue
+                val removalCommand = normalizeRemovalCommand(original)
 
                 // If a previous launch already installed the wrapper, preserve
                 // the original command and only refresh the path to this EXE.
@@ -75,7 +76,7 @@ object WindowsUninstallRegistration {
                         hive,
                         path,
                         ORIGINAL_UNINSTALL_STRING,
-                        original
+                        removalCommand
                     )
                     Advapi32Util.registrySetStringValue(
                         hive,
@@ -126,6 +127,7 @@ object WindowsUninstallRegistration {
                     val command = (values[ORIGINAL_UNINSTALL_STRING] as? String)
                         ?.trim()
                         ?.takeIf { it.isNotBlank() }
+                        ?.let(::normalizeRemovalCommand)
                         ?: continue
                     return RegisteredCommand(path, command)
                 } catch (_: Throwable) {
@@ -138,11 +140,28 @@ object WindowsUninstallRegistration {
     }
 
     /**
+     * Older MSI registrations can expose maintenance mode through
+     * `msiexec.exe /I{product-code}`. Once the user has passed FocusFlow's
+     * wizard, the handoff must be an uninstall, not a repair/change operation.
+     * EXE-based uninstallers and already-correct `/X` commands are unchanged.
+     */
+    private fun normalizeRemovalCommand(command: String): String {
+        val maintenanceSwitch = Regex(
+            pattern = """(?i)(\bmsiexec(?:\.exe)?\s+)/i(?=[\s{])"""
+        )
+        return command.replace(maintenanceSwitch) { match ->
+            "${match.groupValues[1]}/x"
+        }
+    }
+
+    /**
      * Resolve the installed jpackage launcher rather than the bundled JVM.
      *
-     * A jpackage-launched app commonly reports runtime\bin\java.exe as the
-     * current process command. Registering that path would make Windows start
-     * java.exe directly, without the launcher-generated classpath and VM args.
+     * Depending on the Compose/JDK launcher, the current process may be either
+     * FocusFlow.exe or runtime\bin\java.exe. The launcher is at the install
+     * root, beside the app and runtime directories. The old implementation
+     * checked inside runtime and therefore silently skipped registration for
+     * launches reporting java.exe.
      */
     private fun currentExecutable(): File? = runCatching {
         val command = ProcessHandle.current().info().command().orElse(null)
@@ -150,25 +169,26 @@ object WindowsUninstallRegistration {
         val commandName = command?.name.orEmpty()
 
         if (command != null &&
-            command.exists() &&
+            command.isFile &&
             commandName.equals("FocusFlow.exe", ignoreCase = true)
         ) {
             return@runCatching command
         }
 
-        val resourcesDir = System.getProperty("compose.application.resources.dir")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::File)
-        val installRootFromResources = resourcesDir
-            ?.parentFile
-            ?.takeIf { it.name.equals("app", ignoreCase = true) }
-        val installRootFromRuntime = command
-            ?.parentFile
-            ?.parentFile
-            ?.takeIf { it.name.equals("runtime", ignoreCase = true) }
+        val roots = sequenceOf(
+            command,
+            System.getProperty("compose.application.resources.dir")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::File)
+        )
+            .filterNotNull()
+            .flatMap { file ->
+                generateSequence(file) { it.parentFile }.take(8)
+            }
+            .distinctBy { it.absolutePath.lowercase() }
 
-        listOfNotNull(installRootFromResources, installRootFromRuntime)
+        roots
             .map { File(it, "FocusFlow.exe") }
-            .firstOrNull { it.exists() }
+            .firstOrNull { it.isFile }
     }.getOrNull()
 }
