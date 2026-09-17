@@ -1,6 +1,8 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.data.models.FocusLauncherSession
+import com.focusflow.data.models.FocusLauncherSessionApp
 import com.focusflow.enforcement.GlobalKeyboardHook
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.RegistryLockdown
@@ -81,6 +83,8 @@ object FocusLauncherService {
     @Volatile private var sessionTimerJob: Job? = null
     @Volatile private var taskbarGuardJob: Job? = null
     @Volatile private var breakDurationSeconds: Int = 5 * 60
+    @Volatile private var breakEndMs: Long = 0L
+    @Volatile private var sessionPinHash: String = ""
 
     private const val LAUNCHER_PIN_KEY  = "launcher_session_pin_hash"
     private const val BREAK_SECONDS_KEY = "launcher_break_duration_sec"
@@ -107,7 +111,8 @@ object FocusLauncherService {
     /** Generate and persist the one-time PIN for the next launcher session. */
     fun preparePin(): String {
         val plain = PinPolicy.generate()
-        Database.setSetting(LAUNCHER_PIN_KEY, sha256(plain))
+        sessionPinHash = sha256(plain)
+        Database.setSetting(LAUNCHER_PIN_KEY, sessionPinHash)
         _sessionPin.value = plain
         return plain
     }
@@ -165,8 +170,17 @@ object FocusLauncherService {
             System.currentTimeMillis() + durationMinutes * 60_000L
         else 0L
         _canTakeBreak.value       = breaksAllowed != 0
+        breakEndMs = 0L
 
         Database.setSetting(CRASH_GUARD_KEY, "true")
+        if (sessionPinHash.isBlank()) {
+            sessionPinHash = Database.getSetting(LAUNCHER_PIN_KEY).orEmpty()
+        }
+        if (sessionPinHash.isBlank()) {
+            _isActive.value = false
+            return
+        }
+        persistSession()
 
         val allowedSet = apps.map { it.processName.lowercase() }.toSet()
         ProcessMonitor.launcherAllowedProcesses = allowedSet
@@ -204,6 +218,7 @@ object FocusLauncherService {
         // double NuclearMode.disable, redundant DB writes, etc.).
         if (!_isActive.compareAndSet(expect = true, update = false)) return
 
+        runCatching { Database.clearFocusLauncherSession() }
         _isHardLocked.value       = false
         _breakActive.value        = false
         _overlayVisible.value     = true
@@ -214,6 +229,8 @@ object FocusLauncherService {
         _sessionEndMs.value       = 0L
         _sessionStartMs.value     = 0L
         breakSecondsAccumulated.set(0L)
+        breakEndMs = 0L
+        sessionPinHash = ""
 
         stopTaskbarGuard()
         ProcessMonitor.onLauncherForegroundChanged = null
@@ -225,6 +242,7 @@ object FocusLauncherService {
 
         Database.setSetting(CRASH_GUARD_KEY, "false")
         Database.setSetting(HARD_LOCK_KEY, "false")
+        Database.setSetting(LAUNCHER_PIN_KEY, "")
 
         ProcessMonitor.launcherAllowedProcesses = emptySet()
 
@@ -248,6 +266,7 @@ object FocusLauncherService {
         do { prev = _isHardLocked.value } while (!_isHardLocked.compareAndSet(prev, !prev))
         val newValue = !prev
         Database.setSetting(HARD_LOCK_KEY, newValue.toString())
+        if (_isActive.value) persistSession()
 
     }
 
@@ -276,6 +295,8 @@ object FocusLauncherService {
         _breaksUsed.value += 1
         _canTakeBreak.value = _breaksTotal.value == -1 ||
             _breaksUsed.value < _breaksTotal.value
+        breakEndMs = System.currentTimeMillis() + breakDurationSeconds * 1_000L
+        persistSession()
 
         ProcessMonitor.launcherAllowedProcesses = emptySet()
         // silent = true: suppress "Nuclear Mode OFF" notification during a focus break —
@@ -288,11 +309,9 @@ object FocusLauncherService {
         RegistryLockdown.disable()
 
         breakJob = scope.launch {
-            // Wall-clock deadline — immune to delay() drift under GC pauses or scheduler jitter.
-            val breakDeadlineMs = System.currentTimeMillis() + breakDurationSeconds * 1_000L
             while (_breakActive.value) {
                 delay(500)
-                val remaining = maxOf(0L, (breakDeadlineMs - System.currentTimeMillis()) / 1_000L)
+                val remaining = maxOf(0L, (breakEndMs - System.currentTimeMillis()) / 1_000L)
                 _breakRemainingSeconds.value = remaining.toInt()
                 if (remaining == 0L) break
             }
@@ -325,6 +344,8 @@ object FocusLauncherService {
         breakJob?.cancel()
         breakJob = null
         _breakRemainingSeconds.value = 0
+        breakEndMs = 0L
+        persistSession()
         // NOTE: _breakActive is already false — compareAndSet(true, false) at the top set it.
 
         if (_isActive.value) {
@@ -394,7 +415,7 @@ object FocusLauncherService {
         _overlayVisible.value = true
     }
 
-    // ── Crash recovery ─────────────────────────────────────────────────────
+    // ── Interrupted-session recovery ──────────────────────────────────────────
 
     /**
      * Called at startup. Restores Windows to a normal usable state unconditionally.
@@ -408,39 +429,141 @@ object FocusLauncherService {
      *   ShowWindow(taskbar, SW_SHOW) on an already-visible taskbar is a no-op,
      *   so calling it unconditionally costs nothing and is always safe.
      */
-    fun loadFromDb() {
-        // Always restore Windows state unconditionally — all three calls are no-ops when
-        // the session was exited cleanly (taskbar visible, lock released, registry clean).
-        // Calling them unconditionally mirrors the "safe no-op" contract of ShowWindow on an
-        // already-visible taskbar: no harm done, no crash state survives a restart.
-        //
-        // CRITICAL — RegistryLockdown.disable() MUST be here:
-        //   Registry values (DisableTaskMgr, NoLogOff, HideFastUserSwitching) survive
-        //   process death. If FocusFlow crashes mid-session the OS does NOT clean them up.
-        //   The keyboard hook dies with the process, but the registry stays dirty until
-        //   explicitly cleared. Unlike the keyboard hook, we cannot rely on the OS to clean
-        //   this up for us — we must do it ourselves on every startup.
+    fun restoreInterruptedSession() {
+        // First clear OS state left by the previous JVM. A valid saved session below
+        // will immediately re-apply the launcher restrictions.
         showTaskbar()
         try { RegistryLockdown.disable() } catch (_: Throwable) {}
         ProcessMonitor.launcherAllowedProcesses = emptySet()
 
-        _sessionPin.value = ""
-        Database.setSetting(LAUNCHER_PIN_KEY, "")
-
-        // Clear any stale launcher flags regardless of how we got here
-        val hadCrashGuard = Database.getSetting(CRASH_GUARD_KEY) == "true"
-        val hadHardLock   = Database.getSetting(HARD_LOCK_KEY)   == "true"
-
-        if (hadCrashGuard || hadHardLock) {
-            // silent = true: crash recovery is invisible to the user — they should not
-            // see "Nuclear Mode OFF / Normal operation resumed" just because the app
-            // restored itself after a crash. NuclearMode.loadFromDb() already fires a
-            // "Nuclear Mode ON" notification moments earlier (it re-enables from DB),
-            // so a second nuclear mode notification on the same startup is confusing.
-            if (NuclearMode.isActive) NuclearMode.disable(silent = true)
-            Database.setSetting(CRASH_GUARD_KEY, "false")
-            Database.setSetting(HARD_LOCK_KEY,   "false")
+        val hadLauncherMarkers =
+            Database.getSetting(CRASH_GUARD_KEY) == "true" ||
+                Database.getSetting(HARD_LOCK_KEY) == "true"
+        val saved = Database.getFocusLauncherSession()
+        if (saved == null || saved.pinHash.isBlank()) {
+            clearStaleSessionMarkers(hadLauncherMarkers)
+            return
         }
+
+        val now = System.currentTimeMillis()
+        if (saved.sessionEndMs > 0L && now >= saved.sessionEndMs) {
+            clearStaleSessionMarkers(disableNuclear = true)
+            return
+        }
+
+        if (saved.breakActive && saved.breakEndMs <= 0L) {
+            clearStaleSessionMarkers(disableNuclear = true)
+            return
+        }
+
+        sessionPinHash = saved.pinHash
+        Database.setSetting(LAUNCHER_PIN_KEY, saved.pinHash)
+        Database.setSetting(CRASH_GUARD_KEY, "true")
+        Database.setSetting(HARD_LOCK_KEY, saved.hardLocked.toString())
+
+        _isActive.value = true
+        _isHardLocked.value = saved.hardLocked
+        _breaksTotal.value = saved.breaksTotal
+        _breaksUsed.value = saved.breaksUsed
+        _canTakeBreak.value = saved.breaksTotal == -1 || saved.breaksUsed < saved.breaksTotal
+        breakDurationSeconds = saved.breakDurationSeconds.coerceAtLeast(1)
+        breakSecondsAccumulated.set(saved.breakSecondsAccumulated.coerceAtLeast(0L))
+        _sessionApps.value = saved.apps.map {
+            FocusLauncherApp(it.processName, it.displayName, it.exePath)
+        }
+        _sessionStartMs.value = saved.sessionStartMs
+        _sessionEndMs.value = saved.sessionEndMs
+        breakEndMs = saved.breakEndMs
+        _sessionPin.value = ""
+
+        if (saved.breakActive) {
+            restoreInterruptedBreak(saved, now)
+        } else {
+            reenableLauncherRestrictions()
+            if (_sessionEndMs.value > 0L) startSessionTimer()
+        }
+    }
+
+    private fun clearStaleSessionMarkers(disableNuclear: Boolean) {
+        runCatching { Database.clearFocusLauncherSession() }
+        Database.setSetting(LAUNCHER_PIN_KEY, "")
+        Database.setSetting(CRASH_GUARD_KEY, "false")
+        Database.setSetting(HARD_LOCK_KEY, "false")
+        sessionPinHash = ""
+        _sessionPin.value = ""
+        _isActive.value = false
+        _isHardLocked.value = false
+        _breakActive.value = false
+        _breakRemainingSeconds.value = 0
+        _sessionApps.value = emptyList()
+        _sessionEndMs.value = 0L
+        _sessionStartMs.value = 0L
+        breakEndMs = 0L
+        if (disableNuclear && NuclearMode.isActive) NuclearMode.disable(silent = true)
+    }
+
+    private fun restoreInterruptedBreak(saved: FocusLauncherSession, now: Long) {
+        val remaining = ((saved.breakEndMs - now).coerceAtLeast(0L) / 1_000L).toInt()
+        if (remaining == 0) {
+            _breakActive.value = true
+            _breakRemainingSeconds.value = 0
+            endBreak()
+            return
+        }
+
+        _breakActive.value = true
+        _breakRemainingSeconds.value = remaining
+        _overlayVisible.value = false
+        ProcessMonitor.onLauncherForegroundChanged = ::onForegroundChanged
+        ProcessMonitor.launcherAllowedProcesses = emptySet()
+        if (NuclearMode.isActive) NuclearMode.disable(silent = true)
+        GlobalKeyboardHook.disable()
+        RegistryLockdown.disable()
+        showTaskbar()
+
+        breakJob = scope.launch {
+            while (_breakActive.value) {
+                delay(500)
+                val next = maxOf(0L, (breakEndMs - System.currentTimeMillis()) / 1_000L)
+                _breakRemainingSeconds.value = next.toInt()
+                if (next == 0L) break
+            }
+            if (_breakActive.value) endBreak()
+        }
+    }
+
+    private fun reenableLauncherRestrictions() {
+        val allowedSet = _sessionApps.value.map { it.processName.lowercase() }.toSet()
+        ProcessMonitor.launcherAllowedProcesses = allowedSet
+        ProcessMonitor.onLauncherForegroundChanged = ::onForegroundChanged
+        NuclearMode.enable(silent = true)
+        GlobalKeyboardHook.enable()
+        RegistryLockdown.enable()
+        startTaskbarGuard()
+        _overlayVisible.value = true
+    }
+
+    private fun persistSession() {
+        val hash = sessionPinHash
+        if (!_isActive.value || hash.isBlank()) return
+
+        Database.saveFocusLauncherSession(
+            FocusLauncherSession(
+                apps = _sessionApps.value.map {
+                    FocusLauncherSessionApp(it.processName, it.displayName, it.exePath)
+                },
+                sessionStartMs = _sessionStartMs.value,
+                sessionEndMs = _sessionEndMs.value,
+                breaksTotal = _breaksTotal.value,
+                breaksUsed = _breaksUsed.value,
+                breakDurationSeconds = breakDurationSeconds,
+                breakSecondsAccumulated = breakSecondsAccumulated.get(),
+                hardLocked = _isHardLocked.value,
+                breakActive = _breakActive.value,
+                breakEndMs = breakEndMs,
+                pinHash = hash
+            )
+        )
     }
 
     // ── Emergency restore (crash handler / external call) ──────────────────

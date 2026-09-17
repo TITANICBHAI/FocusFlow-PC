@@ -152,7 +152,7 @@ object Database {
     // Every new schema change gets its own numbered migrate_vN() function.
     // Never edit an existing migrate_vN() — add a new one and bump TARGET_VERSION.
     //
-    private val TARGET_VERSION = 7
+    private val TARGET_VERSION = 8
 
     private fun migrate() {
         val current = connection.createStatement()
@@ -173,6 +173,7 @@ object Database {
             if (current < 5) migrateV5()
             if (current < 6) migrateV6()
             if (current < 7) migrateV7()
+            if (current < 8) migrateV8()
 
             // Bump stored version only after ALL steps succeed
             connection.createStatement()
@@ -390,6 +391,37 @@ object Database {
                     name TEXT NOT NULL,
                     process_names TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
+                )
+            """.trimIndent())
+        }
+    }
+
+    // v8 — durable Focus Launcher session recovery
+    private fun migrateV8() {
+        connection.createStatement().use { st ->
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS focus_launcher_session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    session_start_ms INTEGER NOT NULL,
+                    session_end_ms INTEGER NOT NULL DEFAULT 0,
+                    breaks_total INTEGER NOT NULL DEFAULT 1,
+                    breaks_used INTEGER NOT NULL DEFAULT 0,
+                    break_duration_seconds INTEGER NOT NULL DEFAULT 300,
+                    break_seconds_accumulated INTEGER NOT NULL DEFAULT 0,
+                    hard_locked INTEGER NOT NULL DEFAULT 0,
+                    break_active INTEGER NOT NULL DEFAULT 0,
+                    break_end_ms INTEGER NOT NULL DEFAULT 0,
+                    pin_hash TEXT NOT NULL
+                )
+            """.trimIndent())
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS focus_launcher_session_apps (
+                    session_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    process_name TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    exe_path TEXT,
+                    PRIMARY KEY (session_id, position)
                 )
             """.trimIndent())
         }
@@ -1282,6 +1314,139 @@ object Database {
     @Synchronized fun deleteFocusLauncherPreset(id: String) {
         connection.prepareStatement("DELETE FROM focus_launcher_presets WHERE id = ?").use { ps ->
             ps.setString(1, id); ps.executeUpdate()
+        }
+    }
+
+    // ── Focus Launcher session recovery ────────────────────────────────────────
+
+    @Synchronized fun getFocusLauncherSession(): FocusLauncherSession? {
+        if (!isReady) return null
+
+        var session: FocusLauncherSession? = null
+        connection.prepareStatement(
+            "SELECT * FROM focus_launcher_session WHERE id = 1"
+        ).use { ps ->
+            ps.executeQuery().use { rs ->
+                if (rs.next()) {
+                    session = FocusLauncherSession(
+                        apps = emptyList(),
+                        sessionStartMs = rs.getLong("session_start_ms"),
+                        sessionEndMs = rs.getLong("session_end_ms"),
+                        breaksTotal = rs.getInt("breaks_total"),
+                        breaksUsed = rs.getInt("breaks_used"),
+                        breakDurationSeconds = rs.getInt("break_duration_seconds"),
+                        breakSecondsAccumulated = rs.getLong("break_seconds_accumulated"),
+                        hardLocked = rs.getInt("hard_locked") != 0,
+                        breakActive = rs.getInt("break_active") != 0,
+                        breakEndMs = rs.getLong("break_end_ms"),
+                        pinHash = rs.getString("pin_hash")
+                    )
+                }
+            }
+        }
+        val storedSession = session ?: return null
+
+        val apps = connection.prepareStatement(
+            """
+            SELECT process_name, display_name, exe_path
+            FROM focus_launcher_session_apps
+            WHERE session_id = 1
+            ORDER BY position ASC
+            """.trimIndent()
+        ).use { ps ->
+            ps.executeQuery().use { rs ->
+                val list = mutableListOf<FocusLauncherSessionApp>()
+                while (rs.next()) {
+                    list.add(
+                        FocusLauncherSessionApp(
+                            processName = rs.getString("process_name"),
+                            displayName = rs.getString("display_name"),
+                            exePath = rs.getString("exe_path")
+                        )
+                    )
+                }
+                list
+            }
+        }
+
+        return storedSession.copy(apps = apps)
+    }
+
+    /**
+     * Replaces the complete recoverable launcher state in one transaction.
+     * The session row and its app rows can never be observed half-written.
+     */
+    @Synchronized fun saveFocusLauncherSession(session: FocusLauncherSession) {
+        if (!isReady) return
+
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement(
+                "INSERT OR REPLACE INTO focus_launcher_session " +
+                    "(id, session_start_ms, session_end_ms, breaks_total, breaks_used, " +
+                    "break_duration_seconds, break_seconds_accumulated, hard_locked, " +
+                    "break_active, break_end_ms, pin_hash) VALUES (1,?,?,?,?,?,?,?,?,?,?)"
+            ).use { ps ->
+                ps.setLong(1, session.sessionStartMs)
+                ps.setLong(2, session.sessionEndMs)
+                ps.setInt(3, session.breaksTotal)
+                ps.setInt(4, session.breaksUsed)
+                ps.setInt(5, session.breakDurationSeconds)
+                ps.setLong(6, session.breakSecondsAccumulated)
+                ps.setInt(7, if (session.hardLocked) 1 else 0)
+                ps.setInt(8, if (session.breakActive) 1 else 0)
+                ps.setLong(9, session.breakEndMs)
+                ps.setString(10, session.pinHash)
+                ps.executeUpdate()
+            }
+
+            connection.prepareStatement(
+                "DELETE FROM focus_launcher_session_apps WHERE session_id = 1"
+            ).use { it.executeUpdate() }
+
+            connection.prepareStatement(
+                """
+                INSERT INTO focus_launcher_session_apps
+                    (session_id, position, process_name, display_name, exe_path)
+                VALUES (1, ?, ?, ?, ?)
+                """.trimIndent()
+            ).use { ps ->
+                session.apps.forEachIndexed { index, app ->
+                    ps.setInt(1, index)
+                    ps.setString(2, app.processName)
+                    ps.setString(3, app.displayName)
+                    ps.setString(4, app.exePath)
+                    ps.addBatch()
+                }
+                ps.executeBatch()
+            }
+
+            connection.commit()
+        } catch (e: Exception) {
+            try { connection.rollback() } catch (_: Exception) {}
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    @Synchronized fun clearFocusLauncherSession() {
+        if (!isReady) return
+
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement(
+                "DELETE FROM focus_launcher_session_apps WHERE session_id = 1"
+            ).use { it.executeUpdate() }
+            connection.prepareStatement(
+                "DELETE FROM focus_launcher_session WHERE id = 1"
+            ).use { it.executeUpdate() }
+            connection.commit()
+        } catch (e: Exception) {
+            try { connection.rollback() } catch (_: Exception) {}
+            throw e
+        } finally {
+            connection.autoCommit = true
         }
     }
 

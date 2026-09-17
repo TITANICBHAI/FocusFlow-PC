@@ -90,9 +90,9 @@ fun main(args: Array<String>) = application {
     // Standalone block — restore a block that survived a restart
     StandaloneBlockService.loadFromDb()
 
-    // Focus Launcher — restore taskbar and clear crash guard if we crashed while locked
-    try { FocusLauncherService.loadFromDb() } catch (_: Throwable) {
-        // Absolute fallback: if loadFromDb itself throws, at minimum restore the taskbar
+    // Focus Launcher — resume a valid interrupted session, otherwise restore stale OS state.
+    try { FocusLauncherService.restoreInterruptedSession() } catch (_: Throwable) {
+        // Absolute fallback: if recovery itself throws, at minimum restore the taskbar
         try { FocusLauncherService.emergencyRestoreWindows() } catch (_: Throwable) {}
     }
 
@@ -114,7 +114,7 @@ fun main(args: Array<String>) = application {
     }
     WeeklyReportService.startScheduler()
 
-    var windowVisible by remember { mutableStateOf(true) }
+    var windowVisible by remember { mutableStateOf(!FocusLauncherService.isActive.value) }
 
     val windowState = rememberWindowState(
         width     = 1100.dp,

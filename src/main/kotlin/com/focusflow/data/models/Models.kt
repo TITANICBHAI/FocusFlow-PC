@@ -210,3 +210,27 @@ data class FocusLauncherPreset(
     val processNames: List<String>,
     val createdAt: LocalDateTime = LocalDateTime.now()
 )
+
+data class FocusLauncherSessionApp(
+    val processName: String,
+    val displayName: String,
+    val exePath: String? = null
+)
+
+/**
+ * The durable state needed to resume a Focus Launcher session after an
+ * unexpected shutdown or reboot. The PIN is stored as a hash only.
+ */
+data class FocusLauncherSession(
+    val apps: List<FocusLauncherSessionApp>,
+    val sessionStartMs: Long,
+    val sessionEndMs: Long = 0L,
+    val breaksTotal: Int = 1,
+    val breaksUsed: Int = 0,
+    val breakDurationSeconds: Int = 5 * 60,
+    val breakSecondsAccumulated: Long = 0L,
+    val hardLocked: Boolean = false,
+    val breakActive: Boolean = false,
+    val breakEndMs: Long = 0L,
+    val pinHash: String
+)
