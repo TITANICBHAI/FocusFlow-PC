@@ -31,6 +31,20 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "2.0.1",
+        date       = "September 2026",
+        badge      = "FIX",
+        badgeColor = Error,
+        changes    = listOf(
+            "FIX" to "Focus Launcher now displays the real executable icon for each selected app instead of using the generic Apps icon for every tile",
+            "FIX" to "Launching an app that is already running now restores and focuses its visible window instead of opening a duplicate process",
+            "SEC" to "Ending a Focus Launcher session always requires the generated session PIN; dismissing a confirmation dialog can no longer bypass the PIN gate",
+            "SEC" to "Launcher PIN verification now fails closed when the stored PIN hash is missing or blank",
+            "IMP" to "Focus Launcher setup now includes a visible scrollbar for long installed-app lists",
+            "IMP" to "Launcher PIN checks run off the UI thread so database verification does not freeze the desktop interface"
+        )
+    ),
+    ChangelogEntry(
         version    = "2.0.0",
         date       = "August 2026",
         badge      = "NEW",
