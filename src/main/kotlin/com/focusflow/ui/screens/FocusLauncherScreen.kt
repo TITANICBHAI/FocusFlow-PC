@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.data.models.FocusLauncherPreset
 import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.isWindows
 import com.focusflow.i18n.LocalizationManager
@@ -35,6 +36,7 @@ import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 private val DURATION_PRESETS = listOf(
     "No limit" to null,
@@ -60,6 +62,9 @@ fun FocusLauncherScreen() {
     var breakDurationMins by remember { mutableStateOf(5) }
     var showPinBeforeEnter by remember { mutableStateOf(false) }
     var generatedPin       by remember { mutableStateOf("") }
+    var allowedAppsExpanded by remember { mutableStateOf(false) }
+    var launcherPresets    by remember { mutableStateOf<List<FocusLauncherPreset>>(emptyList()) }
+    var showPresetDialog   by remember { mutableStateOf(false) }
 
     // Checked once on composition — running "net session" is a blocking call so we
     // do it inside remember{} rather than on every recomposition.
@@ -80,6 +85,7 @@ fun FocusLauncherScreen() {
 
         // Restore the last selection, intersected with apps currently installed.
         val persisted = withContext(Dispatchers.IO) { Database.getSetting("launcher_selected_apps") }
+        val presets = withContext(Dispatchers.IO) { Database.getFocusLauncherPresets() }
         selectedApps = if (persisted != null && persisted.isNotBlank()) {
             val saved     = persisted.split(",").filter { it.isNotBlank() }
                 .map { it.trim().lowercase() }.toSet()
@@ -89,6 +95,7 @@ fun FocusLauncherScreen() {
         } else {
             apps.map { it.processName.lowercase() }.toSet()
         }
+        launcherPresets = presets
 
         isLoading = false
     }
@@ -253,115 +260,285 @@ fun FocusLauncherScreen() {
             }
         }
 
-        // ── App selection ─────────────────────────────────────────────────────
+        // ── Launcher limitations ──────────────────────────────────────────────
         item {
-            Text(strings.launcherAppsToInclude, color = OnSurface, fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(4.dp))
-            Text("Installed apps detected on this computer. Uncheck any you don't want this session.",
-                color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-        }
-
-        if (isLoading) {
-            item {
-                Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Purple80, modifier = Modifier.size(28.dp))
-                }
-            }
-        } else if (availableApps.isEmpty()) {
-            item {
-                Row(
-                    modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                        .background(Surface3).padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment     = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Info, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
-                    Text(strings.launcherNoAppsYet,
-                        color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        } else {
-            // Namespaces are required because searchResults is rendered in this
-            // same LazyColumn below. Process name is the app identity; the
-            // section prefix prevents cross-section collisions.
-            items(availableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
-                val key      = app.processName.lowercase()
-                val checked  = key in selectedApps
-                AppSelectRow(
-                    app     = app,
-                    checked = checked,
-                    onToggle = {
-                        selectedApps = if (checked) selectedApps - key else selectedApps + key
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(Warning.copy(alpha = 0.07f))
+                    .border(1.dp, Warning.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(Icons.Default.Info, null, tint = Warning, modifier = Modifier.size(17.dp))
+                Text(
+                    "Windows core, input and driver, security, audio, accessibility, " +
+                        "FocusFlow, and Java runtime processes are always protected and will not be terminated. " +
+                        "Some user processes may also require Administrator rights to stop.",
+                    color = OnSurface2,
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
 
-        // ── Search & add ──────────────────────────────────────────────────────
+        // ── Collapsible allowed-app selection ─────────────────────────────────
         item {
-            Spacer(Modifier.height(4.dp))
-            Text(strings.launcherAddMoreApps, color = OnSurface, fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value          = searchQuery,
-                onValueChange  = { searchQuery = it },
-                placeholder    = { Text(strings.launcherSearchApps, color = OnSurface2) },
-                leadingIcon    = { Icon(Icons.Default.Search, null, tint = OnSurface2, modifier = Modifier.size(18.dp)) },
-                trailingIcon   = if (searchQuery.isNotEmpty()) {{
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Close, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(Surface3)
+                    .clickable { allowedAppsExpanded = !allowedAppsExpanded }
+                    .padding(horizontal = 14.dp, vertical = 13.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Apps, null, tint = Purple80, modifier = Modifier.size(20.dp))
+                    Column {
+                        Text(
+                            "Select allowed apps",
+                            color = OnSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            "${selectedApps.size} of ${availableApps.size} selected",
+                            color = OnSurface2,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
-                }} else null,
-                singleLine     = true,
-                colors         = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor   = Purple80,
-                    unfocusedBorderColor = Surface3
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
+                }
+                Icon(
+                    if (allowedAppsExpanded) Icons.Default.KeyboardArrowUp
+                    else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = OnSurface2
+                )
+            }
         }
 
-        if (searchResults.isNotEmpty()) {
-            items(searchResults, key = { "search:${it.processName.lowercase()}" }) { app ->
-                val key     = app.processName.lowercase()
-                val added   = availableApps.any { it.processName.equals(app.processName, ignoreCase = true) }
-                val checked = key in selectedApps
+        if (allowedAppsExpanded) {
+            item {
                 Row(
-                    modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                        .background(Surface3).padding(horizontal = 14.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment     = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(app.displayName, color = OnSurface,
-                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text(app.processName, color = OnSurface2,
-                            style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                    Text(
+                        "Allowed apps",
+                        color = OnSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = { selectedApps = emptySet() },
+                            enabled = selectedApps.isNotEmpty(),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("Unselect all", color = if (selectedApps.isNotEmpty()) Warning else OnSurface2)
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedApps = availableApps.map { it.processName.lowercase() }.toSet()
+                            },
+                            enabled = availableApps.isNotEmpty(),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("Select all", color = Purple80)
+                        }
                     }
-                    if (!added) {
-                        ShortcutTooltip("Add to session") {
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                        .background(Purple80.copy(alpha = 0.07f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, null, tint = Purple80, modifier = Modifier.size(16.dp))
+                    Text(
+                        "Only selected user apps are allowed to remain open during the session. " +
+                            "Protected system and driver processes are handled separately.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Saved presets", color = OnSurface, fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium)
+                    OutlinedButton(
+                        onClick = { showPresetDialog = true },
+                        enabled = selectedApps.isNotEmpty(),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Purple80)
+                    ) {
+                        Icon(Icons.Default.Add, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Save current", fontSize = 11.sp)
+                    }
+                }
+            }
+
+            if (launcherPresets.isNotEmpty()) {
+                items(launcherPresets, key = { "launcher-preset:${it.id}" }) { preset ->
+                    val availableNames = availableApps.map { it.processName.lowercase() }.toSet()
+                    val presetApps = preset.processNames.map { it.lowercase() }.filter { it in availableNames }.toSet()
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+                            .background(Surface3)
+                            .clickable { selectedApps = presetApps }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        Icon(Icons.Default.Bookmark, null, tint = Purple80, modifier = Modifier.size(17.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(preset.name, color = OnSurface, fontWeight = FontWeight.Medium,
+                                style = MaterialTheme.typography.bodySmall)
+                            Text("${presetApps.size} installed app${if (presetApps.size == 1) "" else "s"}",
+                                color = OnSurface2, fontSize = 11.sp)
+                        }
+                        ShortcutTooltip("Delete preset") {
                             IconButton(
                                 onClick = {
-                                    availableApps = availableApps + app
-                                    selectedApps  = selectedApps + key
-                                    searchQuery   = ""
+                                    scope.launch(Dispatchers.IO) {
+                                        Database.deleteFocusLauncherPreset(preset.id)
+                                        val updated = Database.getFocusLauncherPresets()
+                                        withContext(Dispatchers.Main) { launcherPresets = updated }
+                                    }
                                 },
-                                modifier = Modifier.size(32.dp).clip(CircleShape)
-                                    .background(Purple80.copy(alpha = 0.15f))
+                                modifier = Modifier.size(28.dp)
                             ) {
-                                Icon(Icons.Default.Add, null, tint = Purple80, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Delete, null, tint = OnSurface2.copy(alpha = 0.55f),
+                                    modifier = Modifier.size(14.dp))
                             }
                         }
-                    } else {
-                        Checkbox(
-                            checked  = checked,
-                            onCheckedChange = {
-                                selectedApps = if (checked) selectedApps - key else selectedApps + key
-                            },
-                            colors = CheckboxDefaults.colors(checkedColor = Purple80)
-                        )
+                    }
+                }
+            }
+
+            item {
+                Text(
+                    "Installed apps detected on this computer. Uncheck anything you do not want available.",
+                    color = OnSurface2,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            if (isLoading) {
+                item {
+                    Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Purple80, modifier = Modifier.size(28.dp))
+                    }
+                }
+            } else if (availableApps.isEmpty()) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .background(Surface3).padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Info, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
+                        Text(strings.launcherNoAppsYet, color = OnSurface2,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                // The process name is the app identity; the section prefix prevents
+                // collisions with search results in this LazyColumn.
+                items(availableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
+                    val key = app.processName.lowercase()
+                    val checked = key in selectedApps
+                    AppSelectRow(
+                        app = app,
+                        checked = checked,
+                        onToggle = {
+                            selectedApps = if (checked) selectedApps - key else selectedApps + key
+                        }
+                    )
+                }
+            }
+
+            // ── Search & add ──────────────────────────────────────────────────
+            item {
+                Spacer(Modifier.height(4.dp))
+                Text(strings.launcherAddMoreApps, color = OnSurface, fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(strings.launcherSearchApps, color = OnSurface2) },
+                    leadingIcon = { Icon(Icons.Default.Search, null, tint = OnSurface2, modifier = Modifier.size(18.dp)) },
+                    trailingIcon = if (searchQuery.isNotEmpty()) {{
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Close, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
+                        }
+                    }} else null,
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Purple80,
+                        unfocusedBorderColor = Surface3
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            if (searchResults.isNotEmpty()) {
+                items(searchResults, key = { "search:${it.processName.lowercase()}" }) { app ->
+                    val key = app.processName.lowercase()
+                    val added = availableApps.any { it.processName.equals(app.processName, ignoreCase = true) }
+                    val checked = key in selectedApps
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .background(Surface3).padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(app.displayName, color = OnSurface,
+                                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Text(app.processName, color = OnSurface2,
+                                style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                        }
+                        if (!added) {
+                            ShortcutTooltip("Add to session") {
+                                IconButton(
+                                    onClick = {
+                                        availableApps = availableApps + app
+                                        selectedApps = selectedApps + key
+                                        searchQuery = ""
+                                    },
+                                    modifier = Modifier.size(32.dp).clip(CircleShape)
+                                        .background(Purple80.copy(alpha = 0.15f))
+                                ) {
+                                    Icon(Icons.Default.Add, null, tint = Purple80, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        } else {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = {
+                                    selectedApps = if (checked) selectedApps - key else selectedApps + key
+                                },
+                                colors = CheckboxDefaults.colors(checkedColor = Purple80)
+                            )
+                        }
                     }
                 }
             }
@@ -667,6 +844,71 @@ fun FocusLauncherScreen() {
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                 ) { Text("I've noted it — Start") }
+            }
+        )
+    }
+
+    // ── Save launcher preset ────────────────────────────────────────────────────
+    if (showPresetDialog) {
+        var presetName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showPresetDialog = false },
+            containerColor = Surface2,
+            shape = RoundedCornerShape(20.dp),
+            title = {
+                Text("Save allowed-app preset", color = OnSurface, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "${selectedApps.size} selected app${if (selectedApps.size == 1) "" else "s"} " +
+                            "will be saved for quick reuse.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = presetName,
+                        onValueChange = { presetName = it },
+                        placeholder = { Text("Preset name", color = OnSurface2) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Purple80,
+                            unfocusedBorderColor = Surface3,
+                            focusedTextColor = OnSurface,
+                            unfocusedTextColor = OnSurface
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = presetName.trim()
+                        if (name.isNotBlank() && selectedApps.isNotEmpty()) {
+                            val preset = FocusLauncherPreset(
+                                id = UUID.randomUUID().toString(),
+                                name = name,
+                                processNames = selectedApps.toList()
+                            )
+                            showPresetDialog = false
+                            scope.launch(Dispatchers.IO) {
+                                Database.upsertFocusLauncherPreset(preset)
+                                val updated = Database.getFocusLauncherPresets()
+                                withContext(Dispatchers.Main) { launcherPresets = updated }
+                            }
+                        }
+                    },
+                    enabled = presetName.trim().isNotBlank() && selectedApps.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPresetDialog = false }) {
+                    Text(strings.btnCancel, color = OnSurface2)
+                }
             }
         )
     }

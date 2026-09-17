@@ -152,7 +152,7 @@ object Database {
     // Every new schema change gets its own numbered migrate_vN() function.
     // Never edit an existing migrate_vN() — add a new one and bump TARGET_VERSION.
     //
-    private val TARGET_VERSION = 6
+    private val TARGET_VERSION = 7
 
     private fun migrate() {
         val current = connection.createStatement()
@@ -172,6 +172,7 @@ object Database {
             if (current < 4) migrateV4()
             if (current < 5) migrateV5()
             if (current < 6) migrateV6()
+            if (current < 7) migrateV7()
 
             // Bump stored version only after ALL steps succeed
             connection.createStatement()
@@ -377,6 +378,20 @@ object Database {
                 )
             """.trimIndent())
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date)")
+        }
+    }
+
+    // v7 — Focus Launcher allowed-app presets
+    private fun migrateV7() {
+        connection.createStatement().use { st ->
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS focus_launcher_presets (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    process_names TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+            """.trimIndent())
         }
     }
 
@@ -1238,6 +1253,38 @@ object Database {
         }
     }
 
+    // ── Focus Launcher Presets ─────────────────────────────────────────────────
+
+    @Synchronized fun getFocusLauncherPresets(): List<FocusLauncherPreset> {
+        return connection.createStatement().executeQuery(
+            "SELECT * FROM focus_launcher_presets ORDER BY created_at DESC"
+        ).use { rs ->
+            val list = mutableListOf<FocusLauncherPreset>()
+            while (rs.next()) list.add(rowToFocusLauncherPreset(rs))
+            list
+        }
+    }
+
+    @Synchronized fun upsertFocusLauncherPreset(preset: FocusLauncherPreset) {
+        connection.prepareStatement("""
+            INSERT OR REPLACE INTO focus_launcher_presets
+            (id, name, process_names, created_at)
+            VALUES (?,?,?,?)
+        """.trimIndent()).use { ps ->
+            ps.setString(1, preset.id)
+            ps.setString(2, preset.name)
+            ps.setString(3, preset.processNames.joinToString(","))
+            ps.setString(4, preset.createdAt.format(dtFmt))
+            ps.executeUpdate()
+        }
+    }
+
+    @Synchronized fun deleteFocusLauncherPreset(id: String) {
+        connection.prepareStatement("DELETE FROM focus_launcher_presets WHERE id = ?").use { ps ->
+            ps.setString(1, id); ps.executeUpdate()
+        }
+    }
+
     // ── Row mappers ───────────────────────────────────────────────────────────
 
     private fun rowToTask(rs: java.sql.ResultSet): Task = Task(
@@ -1307,6 +1354,13 @@ object Database {
         id           = rs.getString("id"),
         name         = rs.getString("name"),
         emoji        = rs.getString("emoji") ?: "🚫",
+        processNames = rs.getString("process_names")?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
+        createdAt    = LocalDateTime.parse(rs.getString("created_at"), dtFmt)
+    )
+
+    private fun rowToFocusLauncherPreset(rs: java.sql.ResultSet): FocusLauncherPreset = FocusLauncherPreset(
+        id           = rs.getString("id"),
+        name         = rs.getString("name"),
         processNames = rs.getString("process_names")?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
         createdAt    = LocalDateTime.parse(rs.getString("created_at"), dtFmt)
     )

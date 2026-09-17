@@ -203,3 +203,10 @@ data class CustomBlockPreset(
     val processNames: List<String>,
     val createdAt: LocalDateTime = LocalDateTime.now()
 )
+
+data class FocusLauncherPreset(
+    val id: String,
+    val name: String,
+    val processNames: List<String>,
+    val createdAt: LocalDateTime = LocalDateTime.now()
+)

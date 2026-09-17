@@ -589,27 +589,35 @@ object ProcessMonitor {
             // When the UWP frame host is foreground, resolve the actual hosted
             // child process and check it against the launcher allowlist.
             val launcherTarget = if (lower == uwpFrameHost) {
-                resolveDisallowedUwpProcess(launcherAllowed, pid) ?: return
+                resolveDisallowedUwpProcess(launcherAllowed, pid)
             } else {
                 ProcessTarget(processName, pid)
             }
-            val launcherResolved = launcherTarget.name
-            val launcherResolvedLower = launcherResolved.lowercase()
-            if (launcherResolvedLower !in launcherSafeProcesses && launcherResolvedLower !in launcherAllowed) {
-                if (tryAcquireCooldown("launcher:$launcherResolvedLower", now)) {
-                    // Two-layer kill (same logic as launcherSweep):
-                    //   1. destroyForcibly() via PID — instant, zero subprocess overhead
-                    //   2. taskkill /F /PID or /IM — handles elevated processes JVM cannot reach
-                    if (launcherTarget.pid > 0L) {
-                        try { ProcessHandle.of(launcherTarget.pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
-                        killProcessByPid(launcherTarget.pid, launcherResolved)
-                    } else {
-                        killProcessByName(launcherResolved)
+            if (launcherTarget != null) {
+                val launcherResolved = launcherTarget.name
+                val launcherResolvedLower = launcherResolved.lowercase()
+                if (launcherResolvedLower !in launcherSafeProcesses && launcherResolvedLower !in launcherAllowed) {
+                    if (tryAcquireCooldown("launcher:$launcherResolvedLower", now)) {
+                        // Two-layer kill (same logic as launcherSweep):
+                        //   1. destroyForcibly() via PID — instant, zero subprocess overhead
+                        //   2. taskkill /F /PID or /IM — handles elevated processes JVM cannot reach
+                        if (launcherTarget.pid > 0L) {
+                            try { ProcessHandle.of(launcherTarget.pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
+                            killProcessByPid(launcherTarget.pid, launcherResolved)
+                        } else {
+                            killProcessByName(launcherResolved)
+                        }
+                        _blockedAttempts.update { it + 1 }
                     }
-                    _blockedAttempts.update { it + 1 }
+                    // The launcher decision handled this process. Do not run normal
+                    // blocking a second time after it has already been terminated.
+                    return
                 }
             }
-            return
+            // An allowed launcher app is still processed by the normal enforcement
+            // path below. Launcher mode must not become a bypass for always-on
+            // rules, focus-session rules, schedules, allowances, VPN blocking,
+            // keyword blocking, or network cutoffs.
         }
 
         // ── UWP frame host resolution (normal block mode) ─────────────────────
