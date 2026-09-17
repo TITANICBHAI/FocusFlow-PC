@@ -112,11 +112,18 @@ object FocusLauncherService {
         return plain
     }
 
-    /** Verify a session PIN. A missing or explicitly cleared PIN is a pass-through. */
+    /**
+     * Verify a session PIN.
+     *
+     * A launcher session always creates its PIN before entering kiosk mode.
+     * Fail closed if the stored hash is missing or blank so a database read
+     * failure, stale session, or dismissed setup cannot become an exit bypass.
+     */
     fun verifyPin(raw: String): Boolean {
-        val stored = Database.getSetting(LAUNCHER_PIN_KEY) ?: return true
-        if (stored.isBlank()) return true
-        return sha256(raw) == stored
+        val stored = Database.getSetting(LAUNCHER_PIN_KEY)
+            ?.takeIf { it.isNotBlank() }
+            ?: return false
+        return raw.isNotBlank() && sha256(raw) == stored
     }
 
     /**

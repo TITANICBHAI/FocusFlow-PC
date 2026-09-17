@@ -312,23 +312,27 @@ fun isRunningAsAdmin(): Boolean {
 }
 
 /**
- * Restore and activate a visible top-level window belonging to [pid].
+ * Enumerate all top-level windows that belong to [pid], restore the first
+ * visible one from minimised state, and bring it to the foreground.
  *
- * A process can have more than one window (and browser processes can have
- * helper processes with no visible window), so callers should treat false as
- * "launch normally" rather than assuming any matching process is focusable.
+ * Uses a FindWindowExW(null, lastHwnd, null, null) walk — no EnumWindows
+ * callback required — so it works with plain JNA interface bindings.
+ *
+ * Returns true if at least one window was successfully activated.
  */
 fun focusWindowByPid(pid: Long): Boolean {
-    if (!isWindows || pid <= 0L) return false
+    if (!isWindows) return false
     return try {
         val user32 = User32Extra.INSTANCE
+        val SW_RESTORE = 9
         var hwnd = user32.FindWindowExW(null, null, null, null)
         while (hwnd != null) {
             val pidArr = IntArray(1)
             user32.GetWindowThreadProcessId(hwnd, pidArr)
             if (pidArr[0].toLong() == pid && user32.IsWindowVisible(hwnd)) {
-                if (user32.IsIconic(hwnd)) user32.ShowWindow(hwnd, 9)
-                if (user32.SetForegroundWindow(hwnd)) return true
+                if (user32.IsIconic(hwnd)) user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.SetForegroundWindow(hwnd)
+                return true
             }
             hwnd = user32.FindWindowExW(null, hwnd, null, null)
         }

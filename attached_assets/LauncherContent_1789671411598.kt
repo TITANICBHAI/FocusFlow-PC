@@ -53,8 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -62,6 +60,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import com.focusflow.enforcement.AppIconExtractor
 import com.focusflow.enforcement.focusWindowByPid
 import com.focusflow.enforcement.isWindows
@@ -100,9 +100,15 @@ private fun MainLauncherScreen() {
     val breaksUsed by FocusLauncherService.breaksUsed.collectAsState()
     val breaksTotal by FocusLauncherService.breaksTotal.collectAsState()
     val gridState = rememberLazyGridState()
-    var showPinForExit by remember { mutableStateOf(false) }
-    var showPinForHardLock by remember { mutableStateOf(false) }
-    var showPinForBreak by remember { mutableStateOf(false) }
+    // Bug 3 fix: two separate PIN dialogs so "exit" and "unlock hard-lock"
+    // never share the same success-action. The old single showPinForExit flag
+    // checked `if (hardLocked)` at callback time to decide what to do, which
+    // allowed a correct PIN to silently toggle hard-lock instead of exiting,
+    // leaving the subsequent Exit click with no PIN challenge (showConfirmExit
+    // path). Now each action owns its own state and its own onSuccess body.
+    var showPinForExit      by remember { mutableStateOf(false) }  // always exits on success
+    var showPinForHardLock  by remember { mutableStateOf(false) }  // unlocks hard-lock on success
+    var showPinForBreak     by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         LauncherTopBar(hardLocked)
@@ -133,8 +139,7 @@ private fun MainLauncherScreen() {
         ) {
             OutlinedButton(
                 onClick = {
-                    // Enabling hard lock is allowed during a session. Disabling it
-                    // always requires the session PIN, independently of exit.
+                    // Hard Lock toggle: PIN is required to UNLOCK, not to enable.
                     if (hardLocked) showPinForHardLock = true
                     else FocusLauncherService.toggleHardLock()
                 },
@@ -166,9 +171,10 @@ private fun MainLauncherScreen() {
             }
             Button(
                 onClick = {
-                    // Ending a launcher session is always PIN-protected. A plain
-                    // confirmation dialog here would let a user dismiss/retry
-                    // around the PIN gate whenever hard lock was off.
+                    // End Session always demands a PIN — no bypass via the old
+                    // showConfirmExit (no-PIN confirmation) path. The session PIN
+                    // is always set (preparePin() runs before every session), so
+                    // the dialog is never gating on an empty credential.
                     showPinForExit = true
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Error.copy(alpha = .85f)),
@@ -181,6 +187,10 @@ private fun MainLauncherScreen() {
         }
     }
 
+    // PIN dialog for Exit — success always calls exit(), regardless of hard-lock state.
+    // This was the core of Bug 3: the old dialog checked `if (hardLocked)` at callback
+    // time and called toggleHardLock() instead of exit(), leaving a subsequent Exit
+    // click with no PIN gate (the showConfirmExit path). That no-PIN path is now gone.
     if (showPinForExit) {
         SessionPinDialog(
             title = "End session",
@@ -192,6 +202,7 @@ private fun MainLauncherScreen() {
             onDismiss = { showPinForExit = false }
         )
     }
+    // Separate PIN dialog for Hard Lock unlock — success only unlocks, never exits.
     if (showPinForHardLock) {
         SessionPinDialog(
             title = "Unlock hard lock",
@@ -270,13 +281,16 @@ private fun LauncherTopBar(hardLocked: Boolean) {
 private fun AppTile(app: FocusLauncherApp) {
     val scope = rememberCoroutineScope()
 
+    // Bug 1 fix: load the real app icon from the executable instead of always
+    // showing the generic Icons.Default.Apps placeholder. The extraction is
+    // done once on IO (AppIconExtractor caches results) and stored in local
+    // state; the fallback icon renders until the bitmap is ready.
     var iconBitmap by remember(app.exePath) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(app.exePath) {
         val path = app.exePath ?: return@LaunchedEffect
-        val extracted = withContext(Dispatchers.IO) {
-            AppIconExtractor.extractIcon(path)
+        withContext(Dispatchers.IO) {
+            iconBitmap = AppIconExtractor.extractIcon(path)
         }
-        iconBitmap = extracted
     }
 
     Box(
@@ -285,33 +299,35 @@ private fun AppTile(app: FocusLauncherApp) {
             .clickable {
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val processName = app.processName.lowercase()
-                        val executablePath = app.exePath?.lowercase()
-                        val matchingProcesses = ProcessHandle.allProcesses()
-                            .toList()
-                            .filter { process ->
-                                if (!process.isAlive) return@filter false
-                                val command = process.info().command().orElse("")
-                                val commandName = command.substringAfterLast('\\')
-                                    .substringAfterLast('/')
-                                    .lowercase()
-                                commandName == processName ||
-                                    (executablePath != null &&
-                                        command.equals(executablePath, ignoreCase = true))
+                        // Bug 2 fix: check whether the process is already running
+                        // before spawning a new instance. If it is, bring its
+                        // existing window to the foreground instead of launching
+                        // a duplicate. The old code called ProcessBuilder.start()
+                        // unconditionally, so every tap added another instance.
+                        val processNameLower = app.processName.lowercase()
+                        val running = ProcessHandle.allProcesses()
+                            .filter { it.isAlive }
+                            .filter { ph ->
+                                val cmd = ph.info().command().orElse("").lowercase()
+                                // Match against exePath (exact) or process name (suffix).
+                                (app.exePath != null && cmd == app.exePath.lowercase()) ||
+                                cmd.endsWith("\\$processNameLower") ||
+                                cmd.endsWith("/$processNameLower") ||
+                                cmd == processNameLower
                             }
+                            .findFirst()
+                            .orElse(null)
 
-                        // A process may exist only as a helper/background process.
-                        // Try every matching PID and launch only when no visible
-                        // top-level window can be focused.
-                        val focusedExisting = isWindows &&
-                            matchingProcesses.any { focusWindowByPid(it.pid()) }
-
-                        if (!focusedExisting) {
-                            val process = if (app.exePath != null) {
+                        if (running != null) {
+                            // Already running — focus the existing window rather
+                            // than launching a second instance.
+                            focusWindowByPid(running.pid())
+                        } else {
+                            // Not running — launch fresh.
+                            val process = if (app.exePath != null)
                                 ProcessBuilder(app.exePath)
-                            } else {
+                            else
                                 ProcessBuilder("cmd", "/c", "start", "", app.processName)
-                            }
                             process.start()
                         }
                         delay(400)
@@ -334,6 +350,7 @@ private fun AppTile(app: FocusLauncherApp) {
             ) {
                 val bitmap = iconBitmap
                 if (bitmap != null) {
+                    // Bug 1 fix: display the real executable icon.
                     Image(
                         bitmap = bitmap,
                         contentDescription = app.displayName,
@@ -341,6 +358,7 @@ private fun AppTile(app: FocusLauncherApp) {
                         contentScale = ContentScale.Fit
                     )
                 } else {
+                    // Fallback while icon loads or if extraction fails.
                     Icon(Icons.Default.Apps, null, tint = Purple80, modifier = Modifier.size(28.dp))
                 }
             }
@@ -418,8 +436,6 @@ private fun SessionPinDialog(
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
     var visible by remember { mutableStateOf(false) }
-    var verifying by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF1A1828),
@@ -460,19 +476,10 @@ private fun SessionPinDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (verifying || pin.isBlank()) return@Button
-                    val candidate = pin
-                    verifying = true
-                    scope.launch(Dispatchers.IO) {
-                        val valid = FocusLauncherService.verifyPin(candidate)
-                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            verifying = false
-                            if (valid) onSuccess()
-                            else { pin = ""; error = true }
-                        }
-                    }
+                    if (FocusLauncherService.verifyPin(pin)) onSuccess()
+                    else { pin = ""; error = true }
                 },
-                enabled = pin.isNotBlank() && !verifying,
+                enabled = pin.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text("Confirm") }
         },

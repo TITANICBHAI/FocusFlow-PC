@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +29,7 @@ import com.focusflow.services.FocusLauncherApp
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.ui.components.isRunningAsAdmin
 import com.focusflow.ui.components.ShortcutTooltip
+import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.components.relaunchAsAdmin
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +68,7 @@ fun FocusLauncherScreen() {
     val isActive  by FocusLauncherService.isActive.collectAsState()
     val canBreak  by FocusLauncherService.canTakeBreak.collectAsState()
     val scope     = rememberCoroutineScope()
+    val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) {
         val apps = withContext(Dispatchers.IO) {
@@ -118,10 +121,12 @@ fun FocusLauncherScreen() {
         return
     }
 
-    LazyColumn(
-        modifier            = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            state              = listState,
+            modifier           = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
         // ── Header ───────────────────────────────────────────────────────────
         item {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -457,6 +462,11 @@ fun FocusLauncherScreen() {
             }
             Spacer(Modifier.height(24.dp))
         }
+        }
+        FfVerticalScrollbar(
+            listState = listState,
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight()
+        )
     }
 
     // ── Admin elevation warning ───────────────────────────────────────────────
