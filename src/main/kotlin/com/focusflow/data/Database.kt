@@ -4,19 +4,30 @@ import com.focusflow.data.models.*
 import java.util.UUID
 import org.sqlite.SQLiteDataSource
 import java.sql.Connection
+import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+
+data class InitPolicy(val busyTimeoutMs: Int = 10_000) {
+    companion object {
+        val Default = InitPolicy()
+    }
+}
 
 object Database {
 
     private val dtFmt   = DateTimeFormatter.ISO_LOCAL_DATE_TIME
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
 
-    private lateinit var connection: Connection
+    @Volatile private var conn: Connection? = null
+    private val connection: Connection
+        get() = conn ?: throw UninitializedPropertyAccessException(
+            "lateinit property connection has not been initialized"
+        )
 
     /** True once the DB has been opened and migrated successfully. */
-    val isReady: Boolean get() = ::connection.isInitialized
+    val isReady: Boolean get() = conn != null
 
     /**
      * Stores the exception from the most recent failed tryOpenAndMigrate() call so
@@ -24,36 +35,50 @@ object Database {
      */
     @Volatile private var lastOpenFailure: Exception? = null
 
-    fun init() {
-        val dbDir  = java.io.File(System.getProperty("user.home") + "/.focusflow")
-        val dbFile = java.io.File(dbDir, "focusflow.db")
+    fun init(
+        dbFile: File = defaultDbFile(),
+        policy: InitPolicy = InitPolicy.Default,
+        allowRecovery: Boolean = true
+    ) {
+        val dbDir = dbFile.absoluteFile.parentFile ?: File(".")
         dbDir.mkdirs()
 
         // First attempt — open existing DB
-        if (!tryOpenAndMigrate(dbFile)) {
+        if (!tryOpenAndMigrate(dbFile, policy)) {
             // SQLITE_BUSY means another FocusFlow instance already has the file open.
             // The database is valid — do NOT back it up or delete it. Log and return;
             // the app runs with empty/default settings until the other instance exits.
             val failure = lastOpenFailure
             if (failure is org.sqlite.SQLiteException &&
                 failure.resultCode == org.sqlite.SQLiteErrorCode.SQLITE_BUSY) {
-                java.io.File(System.getProperty("user.home") + "/.focusflow/crash.log")
-                    .also { it.parentFile?.mkdirs() }
+                File(dbDir, "crash.log")
                     .appendText("[${java.time.LocalDateTime.now()}] DB locked (SQLITE_BUSY) — another FocusFlow instance may be running. Starting with empty/default settings.\n\n")
                 return
             }
+            if (!allowRecovery) return
             // Any other failure (corruption, I/O error) — back up and start fresh
             safeBackupBrokenDb(dbDir, dbFile)
             // Second attempt — fresh DB
-            if (!tryOpenAndMigrate(dbFile)) {
+            if (!tryOpenAndMigrate(dbFile, policy)) {
                 // Absolute last resort: delete everything and create blank
                 dbFile.delete()
-                tryOpenAndMigrate(dbFile)
+                tryOpenAndMigrate(dbFile, policy)
             }
         }
     }
 
-    private fun tryOpenAndMigrate(dbFile: java.io.File): Boolean {
+    @Synchronized
+    internal fun resetForTest() {
+        val previous = conn
+        conn = null
+        lastOpenFailure = null
+        runCatching { previous?.close() }
+    }
+
+    private fun defaultDbFile(): File =
+        File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db")
+
+    private fun tryOpenAndMigrate(dbFile: File, policy: InitPolicy): Boolean {
         var localConn: java.sql.Connection? = null
         return try {
             // Set busy_timeout at the driver level via SQLiteConfig so the handler
@@ -64,7 +89,7 @@ object Database {
             // immediately, making the PRAGMA statement-based approach ineffective for
             // the very first contended operation.
             val config = org.sqlite.SQLiteConfig()
-            config.setBusyTimeout(10_000)   // 10 s — enough for a prior JVM to release
+            config.setBusyTimeout(policy.busyTimeoutMs)
             val ds = SQLiteDataSource(config)
             ds.url = "jdbc:sqlite:${dbFile.absolutePath}"
             localConn = ds.connection
@@ -96,7 +121,7 @@ object Database {
                 return false
             }
 
-            connection = localConn
+            conn = localConn
             migrate()
             true
         } catch (e: Exception) {

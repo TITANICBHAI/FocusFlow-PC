@@ -81,37 +81,42 @@ Suggested new files are suggestions; keep the package layout consistent with the
 Goal: rank the lock causes and prove the risky assumptions before building on them.
 
 Tasks
-- [ ] 0.1 Add temporary logging (EnforcementLog): count of `Database.init()` calls with timestamp and caller stack; time from `init()` start to failure; `PRAGMA journal_mode` result; count of tracker ticks and credited seconds per tick (foreground exe, elapsed ms).
-- [ ] 0.2 Ask the owner to send `~/.focusflow/crash.log` and the EnforcementLog from a failing launch. Look for repeated "DB locked (SQLITE_BUSY)" lines and whether the time-to-failure is about 10 s (busy handler ran; a real holder exists) or about 0 s (handler not invoked).
-- [ ] 0.3 Document how to identify the lock holder manually on Windows (Resource Monitor -> Associated Handles -> `focusflow.db`; `Get-Process FocusFlow,java,javaw`; check for `-wal`/`-shm` files; `sqlite3 focusflow.db "PRAGMA journal_mode"` on a copy).
-- [ ] 0.4 Spike A: can a connection opened with `SQLiteConfig.setReadOnly(true)` read a WAL database while another connection holds a write lock, on Windows? Record the result and the sqlite-jdbc version.
-- [ ] 0.5 Spike B: Restart Manager lookup (`rstrtmgr.dll`: `RmStartSession`, `RmRegisterResources`, `RmGetList`, `RmEndSession`) via JNA returning PID + exe name of processes holding `focusflow.db`. Record whether it works for the WAL file set.
-- [ ] 0.6 Reproduce BUSY deterministically in a scratch test: create a DB in default (DELETE) journal mode, hold `BEGIN EXCLUSIVE` from a second connection, then run the current `tryOpenAndMigrate`. The first statement fails with BUSY. This recipe is reused in Phase 3 tests.
-- [ ] 0.7 Confirm the installed process name (FocusFlow.exe vs java/javaw) and whether the watchdog's `Get-Process -Name 'FocusFlow'` check matches it.
+- [x] 0.1 Add temporary logging (EnforcementLog): count of `Database.init()` calls with timestamp and caller stack; time from `init()` start to failure; `PRAGMA journal_mode` result; count of tracker ticks and credited seconds per tick (foreground exe, elapsed ms). The instrumentation was removed after isolated runtime probes.
+- [x] 0.2 Owner confirms the original `~/.focusflow/crash.log` and `enforcement.log` are unavailable; retain the supplied truncated exception excerpts and record that timing/holder analysis cannot be done from them.
+- [x] 0.3 Document how to identify the lock holder manually on Windows (Resource Monitor -> Associated Handles -> `focusflow.db`; `Get-Process FocusFlow,java,javaw`; check for `-wal`/`-shm` files; `sqlite3 focusflow.db "PRAGMA journal_mode"` on a copy). See the Batch 0 evidence in `fixes/TRACKER.md`.
+- [ ] 0.4 **BLOCKED — Windows validation required.** Linux read-only WAL smoke test passed, but Spike A's Windows result is unverified; do not enable read-only startup until tested on Windows.
+- [ ] 0.5 **BLOCKED — Windows validation required.** Restart Manager lookup (`rstrtmgr.dll`: `RmStartSession`, `RmRegisterResources`, `RmGetList`, `RmEndSession`) via JNA returning PID + exe name of processes holding `focusflow.db`. Record whether it works for the WAL file set.
+- [x] 0.6 Reproduce BUSY deterministically in a scratch test: create a DB in default (DELETE) journal mode, hold `BEGIN EXCLUSIVE` from a second connection, then run the current `tryOpenAndMigrate`. The first statement fails with BUSY. This recipe is reused in Phase 3 tests.
+- [ ] 0.7 **BLOCKED — Windows process check required.** Confirm the installed process name (FocusFlow.exe vs java/javaw) and whether the watchdog's `Get-Process -Name 'FocusFlow'` check matches it.
 
 Acceptance
 - A short findings note in the PR: ranked likely causes with evidence; H3 confirmed or dropped; Spike A and B results (go / no-go for read-only mode and for lock-holder details).
 - Temporary logging either removed or reduced to permanent low-noise diagnostics.
+
+Progress on 2026-10-06: Phase 0 findings, available spike outcomes, deterministic SQLITE_BUSY reproduction (0.6), and temporary-diagnostic cleanup are recorded. H3 was confirmed under forced Compose invalidations in an isolated home: one initial `Database.init()` plus three calls from `RecomposeScopeImpl.compose`. The owner confirmed the original crash/enforcement log files are unavailable; the supplied truncated excerpts confirm the BUSY → uninitialized connection sequence. Windows-only Spike A/B and installed-process verification remain explicitly blocked/no-go. Detailed evidence and limitations are in `fixes/TRACKER.md`.
 
 ### Phase 1: Test seams (pure refactor, behaviour identical)
 
 Goal: make DB startup and the tracker testable without Windows, a real clock or the global `object`s.
 
 Tasks
-- [ ] 1.1 Test infrastructure: add JUnit5/kotlin-test, `kotlinx-coroutines-test`, and a temp-dir helper if missing.
-- [ ] 1.2 `Database`: add `init(dbFile: File = defaultDbFile(), policy: InitPolicy = InitPolicy.Default, allowRecovery: Boolean = true)`; add `internal fun resetForTest()` that closes and clears state. Keep `Database.init()` callable with no args.
-- [ ] 1.3 Tracker ports (suggested `services/allowance/Ports.kt`):
+- [x] 1.1 Test infrastructure: add JUnit5/kotlin-test, `kotlinx-coroutines-test`, and a temp-dir helper if missing.
+- [x] 1.2 `Database`: add `init(dbFile: File = defaultDbFile(), policy: InitPolicy = InitPolicy.Default, allowRecovery: Boolean = true)`; add `internal fun resetForTest()` that closes and clears state. Keep `Database.init()` callable with no args.
+- [x] 1.3 Tracker ports (implemented in `services/allowance/AllowancePorts.kt`):
   - `Clock { wallMs(); monoNs(); today(): LocalDate }`
   - `ForegroundSource { current(): ForegroundInfo? }` where `ForegroundInfo(exe: String, pid: Long)`; real impl wraps `getForegroundProcessName*()`
+  - `RunningProcessSource { all(): List<RunningProcess>? }` to isolate process enumeration and keep tick tests deterministic
   - `ProcessKiller { kill(processName: String) }` real impl wraps `killProcessByName` / ProcessHandle fallback
   - `BreakState { val isActive: StateFlow<Boolean> }` real impl wraps `KillSwitchService.isActive`
   - `UsageStore { allowances(): List<DailyAllowance>; usage(date): Map<String, Long>; upsertUsage(date, proc, seconds); deleteUsageBefore(date) }` real impl wraps `Database`
   - `BlockedSetSink { set(blocked: Set<String>) }` real impl writes `ProcessMonitor.dailyAllowanceBlockedProcesses`
-- [ ] 1.4 Extract the tracker logic into `class AllowanceEngine(ports, scope)`. `object DailyAllowanceTracker` keeps its exact public API and delegates to a default engine wired to real ports. No logic change yet.
+- [x] 1.4 Extract the tracker logic into `class AllowanceEngine(ports, scope)`. `object DailyAllowanceTracker` keeps its exact public API and delegates to a default engine wired to real ports. No logic change yet.
 
 Acceptance
 - Build green; app behaves identically (smoke: start app, add an allowance, see usage move).
 - A trivial engine test with fake ports runs on Linux CI.
+
+Progress on 2026-10-06: Phase 1 is complete. `gradle test --no-daemon` passes three tests, including isolated SQLite initialization/reset and fake-port usage persistence. A live app run used a temporary `user.home`; after seeding only its scratch DB with a `python3.13` allowance, the tracker persisted 41 seconds while that process ran. No user database was accessed. The production facade remains source-compatible; no tracker behavior changes were intended.
 
 ### Phase 2: Tracker hotfix (polling kept; fixes T2, T3, T5-partial, T6)
 
