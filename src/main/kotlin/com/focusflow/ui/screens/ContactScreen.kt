@@ -159,12 +159,30 @@ fun ContactScreen() {
                 }
             }
 
+            SectionCard(title = "Forgotten Global PIN", icon = Icons.Default.Lock) {
+                Text(
+                    "FocusFlow stores only a hash, so we cannot retrieve a forgotten PIN. " +
+                    "Although a “Forgot PIN?” option may appear, it currently is not a usable recovery path. " +
+                    "If you lose your PIN, protected changes may remain inaccessible. Keep it stored somewhere safe.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface2,
+                    lineHeight = 18.sp
+                )
+            }
+
             // ── Direct feedback ─────────────────────────────────────────────────
             if (ReviewPromptService.feedbackEnabled) {
                 SectionCard(title = "Send Feedback", icon = Icons.Default.Feedback) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             "Got a suggestion or ran into something odd? Send it directly to the team.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurface2,
+                            lineHeight = 18.sp
+                        )
+                        Text(
+                            "This form is one-way and does not include a reply address, so we can’t respond through it. " +
+                            "For a response, email Support or open a GitHub issue above.",
                             style = MaterialTheme.typography.bodySmall,
                             color = OnSurface2,
                             lineHeight = 18.sp

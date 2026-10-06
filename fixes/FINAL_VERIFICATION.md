@@ -30,13 +30,13 @@ The consolidated Windows and interactive runbook is [WINDOWS_VERIFICATION_GUIDE.
 - Keep the hybrid foreground-event/heartbeat tracker. Do not add a keyboard/mouse idle cutoff; non-Windows counting and display-off limitations remain documented.
 - No temporary Phase 0 instrumentation remains in application source. The source scan's `.tmp` match is the normal atomic-write temporary file in `SingleInstanceGuard`; `TemptationLogger` is a product feature, not debug instrumentation.
 - Permanent allowance diagnostics require six events and a minimum 60-second interval. Store warnings are suppressed until recovery; repeated loop failures are escalated rather than logged on every tick. `EnforcementLog` has a 512 KB ceiling and trims to about 256 KB on rotation.
-- Added the v2.0.2 user-facing changelog entry and synchronized the app, crash-report, settings, root package, and recovery package version references. The release workflow's version-to-changelog parser recognizes all four new items.
+- Added the v2.0.2 user-facing changelog entry and synchronized the app, crash-report, settings, root package, and recovery package version references. The release workflow's version-to-changelog parser recognizes all six release notes. Contact & Bug Reports now explains that forgotten PINs have no usable recovery path and that in-app feedback has no reply channel.
 
 ## Verification evidence
 
 - `gradle clean check --no-daemon --console=plain` — passed; 62 tests, 0 failures, 0 errors, 0 skipped. The recovery project has no test sources.
 - Failing-first verification for diagnostic rate limiting — the new test failed before the throttle and passed after it.
-- Release parser check — passed; detected v2.0.2 and four changelog entries, with app and recovery version references aligned.
+- Release parser check — passed; detected v2.0.2 and six changelog entries, with app and recovery version references aligned.
 - `git diff --check` — passed.
 - Temporary-instrumentation search found no matching debug probes in application source. Its only marker hit is the intended atomic-write `.tmp` file; the filename scan found `TemptationLogger.kt`, which is not temporary instrumentation.
 - No desktop launch/restart was performed for this verification, and no user database or sidecar was opened by these checks. The existing application workflow was left running.

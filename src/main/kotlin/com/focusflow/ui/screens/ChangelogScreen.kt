@@ -39,7 +39,9 @@ internal val CHANGELOG = listOf(
             "FIX" to "Startup now shows a retryable recovery screen when the database is busy instead of continuing with missing data",
             "SEC" to "When Global PIN protection is enabled, raising or deleting a daily allowance requires the PIN",
             "IMP" to "Daily usage tracking captures short foreground sessions and avoids counting long inactive gaps as app use",
-            "IMP" to "Allowance loading and save/delete failures now show clear recovery options instead of silently losing changes"
+            "FIX" to "Daily Allowance load, save, and delete failures now show clear errors and recovery options instead of false zero-use states or silent failures",
+            "SEC" to "A forgotten Global PIN cannot currently be recovered. The in-app Forgot PIN option is not a usable recovery path, so protected changes may remain inaccessible",
+            "IMP" to "The in-app Send Feedback form is one-way and has no reply address; use Email Support or GitHub Issues if you need a response"
         )
     ),
     ChangelogEntry(
