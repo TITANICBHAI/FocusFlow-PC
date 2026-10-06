@@ -27,7 +27,7 @@ import com.sun.jna.win32.W32APIOptions
  *
  * Falls back to polling (ProcessMonitor) if hook registration fails.
  */
-object WinEventHook {
+object WinEventHook : com.focusflow.services.allowance.ForegroundEventSource {
 
     private const val EVENT_SYSTEM_FOREGROUND = 0x0003
     private const val WINEVENT_OUTOFCONTEXT   = 0x0000
@@ -71,6 +71,8 @@ object WinEventHook {
     @Volatile private var running = false
     @Volatile private var win32ThreadId: Int = 0   // Real Win32 thread ID (NOT JVM thread ID)
     private var hookThread: Thread? = null
+    private val eventHub = ForegroundEventHub()
+    @Volatile private var processMonitorCallback: ((String, Long) -> Unit)? = null
 
     /**
      * HWND of the FocusFlow window, captured the first time our own PID appears
@@ -84,6 +86,22 @@ object WinEventHook {
 
     private val ownPid: Long = ProcessHandle.current().pid()
 
+    override fun addListener(listener: (ForegroundEvent) -> Unit): Long {
+        return eventHub.addListener(listener)
+    }
+
+    override fun removeListener(listenerId: Long) {
+        eventHub.removeListener(listenerId)
+    }
+
+    internal fun publishSessionForeground(exe: String?, pid: Long = 0L) {
+        dispatchForeground(ForegroundEvent(exe, pid, System.nanoTime()))
+    }
+
+    private fun dispatchForeground(event: ForegroundEvent) {
+        eventHub.publish(event)
+    }
+
     /**
      * Start the hook. The callback receives both the process name and the exact PID
      * of the window that came to the foreground. Passing the PID enables targeted
@@ -91,6 +109,7 @@ object WinEventHook {
      */
     fun start(onForegroundChange: (processName: String, pid: Long) -> Unit) {
         if (running || !isWindows) return
+        processMonitorCallback = onForegroundChange
         running = true
 
         hookThread = Thread({
@@ -106,7 +125,10 @@ object WinEventHook {
                     hWinEventHook: Pointer?, event: Int, hwnd: WinDef.HWND?,
                     idObject: Int, idChild: Int, dwEventThread: Int, dwmsEventTime: Int
                 ) {
-                    if (hwnd == null) return
+                    if (hwnd == null) {
+                        dispatchForeground(ForegroundEvent(null, 0L, System.nanoTime()))
+                        return
+                    }
                     try {
                         val pidRef = IntByReference()
                         User32.INSTANCE.GetWindowThreadProcessId(hwnd, pidRef)
@@ -119,8 +141,8 @@ object WinEventHook {
                             focusFlowHwnd = hwnd
                         }
 
-                        // Resolve the process command once and reuse it for both
-                        // focus reclamation and the onForegroundChange callback.
+                        // Keep the legacy name path unchanged for ProcessMonitor;
+                        // allowance listeners use the more robust resolver below.
                         val cmdOpt = ProcessHandle.of(pid).flatMap { it.info().command() }
                         val exeName = cmdOpt.orElse(null)
                             ?.substringAfterLast('\\')?.substringAfterLast('/')
@@ -146,8 +168,15 @@ object WinEventHook {
                             }
                         }
 
-                        // Notify the caller (ProcessMonitor) so it can apply kill logic.
-                        if (exeName != null) onForegroundChange(exeName, pid)
+                        // Preserve ProcessMonitor's callback contract and independently
+                        // publish nullable, richer events to foreground listeners.
+                        if (exeName != null) processMonitorCallback?.invoke(exeName, pid)
+                        val resolvedName = if (pid > 0L) {
+                            DefaultProcessNameResolver.instance.resolve(pid, hwnd.pointer)
+                        } else {
+                            null
+                        }
+                        dispatchForeground(ForegroundEvent(resolvedName, pid, System.nanoTime()))
                     } catch (_: Exception) {}
                 }
             }
@@ -220,6 +249,7 @@ object WinEventHook {
         hookThread   = null
         win32ThreadId = 0
         focusFlowHwnd = null
+        processMonitorCallback = null
         isActive = false
     }
 }

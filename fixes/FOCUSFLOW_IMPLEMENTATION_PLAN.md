@@ -251,7 +251,9 @@ Acceptance
 - Manual Windows checklist (below) passes.
 - Documented limitations are written into the PR and the UI help text: foreground is not "active use"; second monitor and background audio are not counted; browser web apps cannot be split by site; idle time counts; a changed system date can reset usage.
 
-Audit on 2026-10-06: Phase 5 remains not started. The existing WinEventHook is the ProcessMonitor enforcement hook only; it still has a single callback, ignores unknown executable names, and resolves names only through ProcessHandle. AllowanceEngine still credits time through its polling tick. No ForegroundLedger, listener registry, robust process resolver, lock/suspend integration, event-driven allowance wiring, or foreground diagnostics were found. The engine ports and existing hook are shared groundwork, not completion of Phase 5.
+Audit on 2026-10-06: Phase 5's event-based allowance work is not implemented, but shared foundations are present: injectable clock/foreground ports, bounded polling and a WinEventHook that reports named foreground changes to ProcessMonitor. AllowanceEngine does not subscribe to the hook; there is no ForegroundLedger, listener registry, robust elevated/Store-host resolver, lock/suspend integration, or allowance diagnostics. The existing process-name helpers rely on ProcessHandle, and WinEventHook filters unknown executable names before its existing callback. These foundations do not satisfy Phase 5.
+
+Progress update on 2026-10-06: Batch 5 has started at the user's direction while Batch 4's interactive Windows acceptance remains pending. Windows-only verification is still a blocker and must not be represented as passed.
 
 ### Phase 6: Allowance UX (fixes U1, U2)
 

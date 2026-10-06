@@ -54,6 +54,7 @@ object StartupBootstrap {
             FloatingBlockOverlay.overlayMessage =
                 Database.getSetting("overlay_message") ?: "Stay focused. You've got this."
 
+            com.focusflow.enforcement.WindowsSessionStateMonitor.start()
             ProcessMonitor.start()
             BreakEnforcer.loadSettings()
             NuclearMode.loadFromDb()

@@ -1,7 +1,7 @@
 # FocusFlow Reliability Fixes — Batch Tracker
 
 **Source plan:** [FOCUSFLOW_IMPLEMENTATION_PLAN.md](FOCUSFLOW_IMPLEMENTATION_PLAN.md)  
-**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 not started.
+**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 audit found shared foundations but no ledger/event-tracking implementation, work now in progress.
 **Rule:** Work one batch at a time. Tick these items and the matching task checkboxes in the source plan as work is completed. Record evidence before marking a batch complete.
 
 ## Batch 0 — Evidence and spikes
@@ -159,9 +159,9 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 
 ## Batch 5 — Hybrid event-based tracking
 
-**Status:** Not started · **Plan section:** Phase 5
+**Status:** In progress · **Plan section:** Phase 5
 
-**Audit — 2026-10-06:** No Phase 5 implementation is present. The existing `WinEventHook` serves ProcessMonitor enforcement; allowance accounting still uses the polling engine. There is no ledger, allowance listener registry, robust name resolver, session lock/suspend listener, event-driven allowance wiring, or Phase 5 diagnostics. Shared Phase 1/2 foundations do not satisfy these tasks. Start only after Batch 4 acceptance.
+**Audit — 2026-10-06:** Some groundwork is present: the allowance engine already has injectable clock/foreground ports, a 10-second safety tick, elapsed-gap protection, and the Windows `WinEventHook` already reports foreground changes to ProcessMonitor. However, allowance tracking does not subscribe to those events; it has no foreground ledger, hook listener registry, elevated/Store-host process resolver, lock/suspend integration, or allowance diagnostics. The legacy foreground helpers resolve only through `ProcessHandle`, and the hook drops unknown executable names before notifying ProcessMonitor. These shared foundations do not satisfy Phase 5.
 
 - [ ] Add pure foreground-ledger tests for switching, short sessions, null foreground, missed events, long gaps, and date rollover.
 - [ ] Add WinEventHook listeners without changing existing ProcessMonitor behavior.
@@ -174,6 +174,12 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 - [ ] Complete the Windows accuracy and limitation checks.
 
 **Acceptance:** Ledger/engine tests pass; Windows manual checklist passes; counting limitations are documented.
+
+### Batch 5 work log — 2026-10-06
+
+- Began Phase 5 after auditing the live code. Existing ports and bounded polling are reusable; event accounting and all Phase 5-specific behaviors remain to be implemented.
+- Added failing-first pure ledger tests for app switching, sub-second intervals, null foreground, heartbeat correction, long/backwards gaps, and day rollover. The production ledger is not implemented yet; these tests are expected to fail to compile until the next change.
+- Batch 4's interactive Windows acceptance is still pending. The user explicitly asked to proceed with Batch 5; Windows-only verification remains a release blocker and will be recorded as blocked rather than inferred from Linux tests.
 
 ## Batch 6 — Allowance UX
 

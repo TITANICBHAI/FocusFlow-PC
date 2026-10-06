@@ -4,11 +4,15 @@ import com.focusflow.data.Database
 import com.focusflow.enforcement.KillSwitchService
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.EnforcementLog
-import com.focusflow.enforcement.getForegroundProcessNameAndPid
+import com.focusflow.enforcement.WinEventHook
+import com.focusflow.enforcement.WindowsSessionStateMonitor
+import com.focusflow.enforcement.getForegroundProcessNameAndPidRobust
 import com.focusflow.enforcement.isWindows
 import com.focusflow.enforcement.killProcessByName
 import com.focusflow.services.allowance.AllowanceEngine
 import com.focusflow.services.allowance.AllowancePorts
+import com.focusflow.services.allowance.AllowanceTrackingDiagnostics
+import com.focusflow.services.allowance.AllowanceTrackingDiagnosticsSink
 import com.focusflow.services.allowance.BlockedSetSink
 import com.focusflow.services.allowance.BreakState
 import com.focusflow.services.allowance.Clock
@@ -54,7 +58,13 @@ object DailyAllowanceTracker {
             override fun today(): LocalDate = LocalDate.now()
         },
         foregroundSource = ForegroundSource {
-            getForegroundProcessNameAndPid()?.let { (name, pid) ->
+            if (WindowsSessionStateMonitor.isInactive) return@ForegroundSource null
+            getForegroundProcessNameAndPidRobust()
+                ?.takeUnless { (name, _) ->
+                    name.equals("logonui.exe", ignoreCase = true) ||
+                        name.equals("lockapp.exe", ignoreCase = true)
+                }
+                ?.let { (name, pid) ->
                 ForegroundInfo(name, pid)
             }
         },
@@ -91,6 +101,16 @@ object DailyAllowanceTracker {
         isWindows = isWindows,
         failureLogger = FailureLogger { tag, message, cause ->
             EnforcementLog.warn(tag, message, cause)
+        },
+        foregroundEvents = WinEventHook,
+        diagnosticsSink = AllowanceTrackingDiagnosticsSink { diagnostics: AllowanceTrackingDiagnostics ->
+            EnforcementLog.info(
+                "DailyAllowanceTracker",
+                "Foreground=${diagnostics.currentForeground ?: "unknown"}; " +
+                    "creditedSeconds=${diagnostics.creditedSeconds}; " +
+                    "missedEvents=${diagnostics.missedEventCount}; " +
+                    "discardedGaps=${diagnostics.discardedGapCount}"
+            )
         },
         limitNotifier = LimitNotifier { allowance ->
             SystemTrayManager.showNotification(

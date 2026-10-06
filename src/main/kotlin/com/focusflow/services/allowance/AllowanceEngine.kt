@@ -2,7 +2,9 @@ package com.focusflow.services.allowance
 
 import com.focusflow.data.models.DailyAllowance
 import com.focusflow.data.normalizeProcessKey
+import com.focusflow.enforcement.ForegroundEvent
 import java.time.LocalDate
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -10,6 +12,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+private sealed interface TrackingSignal {
+    data class Foreground(val event: ForegroundEvent) : TrackingSignal
+    data object Heartbeat : TrackingSignal
+}
 
 /**
  * Platform- and persistence-independent allowance tracking logic.
@@ -21,8 +28,11 @@ class AllowanceEngine(
 ) {
     @Volatile private var job: Job? = null
     @Volatile private var breakMonitorJob: Job? = null
+    @Volatile private var eventListenerId: Long? = null
+    @Volatile private var eventChannel: Channel<TrackingSignal>? = null
 
     private val usageMs = mutableMapOf<String, Long>()
+    private val subMillisecondNs = mutableMapOf<String, Long>()
     private val blockedToday = mutableSetOf<String>()
     private val pendingLimitNotifications = mutableMapOf<String, DailyAllowance>()
     private val pendingUsageWrites = mutableMapOf<LocalDate, MutableMap<String, Long>>()
@@ -37,6 +47,11 @@ class AllowanceEngine(
     private var pendingCleanupBefore: LocalDate? = null
     private var gapWarningEmitted = false
     private var consecutiveLoopFailures = 0
+    private var missedForegroundEvents = 0L
+    private var discardedForegroundGaps = 0L
+    private var diagnosticsTick = 0
+    @Volatile private var eventTrackingEnabled = false
+    private val foregroundLedger = ForegroundLedger()
 
     val blockedProcesses: Set<String>
         get() = synchronized(blockedToday) { blockedToday.toSet() }
@@ -63,12 +78,14 @@ class AllowanceEngine(
         allowances = loadedAllowances
         synchronized(usageMs) {
             usageMs.clear()
+            subMillisecondNs.clear()
             persistedUsage.forEach { (processName, seconds) ->
                 usageMs[normalizeProcessKey(processName)] = secondsToMillis(seconds)
             }
         }
 
         publishReconciledBlocks(loadedAllowances)
+        foregroundLedger.reset()
 
         lastTickWallMs = ports.clock.wallMs()
         lastTickMonoNs = ports.clock.monoNs()
@@ -78,31 +95,63 @@ class AllowanceEngine(
                 if (wasActive && !active) {
                     runCatching { enforceNow() }
                         .onFailure { warn("Could not resume allowance enforcement after Emergency Break", it) }
+                    flushUsageToStore(trackingDate)
                 }
                 wasActive = active
             }
         }
-        job = scope.launch {
-            while (isActive) {
-                try {
-                    tick()
-                    consecutiveLoopFailures = 0
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Throwable) {
-                    consecutiveLoopFailures++
-                    if (consecutiveLoopFailures == 1 ||
-                        consecutiveLoopFailures == 5 ||
-                        consecutiveLoopFailures % 10 == 0
-                    ) {
-                        warn(
-                            "Allowance tick failed (${consecutiveLoopFailures} consecutive failure(s)); " +
-                                "the loop will retry",
-                            failure
-                        )
+        val eventSource = ports.foregroundEvents?.takeIf { ports.isWindows }
+        eventTrackingEnabled = eventSource != null
+        if (eventSource == null) {
+            job = scope.launch {
+                while (isActive) {
+                    try {
+                        tick()
+                        consecutiveLoopFailures = 0
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        reportLoopFailure(failure)
+                    }
+                    delay(TICK_INTERVAL_MS)
+                }
+            }
+        } else {
+            val channel = Channel<TrackingSignal>(Channel.UNLIMITED)
+            eventChannel = channel
+            eventListenerId = eventSource.addListener { event ->
+                channel.trySend(TrackingSignal.Foreground(event))
+            }
+            job = scope.launch {
+                val ticker = launch {
+                    while (isActive) {
+                        delay(TICK_INTERVAL_MS)
+                        channel.send(TrackingSignal.Heartbeat)
                     }
                 }
-                delay(TICK_INTERVAL_MS)
+                try {
+                    val initial = ports.foregroundSource.current()
+                    foregroundLedger.onForeground(
+                        initial?.executableName?.let(::normalizeProcessKey),
+                        ports.clock.monoNs(),
+                        ports.clock.today()
+                    ).also(::applyLedgerUpdate)
+                    for (signal in channel) {
+                        try {
+                            when (signal) {
+                                is TrackingSignal.Foreground -> processForegroundEvent(signal.event)
+                                TrackingSignal.Heartbeat -> processEventHeartbeat()
+                            }
+                            consecutiveLoopFailures = 0
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            reportLoopFailure(failure)
+                        }
+                    }
+                } finally {
+                    ticker.cancel()
+                }
             }
         }
     }
@@ -111,8 +160,18 @@ class AllowanceEngine(
     fun stop() {
         job?.cancel()
         job = null
+        eventListenerId?.let { ports.foregroundEvents?.removeListener(it) }
+        eventListenerId = null
+        eventChannel?.close()
+        eventChannel = null
+        eventTrackingEnabled = false
         breakMonitorJob?.cancel()
         breakMonitorJob = null
+        if (foregroundLedger.currentForeground() != null) {
+            val update = foregroundLedger.flush(ports.clock.monoNs(), ports.clock.today())
+            applyLedgerUpdate(update, enforceCredits = false)
+        }
+        foregroundLedger.reset()
         flushUsageToStore(trackingDate)
         retryPendingCleanup()
         safelySetBlocked(emptySet())
@@ -152,7 +211,7 @@ class AllowanceEngine(
         val currentAllowances = allowances
         if (currentAllowances.isEmpty()) return
 
-        val foregroundProcess = if (ports.isWindows) {
+        val foregroundProcess = if (ports.isWindows && !eventTrackingEnabled) {
             ports.foregroundSource.current()?.executableName?.let(::normalizeProcessKey)
         } else {
             null
@@ -182,13 +241,16 @@ class AllowanceEngine(
                 continue
             }
 
-            val isForeground = if (ports.isWindows) {
+            if (eventTrackingEnabled) continue
+
+            /* The Windows hook + ledger own allowance credit when available. */
+            val legacyForeground = if (ports.isWindows) {
                 foregroundProcess != null && foregroundProcess == processName
             } else {
                 running != null
             }
 
-            if (!isForeground || elapsedMs <= 0L) continue
+            if (!legacyForeground || elapsedMs <= 0L) continue
 
             val nextUsageMs = synchronized(usageMs) {
                 val previous = usageMs.getOrDefault(processName, 0L)
@@ -241,9 +303,119 @@ class AllowanceEngine(
         return elapsedMs
     }
 
+    private fun processForegroundEvent(event: ForegroundEvent) {
+        val previous = foregroundLedger.currentForeground()
+        val next = event.exe?.let(::normalizeProcessKey)
+        val update = foregroundLedger.onForeground(next, event.monoNs, ports.clock.today())
+        applyLedgerUpdate(update, event.pid)
+        if (previous != null && previous != next &&
+            allowances.any { normalizeProcessKey(it.processName) == previous }
+        ) {
+            flushUsageToStore(trackingDate)
+        }
+        publishDiagnosticsIfDue()
+    }
+
+    private fun processEventHeartbeat() {
+        val nowNs = ports.clock.monoNs()
+        val sampledKey = ports.foregroundSource.current()
+            ?.executableName
+            ?.let(::normalizeProcessKey)
+        val update = foregroundLedger.heartbeat(nowNs, sampledKey, ports.clock.today())
+        applyLedgerUpdate(update)
+        tick()
+        publishDiagnosticsIfDue()
+    }
+
+    private fun applyLedgerUpdate(
+        update: ForegroundLedgerUpdate,
+        sourcePid: Long = 0L,
+        enforceCredits: Boolean = true
+    ) {
+        if (update.missedEvent) missedForegroundEvents++
+        if (update.discardedGap) {
+            discardedForegroundGaps++
+            warn("Discarded a foreground allowance interval after a long or backwards monotonic-clock gap")
+        }
+
+        update.credits.forEach { credit ->
+            val allowance = allowances.firstOrNull {
+                normalizeProcessKey(it.processName) == credit.key
+            } ?: return@forEach
+            val creditedMs = addForegroundNanos(credit.key, credit.elapsedNs)
+            if (enforceCredits && creditedMs > 0L) enforceIfLimitReached(allowance, sourcePid)
+        }
+
+        update.dateChangedTo?.let(::advanceTrackingDate)
+    }
+
+    private fun addForegroundNanos(processName: String, elapsedNs: Long): Long {
+        if (elapsedNs <= 0L) return 0L
+        return synchronized(usageMs) {
+            val remainder = subMillisecondNs.getOrDefault(processName, 0L)
+            val totalNs = addSaturated(remainder, elapsedNs)
+            val additionMs = totalNs / NANOS_PER_MILLI
+            subMillisecondNs[processName] = totalNs % NANOS_PER_MILLI
+            val previousMs = usageMs.getOrDefault(processName, 0L)
+            usageMs[processName] = addSaturated(previousMs, additionMs)
+            additionMs
+        }
+    }
+
+    private fun enforceIfLimitReached(allowance: DailyAllowance, sourcePid: Long) {
+        val processName = normalizeProcessKey(allowance.processName)
+        val usedMs = synchronized(usageMs) { usageMs.getOrDefault(processName, 0L) }
+        if (usedMs / MILLIS_PER_MINUTE < allowance.allowanceMinutes) return
+
+        val newlyBlocked = synchronized(blockedToday) {
+            val added = blockedToday.add(processName)
+            added to blockedToday.toSet()
+        }
+        safelySetBlocked(newlyBlocked.second)
+        if (!newlyBlocked.first) return
+
+        if (ports.breakState.isActive.value) {
+            synchronized(pendingLimitNotifications) {
+                pendingLimitNotifications[processName] = allowance
+            }
+        } else {
+            ports.processKiller.kill(allowance.processName, listOfNotNull(sourcePid.takeIf { it > 0L }))
+            notifyLimitReached(allowance)
+        }
+    }
+
+    private fun publishDiagnosticsIfDue() {
+        diagnosticsTick++
+        if (diagnosticsTick < DIAGNOSTICS_EVERY_EVENTS) return
+        diagnosticsTick = 0
+        val snapshot = synchronized(usageMs) {
+            AllowanceTrackingDiagnostics(
+                currentForeground = foregroundLedger.currentForeground(),
+                creditedSeconds = usageMs.mapValues { (_, value) -> value / MILLIS_PER_SECOND },
+                missedEventCount = missedForegroundEvents,
+                discardedGapCount = discardedForegroundGaps
+            )
+        }
+        runCatching { ports.diagnosticsSink.publish(snapshot) }
+    }
+
+    private fun reportLoopFailure(failure: Throwable) {
+        consecutiveLoopFailures++
+        if (consecutiveLoopFailures == 1 ||
+            consecutiveLoopFailures == 5 ||
+            consecutiveLoopFailures % 10 == 0
+        ) {
+            warn(
+                "Allowance tick failed (${consecutiveLoopFailures} consecutive failure(s)); the loop will retry",
+                failure
+            )
+        }
+    }
+
     private fun advanceTrackingDate(newDate: LocalDate) {
         flushUsageToStore(trackingDate)
         synchronized(usageMs) { usageMs.clear() }
+        synchronized(usageMs) { subMillisecondNs.clear() }
         synchronized(blockedToday) {
             blockedToday.clear()
             pendingLimitNotifications.clear()
@@ -433,6 +605,7 @@ class AllowanceEngine(
 
     private companion object {
         const val TICK_INTERVAL_MS = 10_000L
+        const val DIAGNOSTICS_EVERY_EVENTS = 6
         const val MAX_GAP_MS = 25_000L
         const val PERSIST_EVERY_TICKS = 6
         const val MILLIS_PER_SECOND = 1_000L

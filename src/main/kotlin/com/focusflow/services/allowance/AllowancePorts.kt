@@ -1,6 +1,7 @@
 package com.focusflow.services.allowance
 
 import com.focusflow.data.models.DailyAllowance
+import com.focusflow.enforcement.ForegroundEvent
 import kotlinx.coroutines.flow.StateFlow
 import java.time.LocalDate
 
@@ -17,6 +18,22 @@ data class ForegroundInfo(
 
 fun interface ForegroundSource {
     fun current(): ForegroundInfo?
+}
+
+interface ForegroundEventSource {
+    fun addListener(listener: (ForegroundEvent) -> Unit): Long
+    fun removeListener(listenerId: Long)
+}
+
+data class AllowanceTrackingDiagnostics(
+    val currentForeground: String?,
+    val creditedSeconds: Map<String, Long>,
+    val missedEventCount: Long,
+    val discardedGapCount: Long
+)
+
+fun interface AllowanceTrackingDiagnosticsSink {
+    fun publish(diagnostics: AllowanceTrackingDiagnostics)
 }
 
 data class RunningProcess(
@@ -69,7 +86,9 @@ data class AllowancePorts(
     val blockedSetSink: BlockedSetSink,
     val isWindows: Boolean,
     val failureLogger: FailureLogger = FailureLogger { _, _, _ -> },
-    val limitNotifier: LimitNotifier = LimitNotifier { }
+    val limitNotifier: LimitNotifier = LimitNotifier { },
+    val foregroundEvents: ForegroundEventSource? = null,
+    val diagnosticsSink: AllowanceTrackingDiagnosticsSink = AllowanceTrackingDiagnosticsSink { }
 )
 
 fun interface LimitNotifier {

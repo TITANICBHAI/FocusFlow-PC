@@ -7,6 +7,7 @@ import com.sun.jna.platform.win32.WinDef.HWND
 import com.sun.jna.platform.win32.WinNT.HANDLE
 import com.sun.jna.win32.StdCallLibrary
 import com.sun.jna.win32.W32APIOptions
+import com.sun.jna.Callback
 import java.util.concurrent.TimeUnit
 
 /**
@@ -34,6 +35,8 @@ interface User32Extra : StdCallLibrary {
     }
 
     fun GetForegroundWindow(): HWND
+    fun GetClassNameW(hWnd: HWND, lpClassName: CharArray, nMaxCount: Int): Int
+    fun EnumChildWindows(hWndParent: HWND?, callback: EnumChildProc, lParam: Pointer?): Boolean
     fun GetWindowThreadProcessId(hWnd: HWND, lpdwProcessId: IntArray): Int
     fun GetWindowTextW(hWnd: HWND, lpString: CharArray, nMaxCount: Int): Int
     fun GetWindowTextLengthW(hWnd: HWND): Int
@@ -65,6 +68,10 @@ interface User32Extra : StdCallLibrary {
         X: Int, Y: Int, cx: Int, cy: Int,
         uFlags: Int
     ): Boolean
+}
+
+interface EnumChildProc : Callback {
+    fun callback(hwnd: HWND, lParam: Pointer?): Boolean
 }
 
 interface Psapi : StdCallLibrary {
@@ -254,6 +261,24 @@ fun getForegroundProcessNameAndPid(): Pair<String, Long>? {
             ?: return null
         Pair(name, pid)
     } catch (_: Exception) { null }
+}
+
+/**
+ * Resolver-backed foreground lookup for allowance accounting. Kept separate
+ * from the legacy helpers so existing enforcement paths retain their behavior.
+ */
+fun getForegroundProcessNameAndPidRobust(): Pair<String, Long>? {
+    if (!isWindows) return null
+    return try {
+        val hwnd = User32Extra.INSTANCE.GetForegroundWindow()
+        val pidArr = IntArray(1)
+        if (User32Extra.INSTANCE.GetWindowThreadProcessId(hwnd, pidArr) == 0) return null
+        val pid = pidArr[0].toLong()
+        val name = DefaultProcessNameResolver.instance.resolve(pid, hwnd.pointer) ?: return null
+        name to pid
+    } catch (_: Exception) {
+        null
+    }
 }
 
 /**
