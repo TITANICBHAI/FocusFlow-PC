@@ -1,0 +1,41 @@
+# Agent Pre-Prompt — FocusFlow Reliability Fixes
+
+Copy this prompt into a new coding-agent task. It provides project context and working rules; it does not itself authorize implementation. Follow the assignment and the owner's latest instruction.
+
+---
+
+You are working on FocusFlow's SQLite startup safety and daily allowance reliability. Before taking action, read all of these Markdown files:
+
+1. `replit.md` — project architecture and conventions.
+2. `fixes/FOCUSFLOW_IMPLEMENTATION_PLAN.md` — authoritative findings, decisions, non-goals, ordered phases, tests, acceptance criteria, and code map. Read the entire file.
+3. `fixes/TRACKER.md` — current batch status and work log.
+4. `fixes/AGENT_PREPROMPT.md` — these working rules.
+5. `.agents/memory/MEMORY.md` and any linked topic files relevant to database/UI threading, daily allowance tracking, concurrency, and shutdown.
+
+## Required working rules
+
+- **Do not use, spawn, or delegate to subagents.**
+- Work in the plan's batch order. Do not start the next batch until the current batch's acceptance criteria and required verification pass.
+- Keep the plan and tracker current as work happens: tick the matching checkboxes in both the source plan and `fixes/TRACKER.md`; add findings and verification evidence to the tracker work log. Do not postpone documentation until the end.
+- Never mark an item complete without the evidence required by the plan. Clearly mark blocked items and explain what is needed.
+- Write the reproducing failing tests before fixes wherever the plan requires tests first. Keep those tests.
+- Preserve the user's database. Never automatically delete, truncate, or recreate `~/.focusflow/focusflow.db`, `-wal`, or `-shm`. Treat BUSY/LOCKED and I/O/open failures as non-corruption unless verified otherwise; do not broaden recovery beyond the plan.
+- Follow the plan's decisions and non-goals. Do not silently change PIN, Emergency Break, tracking, recovery, or enforcement behavior. If the implementation appears to require changing an owner decision, pause and ask the owner.
+- Keep Windows-specific APIs behind testable interfaces; tests must not call Win32.
+- Inspect the current code before editing; attached plans and line references may be stale. Respect existing project conventions and test/version requirements.
+- Do not combine unrelated fixes. Record out-of-scope findings in the tracker/PR notes without expanding the change.
+- After each batch, record what changed, which tests/build/manual checks ran, their results, and remaining limitations before proceeding.
+
+## Required outcome
+
+Follow `fixes/FOCUSFLOW_IMPLEMENTATION_PLAN.md` phase by phase and use its acceptance criteria as the source of truth. The tracker is the live progress record; update it throughout the work. If the assignment is planning-only, do not edit application code—return an implementation plan and leave implementation checkboxes unticked.
+
+---
+
+## Quick context
+
+- The reported `SQLITE_BUSY` occurs while setting SQLite WAL mode during startup.
+- Current startup can continue without a database connection, after which `DailyAllowanceTracker.start()` may access an uninitialized connection.
+- The current allowance tracker samples foreground process usage approximately every 10 seconds; the implementation plan identifies timing, persistence, loop-survival, and state-reconciliation risks to verify and fix.
+- Allowance editing currently lives under Blocker → Daily Allowance; the Focus screen only displays an informational row.
+- These are starting facts from investigation, not a substitute for rereading and verifying the current code.
