@@ -1,11 +1,11 @@
 # Translation Coverage Report
 
-**Date:** 2026-10-06  
+**Date:** 2026-10-07  
 **English source:** `src/main/kotlin/com/focusflow/i18n/Translations.kt`
 
 ## Summary
 
-The translation catalog contains **652 string fields** in English and in each of the six non-English locales. Every non-English locale has the same set of fields as English: **no missing or extra keys were found**.
+The translation catalog contains **652 string fields** in English and in each of the seven non-English locales. Every non-English locale has the same set of fields as English: **no missing or extra keys were found**.
 
 Coverage here is measured by comparing each locale's displayed string with the English string for the same key. A string that differs from English is counted as translated; an identical string is counted as unchanged and listed below for review.
 
@@ -17,7 +17,8 @@ Coverage here is measured by comparing each locale's displayed string with the E
 | Korean | `ko` | 650 / 652 | 2 | **99.7%** |
 | German | `de` | 644 / 652 | 8 | **98.8%** |
 | French | `fr` | 628 / 652 | 24 | **96.3%** |
-| **All non-English locales** | — | **3,873 / 3,912** | **39** | **99.0%** |
+| Brazilian Portuguese | `pt-BR` | 641 / 652 | 11 | **98.3%** |
+| **All non-English locales** | — | **4,514 / 4,564** | **50** | **98.9%** |
 
 ## Strings identical to English
 
@@ -90,9 +91,25 @@ No exact English matches remain.
 | `tasksFieldDateShort` | Date |
 | `focusCycleLabel` | Cycle |
 
+### Brazilian Portuguese (`pt-BR`) — 11
+
+| Key | English text |
+|---|---|
+| `focusPomodoroLabel` | Pomodoro |
+| `focusNuclearLabel` | Nuclear |
+| `statsTotal` | Total |
+| `settingsPinLabel` | PIN |
+| `launcherTitle` | Focus Launcher |
+| `launcherOverlayFocusLauncher` | FOCUS LAUNCHER |
+| `defPinLabel` | PIN |
+| `blockerHour` | HH |
+| `blockerMinute` | MM |
+| `blockerApp` | app |
+| `blockerApps` | apps |
+
 ## Method and limitations
 
 - Each of the 652 string fields in a locale is compared with the English value for the same key.
-- Coverage is the number of values that differ from English divided by 652. The overall figure is weighted by the same 652 fields in each of six locales.
+- Coverage is the number of values that differ from English divided by 652. The overall figure is weighted by the same 652 fields in each of seven locales.
 - This is a source-text comparison, not a human review. It does not detect partially English strings, assess translation accuracy or fluency, or decide whether identical terms should be localized.
 - Exact English matches can be valid in context. Review the unchanged-string lists before treating any entry as missing a translation.

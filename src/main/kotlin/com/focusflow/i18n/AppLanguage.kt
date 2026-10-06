@@ -8,6 +8,7 @@ enum class AppLanguage(
 ) {
     ENGLISH("en", "English", "English", "🇺🇸"),
     SPANISH("es", "Spanish", "Español", "🇪🇸"),
+    PORTUGUESE_BRAZIL("pt-BR", "Portuguese (Brazil)", "Português (Brasil)", "🇧🇷"),
     CHINESE_SIMPLIFIED("zh", "Chinese (Simplified)", "中文（简体）", "🇨🇳"),
     JAPANESE("ja", "Japanese", "日本語", "🇯🇵"),
     KOREAN("ko", "Korean", "한국어", "🇰🇷"),
