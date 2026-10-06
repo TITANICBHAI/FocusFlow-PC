@@ -80,17 +80,26 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 
 ## Batch 2 — Tracker hotfix
 
-**Status:** Not started · **Plan section:** Phase 2
+**Status:** Implementation and automated acceptance complete; Windows manual check pending · **Plan section:** Phase 2
 
-- [ ] Add failing tests for long uptime, sleep gaps, null foreground, loop exceptions, and cumulative timing.
-- [ ] Bound credited time and update timing state before any early return.
-- [ ] Track sub-minute usage without per-tick integer truncation.
-- [ ] Keep the loop alive after recoverable tick/store/killer errors.
-- [ ] Retry failed persistence writes and avoid starting when the usage store is unavailable.
-- [ ] Prevent tracking dates from moving backwards; assess optional process-scan reduction.
-- [ ] Verify a newly added allowance does not inherit hours of past runtime.
+- [x] Cover long uptime, sleep gaps, null foreground, loop/store/killer failures, and cumulative timing with deterministic tests.
+- [x] Bound credited time and update timing state before any early return.
+- [x] Track sub-minute usage without per-tick integer truncation.
+- [x] Keep the loop alive after recoverable tick/store/killer errors.
+- [x] Retry failed persistence writes and avoid starting when the usage store is unavailable.
+- [x] Prevent tracking dates from moving backwards; skip the Windows process scan unless a blocked app needs killing.
+- [x] Verify a newly added allowance does not inherit hours of past runtime, including after a failed process scan.
 
-**Acceptance:** New tests pass; normal tracking works; first allowance after long uptime starts near zero and does not block immediately.
+**Automated acceptance:** Regression tests pass; normal tracking remains covered; the first allowance after long uptime credits only the next ~10-second interval and remains unblocked.
+**Remaining verification:** A manual Windows foreground-app check could not be run in this Linux environment and remains pending.
+
+### Batch 2 evidence — 2026-10-06
+
+- Reviewed the existing `AllowanceEngine` implementation against Phase 2. The elapsed-time cap, millisecond accumulation, per-row pending-write retry, store availability guard, loop error handling, monotonic date advancement, and optional Windows scan reduction were already implemented.
+- Tightened the first-allowance regression to assert persisted usage is 9–11 seconds after the allowance is added and that the process is not blocked.
+- Added a regression where process enumeration returns unavailable across a five-hour gap, then recovers; only the next 10-second interval is credited and no block is set.
+- Targeted verification: `gradle test --tests 'com.focusflow.services.allowance.AllowanceEngineTest' --no-daemon` passed after the test additions.
+- Full suite: `gradle test --no-daemon` passed. `git diff --check` passed after removing trailing whitespace from this tracker entry. No user database was opened or modified.
 
 ## Batch 3 — Database startup safety and recovery gate
 
@@ -175,3 +184,4 @@ Add an entry whenever work starts or finishes on a batch. Include evidence for c
 |---|---|---|---|---|
 | 2026-10-06 | 0 | Temporary diagnostics added, exercised in isolated homes, then removed. H3 confirmed under forced recomposition. Owner confirmed full logs are unavailable; supplied exception excerpt confirms the startup failure chain. Safe Windows inspection steps and ranked causes documented. Linux read-only WAL smoke test passed; Windows-specific checks remain no-go until validated. | `gradle compileKotlin` passed with instrumentation; isolated Compose run showed four init calls; scratch sqlite-jdbc 3.47.1.0 exclusive-lock test returned code 5 after 10,027 ms with unchanged DB hash; Linux read-only WAL reader passed; excerpt matches BUSY-at-WAL then uninitialized tracker connection. | Complete with limitations |
 | 2026-10-06 | 1 | Added test infrastructure, injectable Database initialization/reset, tracker ports, and the `AllowanceEngine`; kept `DailyAllowanceTracker` as the production facade. Added deterministic process enumeration seam after Nix's `sleep` alias could not be identified reliably. | `gradle test --no-daemon`: 3 passed; isolated app launch with scratch DB recorded 41 seconds of `python3.13` allowance usage; `git diff --check` passed. No user DB accessed. | Complete |
+| 2026-10-06 | 2 | Audited existing tracker hotfix implementation; strengthened first-allowance and process-enumeration-gap regressions. | Targeted allowance-engine tests and full `gradle test --no-daemon` passed; `git diff --check` passed. Windows manual foreground-app verification unavailable in Linux. No user DB accessed. | Automated complete; manual check pending |

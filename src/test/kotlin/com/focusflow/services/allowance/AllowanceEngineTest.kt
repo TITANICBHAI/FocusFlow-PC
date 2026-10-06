@@ -90,11 +90,55 @@ class AllowanceEngineTest {
             engine.reload()
             clock.advanceBoth(10_000L)
             engine.tickForTest()
+            engine.stop()
 
+            val persistedSeconds = store.savedUsage[TODAY]?.get("sample.exe")
             assertTrue(
-                engine.getUsageMinutes("sample.exe") <= 1L,
-                "A new allowance inherited ${engine.getUsageMinutes("sample.exe")} minutes"
+                persistedSeconds in 9L..11L,
+                "Expected about 10 seconds after adding the allowance, got $persistedSeconds"
             )
+            assertEquals(emptySet(), engine.blockedProcesses, "A new allowance was blocked by earlier idle time")
+        } finally {
+            engine.stop()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun failedProcessEnumerationDoesNotCarryElapsedTimeIntoTheNextTick() = runTest {
+        val clock = MutableClock(TODAY, 1_000L, 1_000_000L)
+        val store = FakeUsageStore(listOf(DailyAllowance("sample.exe", "Sample", 30)))
+        var enumerationAvailable = false
+        val engine = createEngine(
+            backgroundScope,
+            store,
+            clock,
+            running = RunningProcessSource {
+                if (enumerationAvailable) {
+                    listOf(RunningProcess("sample.exe", 7L))
+                } else {
+                    null
+                }
+            }
+        )
+
+        try {
+            engine.start()
+            runCurrent()
+            clock.advanceBoth(5 * 60 * 60 * 1_000L)
+            engine.tickForTest()
+
+            enumerationAvailable = true
+            clock.advanceBoth(10_000L)
+            engine.tickForTest()
+            engine.stop()
+
+            val persistedSeconds = store.savedUsage[TODAY]?.get("sample.exe")
+            assertTrue(
+                persistedSeconds in 9L..11L,
+                "Expected only the final 10-second interval after a failed scan, got $persistedSeconds"
+            )
+            assertEquals(emptySet(), engine.blockedProcesses, "A failed scan caused an erroneous daily block")
         } finally {
             engine.stop()
         }

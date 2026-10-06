@@ -130,18 +130,20 @@ Write these tests first (they must fail on current code), using the fake clock:
 - 60 consecutive 10.3 s ticks with the app foreground: usage between 615 s and 621 s (no 3% truncation loss).
 
 Tasks
-- [ ] 2.1 Baseline timing: at the very top of `tick()` compute `now`, `elapsedMs = now - lastTickMs`, then set `lastTickMs = now` BEFORE any early return. Remove the end-of-tick update (line 204).
-- [ ] 2.2 Gap rule: credit = `min(wallDelta, monoDelta)`; if credit exceeds `MAX_GAP_MS` (25 s, i.e. 2.5x the interval) or is negative, credit 0 and log once ("suspended or clock jump, discarded N s"). Never credit more than `MAX_GAP_MS`.
-- [ ] 2.3 Track usage internally in milliseconds (`usageMs`); persist `ms/1000` as `seconds_used`; load multiplies by 1000. `getUsageMinutes` = `ms/60_000`. Remove `coerceAtLeast(1)`.
-- [ ] 2.4 Loop safety: `while (isActive) { try { tick() } catch (e: CancellationException) { throw e } catch (t: Throwable) { EnforcementLog.warn(...) } ; delay(INTERVAL) }`. Count consecutive failures; log escalation after 5.
-- [ ] 2.5 `flushUsageToDB`: per-row try/catch; keep failed keys dirty and retry on the next flush; never throw.
-- [ ] 2.6 `start()` must not throw: if the store is unavailable, log and return without starting the loop (the Phase 3 gate prevents this state, this is defense in depth).
-- [ ] 2.7 Never move `trackingDate` backwards (ignore a wall date earlier than the last seen date).
-- [ ] 2.8 (optional, low risk) On Windows avoid `ProcessHandle.allProcesses()` unless a blocked app needs killing; keep the kill behaviour identical.
+- [x] 2.1 Baseline timing advances before any early return or external operation.
+- [x] 2.2 Credit uses the smaller wall/monotonic delta, discards negative or over-25-second gaps, and logs the first discarded gap once.
+- [x] 2.3 Usage is held in milliseconds; persistence stores whole seconds, reload restores milliseconds, and minute queries do not truncate each tick.
+- [x] 2.4 The loop rethrows cancellation, catches recoverable failures, retries on the next interval, and logs repeated failures with escalation.
+- [x] 2.5 Persistence catches failures per row and retains pending values for a later retry.
+- [x] 2.6 `start()` checks store availability and returns without starting tracking when unavailable; load failures are also caught.
+- [x] 2.7 Tracking date advances only to a later date.
+- [x] 2.8 Windows process enumeration is skipped unless a blocked app needs the kill path; non-Windows behavior remains unchanged.
 
 Acceptance
 - All new tests pass; existing behaviour for normal foreground counting unchanged.
-- Manual: add the first allowance after the app has been running a while, with the tracked app foreground: usage starts near 0 and the app is not blocked.
+- Automated fake-clock verification: adding the first allowance after 5 h credits only the following ~10 s and does not block; real Windows manual verification remains pending because this environment is Linux.
+
+Progress on 2026-10-06: The Batch 2 engine safeguards were already present when work resumed. Added stronger regressions for first-allowance credit (asserting ~10 seconds and no block) and failed process enumeration (asserting it cannot carry a long gap into the next tick). Full automated verification is recorded in `fixes/TRACKER.md`. A Windows manual foreground-app check was not possible in this Linux environment; do not treat that platform-specific check as verified.
 
 ### Phase 3: Database startup safety and recovery gate (fixes C1-C7)
 
