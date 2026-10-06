@@ -37,7 +37,8 @@ internal val CHANGELOG = listOf(
         badgeColor = Warning,
         changes    = listOf(
             "IMP" to "Focus Launcher search now filters allowed apps dynamically as you type, matching both app names and executable names",
-            "IMP" to "Moved Focus Launcher search above the allowed-app list so it is easy to find while choosing which apps are available"
+            "IMP" to "Moved Focus Launcher search above the allowed-app list so it is easy to find while choosing which apps are available",
+            "IMP" to "Improved UI localization across all six non-English languages and documented per-language translation coverage"
         )
     ),
     ChangelogEntry(
