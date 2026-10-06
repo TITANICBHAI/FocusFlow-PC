@@ -43,6 +43,7 @@ fun StartupGateWindow(
     details: String,
     databasePath: String,
     logPath: String,
+    reportPath: String?,
     isStarting: Boolean,
     isBusy: Boolean,
     retryEnabled: Boolean = true,
@@ -114,6 +115,14 @@ fun StartupGateWindow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
+                if (!reportPath.isNullOrBlank()) {
+                    Text(
+                        "A detailed diagnostic was saved locally. Automatic error reporting follows your crash-report setting.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 if (isStarting || isBusy) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -124,8 +133,12 @@ fun StartupGateWindow(
                             strokeWidth = 2.dp
                         )
                         Text(
-                            if (isBusy) "Retrying automatically every 10 seconds."
-                            else "Checking the database before starting protection.",
+                            when {
+                                isStarting && isBusy -> "Retrying the database now."
+                                isStarting -> "Retrying startup…"
+                                isBusy -> "FocusFlow will retry automatically every 10 seconds."
+                                else -> "Checking the database before starting protection."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -153,6 +166,12 @@ fun StartupGateWindow(
                                     "Log: $logPath",
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                                if (!reportPath.isNullOrBlank()) {
+                                    Text(
+                                        "Startup report: $reportPath",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                             }
                         }
                     }
@@ -176,7 +195,13 @@ fun StartupGateWindow(
                     }
                     Spacer(Modifier.width(2.dp))
                     Button(onClick = onRetry, enabled = retryEnabled && !isStarting) {
-                        Text(if (isBusy) "Retry now" else "Retry")
+                        Text(
+                            when {
+                                isStarting -> "Retrying…"
+                                isBusy -> "Retry now"
+                                else -> "Retry"
+                            }
+                        )
                     }
                 }
             }

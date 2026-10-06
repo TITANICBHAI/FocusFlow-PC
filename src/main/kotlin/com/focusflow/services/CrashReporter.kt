@@ -74,6 +74,7 @@ object CrashReporter {
     private const val MAX_THREADS       = 200
 
     private val TIMESTAMP_FILE = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+    private val TIMESTAMP_STARTUP_FILE = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
     private val TIMESTAMP_HUMAN = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -199,7 +200,8 @@ object CrashReporter {
         thread: Thread,
         throwable: Throwable,
         source: String,
-        tsHuman: String
+        tsHuman: String,
+        title: String = "FOCUSFLOW CRASH REPORT"
     ): String {
         val sb  = StringBuilder(8192)
         val SEP = "═".repeat(72)
@@ -207,7 +209,7 @@ object CrashReporter {
 
         // ── Header ────────────────────────────────────────────────────────────
         sb.ln(SEP)
-        sb.ln("  FOCUSFLOW CRASH REPORT")
+        sb.ln("  $title")
         sb.ln(SEP)
         sb.ln("Timestamp    : $tsHuman")
         sb.ln("App Version  : $appVersion")
@@ -606,6 +608,43 @@ object CrashReporter {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }
         }.also { it.isDaemon = true; it.name = "focusflow-critical-telemetry" }.start()
+    }
+
+    /**
+     * Save a full local startup diagnostic and optionally send its concise
+     * summary through the existing privacy-gated critical-error channel.
+     *
+     * This deliberately avoids [report], whose fatal-crash path performs
+     * enforcement cleanup and is not appropriate for a recoverable startup
+     * screen.
+     */
+    fun reportStartupIssue(
+        source: String,
+        message: String,
+        throwable: Throwable? = null,
+        sendTelemetry: Boolean = true
+    ): File? {
+        val now = LocalDateTime.now()
+        val reportThrowable = throwable ?: IllegalStateException(message)
+        val reportFile = try {
+            val reportText = buildReport(
+                thread = Thread.currentThread(),
+                throwable = reportThrowable,
+                source = source,
+                tsHuman = now.format(TIMESTAMP_HUMAN),
+                title = "FOCUSFLOW STARTUP ISSUE REPORT"
+            )
+            writeLog(reportText, now.format(TIMESTAMP_STARTUP_FILE))
+        } catch (failure: Throwable) {
+            System.err.println(
+                "[FocusFlow] Could not create startup diagnostic [$source]: " +
+                    "${failure.javaClass.name}: ${failure.message}"
+            )
+            null
+        }
+
+        if (sendTelemetry) reportCritical(source, message, throwable)
+        return reportFile
     }
 
     /**

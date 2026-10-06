@@ -9,6 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.i18n.LocalizationManager
+import com.focusflow.services.CrashReporter
 import com.focusflow.services.ReviewPromptService
 import com.focusflow.ui.theme.*
 
@@ -48,6 +52,7 @@ fun ReviewPromptDialog() {
     var feedbackSent    by remember { mutableStateOf(false) }
     var feedbackSending by remember { mutableStateOf(false) }
     var feedbackFailed  by remember { mutableStateOf(false) }
+    var showFeedbackNotice by remember { mutableStateOf(true) }
 
     AlertDialog(
         onDismissRequest = { ReviewPromptService.onDismiss() },
@@ -112,6 +117,76 @@ fun ReviewPromptDialog() {
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (showFeedbackNotice) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Purple80.copy(alpha = 0.08f))
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = Purple80,
+                                        modifier = Modifier.size(16.dp).padding(top = 1.dp)
+                                    )
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            "One-way feedback",
+                                            color = OnSurface,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            "We can read your message, but this form has no reply address. " +
+                                                "For a response, contact us another way:",
+                                            color = OnSurface2,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            TextButton(
+                                                onClick = {
+                                                    openUrl("mailto:${CrashReporter.SUPPORT_EMAIL}")
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Email,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Email Support", fontSize = 11.sp)
+                                            }
+                                            TextButton(
+                                                onClick = {
+                                                    openUrl("https://github.com/TITANICBHAI/FocusFlow-PC/issues/new")
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                            ) {
+                                                Text("GitHub Issues", fontSize = 11.sp)
+                                            }
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { showFeedbackNotice = false },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Dismiss feedback notice",
+                                            tint = OnSurface2,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
                             OutlinedTextField(
                                 value         = feedbackText,
                                  onValueChange = { feedbackText = it; feedbackFailed = false },

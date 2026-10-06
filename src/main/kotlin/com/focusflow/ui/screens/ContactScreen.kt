@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +48,8 @@ fun ContactScreen() {
     var feedbackSent   by remember { mutableStateOf(false) }
     var feedbackSending by remember { mutableStateOf(false) }
     var feedbackFailed  by remember { mutableStateOf(false) }
+    var showForgottenPinNotice by rememberSaveable { mutableStateOf(true) }
+    var showFeedbackNotice by rememberSaveable { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         crashLogs = withContext(Dispatchers.IO) { CrashReporter.findCrashLogs() }
@@ -159,15 +162,32 @@ fun ContactScreen() {
                 }
             }
 
-            SectionCard(title = "Forgotten Global PIN", icon = Icons.Default.Lock) {
-                Text(
-                    "FocusFlow stores only a hash, so we cannot retrieve a forgotten PIN. " +
-                    "Although a “Forgot PIN?” option may appear, it currently is not a usable recovery path. " +
-                    "If you lose your PIN, protected changes may remain inaccessible. Keep it stored somewhere safe.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OnSurface2,
-                    lineHeight = 18.sp
-                )
+            if (showForgottenPinNotice) {
+                SectionCard(
+                    title = "Forgotten Global PIN",
+                    icon = Icons.Default.Lock,
+                    trailing = {
+                        IconButton(
+                            onClick = { showForgottenPinNotice = false },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Dismiss forgotten PIN notice",
+                                tint = OnSurface2,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                ) {
+                    Text(
+                        "FocusFlow stores only a hash, so neither FocusFlow nor Support can retrieve or reset a forgotten PIN. " +
+                        "The in-app “Forgot PIN?” option is not currently a usable recovery path. Protected changes may remain inaccessible, so keep your PIN somewhere safe.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurface2,
+                        lineHeight = 18.sp
+                    )
+                }
             }
 
             // ── Direct feedback ─────────────────────────────────────────────────
@@ -180,13 +200,53 @@ fun ContactScreen() {
                             color = OnSurface2,
                             lineHeight = 18.sp
                         )
-                        Text(
-                            "This form is one-way and does not include a reply address, so we can’t respond through it. " +
-                            "For a response, email Support or open a GitHub issue above.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = OnSurface2,
-                            lineHeight = 18.sp
-                        )
+                        if (showFeedbackNotice) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Purple80.copy(alpha = 0.08f))
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = Purple80,
+                                    modifier = Modifier.size(16.dp).padding(top = 1.dp)
+                                )
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        "One-way feedback",
+                                        color = OnSurface,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        "We can read what you send, but this form has no reply address, so we can’t respond. " +
+                                        "For a reply, use Email Support or GitHub Issues in Get in Touch above.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = OnSurface2,
+                                        lineHeight = 18.sp
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { showFeedbackNotice = false },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Dismiss feedback notice",
+                                        tint = OnSurface2,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
                         if (feedbackSent) {
                             Row(
                                 modifier = Modifier

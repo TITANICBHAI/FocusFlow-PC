@@ -29,6 +29,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collect
@@ -108,7 +109,10 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
         mutableStateOf(if (launch.hasInstance) StartupView.Starting else StartupView.WaitingForInstance)
     }
     var retryToken by remember { mutableIntStateOf(0) }
+    var startupAttemptInProgress by remember { mutableStateOf(false) }
+    var startupReportPath by remember { mutableStateOf<String?>(null) }
     var windowVisible by remember { mutableStateOf(true) }
+    val reportedStartupIssues = remember { mutableSetOf<String>() }
 
     val dbStartupState by Database.startupState.collectAsState()
     val launcherActive by com.focusflow.services.FocusLauncherService.isActive.collectAsState()
@@ -121,6 +125,19 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
         File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db").absoluteFile
     }
     val databaseLog = remember { File(databaseFile.parentFile, "crash.log").absolutePath }
+
+    suspend fun reportStartupIssueOnce(
+        key: String,
+        source: String,
+        message: String,
+        cause: Throwable? = null,
+        sendTelemetry: Boolean = true
+    ) {
+        if (!reportedStartupIssues.add(key)) return
+        startupReportPath = withContext(Dispatchers.IO) {
+            CrashReporter.reportStartupIssue(source, message, cause, sendTelemetry)?.absolutePath
+        }
+    }
 
     val windowState = rememberWindowState(
         width = 1100.dp,
@@ -177,35 +194,85 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                     return@LaunchedEffect
                 }
                 InstanceAcquireResult.HolderUnresponsive -> {
+                    startupAttemptInProgress = false
                     startup = StartupView.WaitingForInstance
+                    reportStartupIssueOnce(
+                        key = "instance-lock-unresponsive",
+                        source = "SingleInstanceGuard",
+                        message = "A previous FocusFlow process held the startup lock but did not respond to the request to show its window."
+                    )
                     delay(10_000L)
                     continue
                 }
             }
 
-            startup = StartupView.Starting
-            val result = withContext(Dispatchers.IO) { Database.init() }
+            // Hide the ordinary startup window. Keep an existing failure visible
+            // while its automatic or user-requested database retry is in progress.
+            if (startup !is StartupView.DatabaseUnavailable) {
+                startup = StartupView.Starting
+            }
+            startupAttemptInProgress = true
+            var initThrew = false
+            val result = try {
+                withContext(Dispatchers.IO) { Database.init() }
+            } catch (cancelled: CancellationException) {
+                startupAttemptInProgress = false
+                throw cancelled
+            } catch (failure: Exception) {
+                initThrew = true
+                DbInitResult.Failed(failure, databaseFile)
+            }
+            startupAttemptInProgress = false
             when (result) {
                 DbInitResult.Ready -> {
+                    // The database recovered; do not leave its old error screen
+                    // visible while background services finish starting.
+                    startup = StartupView.Starting
+                    startupAttemptInProgress = true
                     when (val bootstrap = withContext(Dispatchers.IO) {
                         StartupBootstrap.startServices(
                             onRestore = { windowVisible = true },
                             onQuit = doShutdown
                         )
                     }) {
-                        StartOnceResult.Started, StartOnceResult.AlreadyStarted ->
+                        StartOnceResult.Started, StartOnceResult.AlreadyStarted -> {
+                            startupAttemptInProgress = false
                             startup = StartupView.Ready
-                        is StartOnceResult.Failed ->
+                        }
+                        is StartOnceResult.Failed -> {
+                            startupAttemptInProgress = false
                             startup = StartupView.ServiceFailure(bootstrap.cause)
+                            reportStartupIssueOnce(
+                                key = "background-services",
+                                source = "StartupBootstrap.startServices",
+                                message = "The database opened, but background services failed to initialize. FocusFlow did not finish startup.",
+                                cause = bootstrap.cause
+                            )
+                        }
                     }
                     return@LaunchedEffect
                 }
                 is DbInitResult.Busy -> {
                     startup = StartupView.DatabaseUnavailable(result)
+                    reportStartupIssueOnce(
+                        key = "database-busy",
+                        source = "Database.busy",
+                        message = "The database remained locked after ${result.attempts} attempts and ${result.waitedMs}ms. Background services were not started; FocusFlow will retry automatically.",
+                        cause = result.cause
+                    )
                     delay(10_000L)
                 }
                 is DbInitResult.Failed -> {
                     startup = StartupView.DatabaseUnavailable(result)
+                    reportStartupIssueOnce(
+                        key = "database-failed",
+                        source = "Database.open",
+                        message = "Database initialization failed. FocusFlow left the database file unchanged and did not start dependent services.",
+                        cause = result.cause,
+                        // Database.finishFailed already sends this report for a
+                        // normal failure. Send here only for an unexpected throw.
+                        sendTelemetry = initThrew
+                    )
                     return@LaunchedEffect
                 }
             }
@@ -250,7 +317,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
 
     if (ready) LauncherWindowHost()
 
-    if (windowVisible) {
+    if (windowVisible && (ready || startup !is StartupView.Starting)) {
         Window(
             onCloseRequest = {
                 if (!ready) {
@@ -275,7 +342,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
             } else {
                 val busy = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Busy
                 val failed = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Failed
-                val isStarting = startup is StartupView.Starting
+                val isStarting = startup is StartupView.Starting || startupAttemptInProgress
                 val title = when {
                     startup is StartupView.WaitingForInstance -> "Waiting for another instance"
                     busy != null -> "Waiting for the database"
@@ -319,6 +386,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                         details = details,
                         databasePath = databaseFile.absolutePath,
                         logPath = databaseLog,
+                        reportPath = startupReportPath,
                         isStarting = isStarting,
                         isBusy = busy != null,
                         retryEnabled = startup !is StartupView.ServiceFailure,
@@ -326,7 +394,8 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                         onOpenFolder = {
                             runCatching {
                                 if (Desktop.isDesktopSupported()) {
-                                    Desktop.getDesktop().open(databaseFile.parentFile)
+                                    val reportFolder = startupReportPath?.let(::File)?.parentFile
+                                    Desktop.getDesktop().open(reportFolder ?: databaseFile.parentFile)
                                 }
                             }
                         },
