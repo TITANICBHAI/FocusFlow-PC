@@ -236,24 +236,26 @@ Design: `ForegroundLedger` (pure class, no OS calls). State: `current: Key?`, `o
 - Credit goes only to keys with an allowance. Date rollover is checked before every credit (error at midnight <= one heartbeat).
 
 Tasks
-- [ ] 5.1 Tests first for the ledger with fake time: A 3 s / B 7 s / A 5 s switches credit exactly; sub-second switches are not lost; missed event corrected by heartbeat (error <= heartbeat interval); null foreground credits nobody; gap > `MAX_GAP` discarded; rollover credits the old day then starts the new day at 0.
-- [ ] 5.2 `WinEventHook`: today `start(onForegroundChange)` takes ONE callback and ignores events whose exe name is null. Add a listener registry (`addListener/removeListener`) with an event type `ForegroundEvent(exe: String?, pid: Long, monoNs: Long)`; the hook starts once; `ProcessMonitor` keeps its current behaviour unchanged. Unknown (null) exe must reach the new listeners.
-- [ ] 5.3 `ProcessNameResolver.resolve(pid)` (new; do NOT change `getForegroundProcessName()` used by other features): try `ProcessHandle.info().command()`, then fall back to `QueryFullProcessImageNameW` with `PROCESS_QUERY_LIMITED_INFORMATION` through JNA (elevated processes). For `applicationframehost.exe`, look up the child window of class `Windows.UI.Core.CoreWindow` and resolve its owning process; if that fails, treat as unknown and log.
-- [ ] 5.4 Engine wiring: hook events -> `ledger.onForeground`; a coroutine heartbeat samples `ForegroundSource.current()` and calls `ledger.heartbeat`. Keep the non-Windows fallback (running-process check) unchanged and clearly commented as a weaker mode.
-- [ ] 5.5 Session awareness (P1): lock/unlock and suspend/resume. Use a message-only window on a pump thread with `WTSRegisterSessionNotification` (`WM_WTSSESSION_CHANGE`: lock 0x7, unlock 0x8) and `WM_POWERBROADCAST` (suspend 0x4, resume 0x12). While locked/suspended: `onForeground(null)`. If registration fails, fall back to gap detection (already required) plus `GetForegroundWindow() == NULL` on the lock screen; log the degraded mode.
-- [ ] 5.6 Display-off (P2): `RegisterPowerSettingNotification(GUID_CONSOLE_DISPLAY_STATE)`; treat display-off as `null` foreground. Skip if it adds fragile native code; document the limitation instead.
-- [ ] 5.7 Persistence cadence: flush dirty keys at most every 60 s, when switching AWAY from a tracked app, on break end, and on `stop()`.
-- [ ] 5.8 Remove the old polling credit path after parity tests pass; keep one clearly separated safety poll only if the heartbeat cannot cover its role.
-- [ ] 5.9 Diagnostics: a small debug log or hidden diagnostics panel showing current foreground exe, credited seconds per tracked app, missed-event count, discarded gaps. This is how the owner can verify the feature really counts.
+- [x] 5.1 Tests first for the ledger with fake time: A 3 s / B 7 s / A 5 s switches credit exactly; sub-second switches are not lost; missed event corrected by heartbeat (error <= heartbeat interval); null foreground credits nobody; gap > `MAX_GAP` discarded; rollover credits the old day then starts the new day at 0.
+- [x] 5.2 `WinEventHook` has an `addListener/removeListener` registry and publishes nullable `ForegroundEvent(exe, pid, monoNs)` events while preserving the existing `ProcessMonitor` callback behavior.
+- [x] 5.3 `ProcessNameResolver.resolve(pid)` tries `ProcessHandle.info().command()`, falls back to `QueryFullProcessImageNameW` through JNA, and resolves `ApplicationFrameHost.exe` through a `Windows.UI.Core.CoreWindow` child; unresolved hosts are logged and treated as unknown.
+- [x] 5.4 The engine consumes hook events and a heartbeat sample. Non-Windows retains the weaker running-process fallback; the UI help text explains that it is not exact foreground tracking.
+- [x] 5.5 Windows lock/unlock and suspend/resume events feed null foreground intervals; failed registration is logged and bounded-gap/foreground sampling remain the fallback.
+- [x] 5.6 Display-off monitoring was assessed and omitted to avoid additional native registration code; the allowance help text documents that display-off is not detected.
+- [x] 5.7 Dirty usage flushes periodically, when switching away from a tracked app, on Emergency Break end, and on stop. The break-end flush also closes and credits the currently open ledger interval before enforcement resumes.
+- [x] 5.8 Event mode owns Windows foreground credit after ledger parity tests passed; the legacy running-process path remains for the weaker non-Windows fallback and when event tracking is unavailable.
+- [x] 5.9 Low-noise diagnostics report current foreground, credited seconds, missed-event count, and discarded-gap count.
 
 Acceptance
 - Ledger tests pass; engine tests pass with a fake `ForegroundSource` and fake time.
 - Manual Windows checklist (below) passes.
 - Documented limitations are written into the PR and the UI help text: foreground is not "active use"; second monitor and background audio are not counted; browser web apps cannot be split by site; idle time counts; a changed system date can reset usage.
 
-Audit on 2026-10-06: Phase 5's event-based allowance work is not implemented, but shared foundations are present: injectable clock/foreground ports, bounded polling and a WinEventHook that reports named foreground changes to ProcessMonitor. AllowanceEngine does not subscribe to the hook; there is no ForegroundLedger, listener registry, robust elevated/Store-host resolver, lock/suspend integration, or allowance diagnostics. The existing process-name helpers rely on ProcessHandle, and WinEventHook filters unknown executable names before its existing callback. These foundations do not satisfy Phase 5.
+Audit updated on 2026-10-06: The current repository contains the Phase 5 ledger, tests, nullable foreground listener registry, elevated/Store-host process resolver, event+heartbeat engine wiring, lock/suspend monitor, persistence flush points, and diagnostics. The initial audit in the earlier tracker entry described an older repository snapshot and is superseded. Display-off monitoring is intentionally omitted and documented in the allowance help text. Automated Linux verification passes; Windows foreground accuracy and manual acceptance remain pending and are not claimed as complete.
 
 Progress update on 2026-10-06: Batch 5 has started at the user's direction while Batch 4's interactive Windows acceptance remains pending. Windows-only verification is still a blocker and must not be represented as passed.
+
+Progress update on 2026-10-06: Audited the current Phase 5 implementation and corrected the stale audit above. All Linux-verifiable Phase 5 implementation tasks are present. Added a failing-first regression proving that Emergency Break end must flush the open foreground interval; it failed with 30 seconds persisted versus 35 expected, then passed after the engine flushes the ledger before resuming enforcement. Focused ledger/event/resolver/session tests and the full 59-test suite pass. The seven-language allowance help text documents foreground-counting limitations and the display-off omission. Windows manual accuracy checks remain blocked in this Linux environment.
 
 ### Phase 6: Allowance UX (fixes U1, U2)
 

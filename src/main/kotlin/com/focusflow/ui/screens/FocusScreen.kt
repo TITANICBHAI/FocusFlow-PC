@@ -46,17 +46,24 @@ import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.ScannedApp
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.*
+import com.focusflow.ui.components.AllowanceLoadBanner
+import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.PinGateDialog
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.theme.*
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.semantics.Role
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.min
 
 @Composable
-fun FocusScreen(preloadTask: Task? = null) {
+fun FocusScreen(
+    preloadTask: Task? = null,
+    onOpenAllowances: () -> Unit = {}
+) {
     val sessionState    by FocusSessionService.state.collectAsState()
     val strings         = LocalizationManager.strings
     val pomodoroState   by BreakEnforcer.state.collectAsState()
@@ -72,7 +79,9 @@ fun FocusScreen(preloadTask: Task? = null) {
     var alwaysOnEnabled      by remember { mutableStateOf(false) }
     var blockRulesCount      by remember { mutableStateOf(0) }
     var scheduleCount        by remember { mutableStateOf(0) }
-    var dailyAllowancesCount by remember { mutableStateOf(0) }
+    var allowanceLoadState by remember {
+        mutableStateOf<AllowanceLoadState<AllowanceUsageSummary>>(AllowanceLoadState.Loading())
+    }
     var keywordCount         by remember { mutableStateOf(0) }
 
     var focusModeActive    by remember { mutableStateOf(preloadTask?.focusMode == true) }
@@ -98,20 +107,40 @@ fun FocusScreen(preloadTask: Task? = null) {
 
     val scope = rememberCoroutineScope()
 
-    fun reload() {
+    fun reloadAllowances() {
+        val previous = allowanceLoadState.lastKnownValue()
+        allowanceLoadState = AllowanceLoadState.Loading(previous)
         scope.launch {
-            val rt  = withContext(Dispatchers.IO) { Database.getTasks().filter { !it.completed }.take(10) }
-            val aoe = withContext(Dispatchers.IO) { Database.getSetting("always_on_enforcement") == "true" }
-            val brc = withContext(Dispatchers.IO) { Database.getBlockRules().count { it.enabled } }
-            val sc  = withContext(Dispatchers.IO) { Database.getBlockSchedules().count { it.enabled } }
-            val dac = withContext(Dispatchers.IO) { Database.getDailyAllowances().size }
-            val kwc = withContext(Dispatchers.IO) { Database.getBlockedKeywords().size }
-            recentTasks          = rt
-            alwaysOnEnabled      = aoe
-            blockRulesCount      = brc
-            scheduleCount        = sc
-            dailyAllowancesCount = dac
-            keywordCount         = kwc
+            allowanceLoadState = loadAllowanceData(previous) {
+                withContext(Dispatchers.IO) {
+                    check(Database.isReady) { "Database unavailable" }
+                    val allowances = Database.getDailyAllowances()
+                    DailyAllowanceTracker.reload().getOrThrow()
+                    summarizeAllowanceUsage(allowances, DailyAllowanceTracker.blockedProcesses)
+                }
+            }
+        }
+    }
+
+    fun reload() {
+        reloadAllowances()
+        scope.launch {
+            try {
+                val rt  = withContext(Dispatchers.IO) { Database.getTasks().filter { !it.completed }.take(10) }
+                val aoe = withContext(Dispatchers.IO) { Database.getSetting("always_on_enforcement") == "true" }
+                val brc = withContext(Dispatchers.IO) { Database.getBlockRules().count { it.enabled } }
+                val sc  = withContext(Dispatchers.IO) { Database.getBlockSchedules().count { it.enabled } }
+                val kwc = withContext(Dispatchers.IO) { Database.getBlockedKeywords().size }
+                recentTasks          = rt
+                alwaysOnEnabled      = aoe
+                blockRulesCount      = brc
+                scheduleCount        = sc
+                keywordCount         = kwc
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Allowance failures have their own visible state and retry action.
+            }
         }
     }
 
@@ -579,7 +608,9 @@ fun FocusScreen(preloadTask: Task? = null) {
                 alwaysOnEnabled      = alwaysOnEnabled,
                 blockRulesCount      = blockRulesCount,
                 scheduleCount        = scheduleCount,
-                dailyAllowancesCount = dailyAllowancesCount,
+                allowanceLoadState   = allowanceLoadState,
+                onOpenAllowances     = onOpenAllowances,
+                onRetryAllowances    = ::reloadAllowances,
                 keywordCount         = keywordCount,
                 onStartBlock         = { showStandaloneDialog = true },
                 onAddTime            = { StandaloneBlockService.addTime(it * 60_000L) },
@@ -954,10 +985,20 @@ private fun EnforcementRow(
     icon:       androidx.compose.ui.graphics.vector.ImageVector,
     label:      String,
     count:      Int,
-    countLabel: String
+    countLabel: String,
+    subtitle:   String? = null,
+    onClick:    (() -> Unit)? = null,
+    actionLabel: String? = null
 ) {
+    val rowModifier = if (onClick != null) {
+        Modifier.fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 4.dp)
+    } else {
+        Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = rowModifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -971,10 +1012,13 @@ private fun EnforcementRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium, color = OnSurface)
             Text(
-                if (count > 0) "$count $countLabel" else "None configured",
+                subtitle ?: if (count > 0) "$count $countLabel" else "None configured",
                 style = MaterialTheme.typography.bodySmall,
                 color = OnSurface2
             )
+        }
+        if (actionLabel != null) {
+            Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = Purple80)
         }
         if (count > 0) {
             Box(
@@ -1004,7 +1048,9 @@ private fun StandaloneBlockPanel(
     alwaysOnEnabled:      Boolean,
     blockRulesCount:      Int,
     scheduleCount:        Int,
-    dailyAllowancesCount: Int,
+    allowanceLoadState: AllowanceLoadState<AllowanceUsageSummary>,
+    onOpenAllowances: () -> Unit,
+    onRetryAllowances: () -> Unit,
     keywordCount:         Int,
     onStartBlock:         () -> Unit,
     onAddTime:            (Int) -> Unit,
@@ -1041,7 +1087,31 @@ private fun StandaloneBlockPanel(
 
         // ── Android-style 4 enforcement sub-rows ──────────────────────────────
         EnforcementRow(Icons.Default.Block,    "Always-On App List", blockRulesCount,      "app${if (blockRulesCount == 1) "" else "s"}")
-        EnforcementRow(Icons.Default.Timer,    "Daily Allowance",    dailyAllowancesCount, "app${if (dailyAllowancesCount == 1) "" else "s"}")
+        val allowanceSummary = if (allowanceLoadState is AllowanceLoadState.Failed) {
+            null
+        } else {
+            allowanceLoadState.lastKnownValue()
+        }
+        val allowanceSubtitle = allowanceSummary?.let {
+            formatAllowanceSummary(strings.blockerAllowanceSummaryFormat, it)
+        }.orEmpty()
+        EnforcementRow(
+            icon = Icons.Default.Timer,
+            label = strings.blockerTabDailyAllowance,
+            count = allowanceSummary?.appCount ?: 0,
+            countLabel = "",
+            subtitle = allowanceSubtitle,
+            onClick = onOpenAllowances,
+            actionLabel = strings.blockerManage
+        )
+        if (allowanceLoadState !is AllowanceLoadState.Loaded) {
+            AllowanceLoadBanner(
+                loading = allowanceLoadState is AllowanceLoadState.Loading,
+                failed = allowanceLoadState is AllowanceLoadState.Failed,
+                onRetry = onRetryAllowances
+            )
+        }
+        EmergencyBreakAllowanceNotice()
         EnforcementRow(Icons.Default.Schedule, "Block Schedules",    scheduleCount,        "schedule${if (scheduleCount == 1) "" else "s"}")
         EnforcementRow(Icons.Default.Search,   "Keyword Blocker",    keywordCount,         "keyword${if (keywordCount == 1) "" else "s"}")
 

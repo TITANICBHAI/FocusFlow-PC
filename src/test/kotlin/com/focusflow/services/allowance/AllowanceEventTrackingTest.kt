@@ -145,6 +145,43 @@ class AllowanceEventTrackingTest {
     }
 
     @Test
+    fun endingEmergencyBreakFlushesTheOpenForegroundInterval() = runTest {
+        val clock = SchedulerClock(testScheduler)
+        val store = MemoryUsageStore(listOf(DailyAllowance("a.exe", "App A", 100)))
+        val events = FakeForegroundEvents()
+        val breakActive = MutableStateFlow(true)
+        val engine = AllowanceEngine(
+            AllowancePorts(
+                clock = clock,
+                foregroundSource = ForegroundSource { ForegroundInfo("a.exe", 11L) },
+                runningProcessSource = RunningProcessSource { emptyList() },
+                processKiller = ProcessKiller { },
+                breakState = object : BreakState {
+                    override val isActive = breakActive
+                },
+                usageStore = store,
+                blockedSetSink = BlockedSetSink { },
+                isWindows = true,
+                foregroundEvents = events
+            ),
+            backgroundScope
+        )
+
+        engine.start()
+        runCurrent()
+        events.emit("a.exe", 11L, clock.monoNs())
+        runCurrent()
+        advanceTimeBy(35_000L)
+        runCurrent()
+
+        breakActive.value = false
+        runCurrent()
+
+        assertEquals(35L, store.saved[TODAY]?.get("a.exe"))
+        engine.stop()
+    }
+
+    @Test
     fun diagnosticsIncludeForegroundAndReconciledHeartbeatMisses() = runTest {
         val clock = SchedulerClock(testScheduler)
         val store = MemoryUsageStore(listOf(DailyAllowance("a.exe", "App A", 100)))

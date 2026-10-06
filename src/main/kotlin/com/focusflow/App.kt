@@ -97,6 +97,8 @@ fun App() {
     var currentScreen         by remember { mutableStateOf(Screen.DASHBOARD) }
     var dashboardRefreshKey   by remember { mutableStateOf(0) }
     var focusPreloadTask by remember { mutableStateOf<Task?>(null) }
+    var blockerInitialTab by remember { mutableStateOf(AppBlockerTabs.ALWAYS_BLOCK) }
+    var blockerTabResetKey by remember { mutableStateOf(0) }
     var overlayVisible   by remember { mutableStateOf(false) }
     var overlayAppName   by remember { mutableStateOf("") }
     var showOnboarding      by remember { mutableStateOf(false) }
@@ -234,6 +236,8 @@ fun App() {
         val sessionState by FocusSessionService.state.collectAsState()
         val navigate: (Screen) -> Unit = { dest ->
             if (dest == Screen.DASHBOARD) dashboardRefreshKey++
+            blockerInitialTab = AppBlockerTabs.ALWAYS_BLOCK
+            if (dest == Screen.BLOCK_APPS) blockerTabResetKey++
             currentScreen = dest
         }
         CompositionLocalProvider(LocalNavigate provides navigate) {
@@ -297,10 +301,21 @@ fun App() {
                                         currentScreen = Screen.FOCUS
                                     }
                                 )
-                                Screen.FOCUS           -> FocusScreen(preloadTask = focusPreloadTask)
+                                Screen.FOCUS           -> FocusScreen(
+                                    preloadTask = focusPreloadTask,
+                                    onOpenAllowances = {
+                                        blockerInitialTab = AppBlockerTabs.DAILY_ALLOWANCE
+                                        currentScreen = Screen.BLOCK_APPS
+                                    }
+                                )
                                 Screen.FOCUS_LAUNCHER  -> FocusLauncherScreen()
                                 Screen.BLOCK_APPS      -> AppBlockerScreen(
-                                    onNavigateToBlockDefense = { currentScreen = Screen.BLOCK_DEFENSE }
+                                    onNavigateToBlockDefense = { currentScreen = Screen.BLOCK_DEFENSE },
+                                    initialTab = blockerInitialTab,
+                                    tabResetKey = blockerTabResetKey,
+                                    onInitialTabConsumed = {
+                                        blockerInitialTab = AppBlockerTabs.ALWAYS_BLOCK
+                                    }
                                 )
                                 Screen.STATS          -> StatsScreen()
                                 Screen.NOTES          -> DailyNotesScreen()

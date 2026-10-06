@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import com.focusflow.ui.components.FfVerticalScrollbar
+import com.focusflow.ui.components.AllowanceLoadBanner
+import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.InfoTooltip
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -55,6 +57,7 @@ import androidx.compose.ui.input.key.*
 import com.focusflow.ui.LocalNavigate
 import com.focusflow.data.models.Screen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,7 +79,9 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
     var showQuickAdd     by remember { mutableStateOf(false) }
     var showEndPinDialog by remember { mutableStateOf(false) }
     var userName         by remember { mutableStateOf("") }
-    var allowances       by remember { mutableStateOf(listOf<DailyAllowance>()) }
+    var allowanceState by remember {
+        mutableStateOf<AllowanceLoadState<List<DailyAllowance>>>(AllowanceLoadState.Loading())
+    }
     var blockedAttempts  by remember { mutableStateOf(0) }
     var insights         by remember { mutableStateOf(FocusInsightsService.Insights()) }
     var showWhatsNew     by remember { mutableStateOf(false) }
@@ -84,43 +89,65 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
     var showDonateDialog by remember { mutableStateOf(false) }
     val strings = LocalizationManager.strings
 
-    fun reload() {
-        val latestChangelogVersion = LATEST_CHANGELOG_VERSION
+    fun reloadAllowances() {
+        val previous = allowanceState.lastKnownValue()
+        allowanceState = AllowanceLoadState.Loading(previous)
         scope.launch {
-            val t   = withContext(Dispatchers.IO) { Database.getTasksForDate(today) }
-            val s   = withContext(Dispatchers.IO) { Database.getCurrentStreak() }
-            val ft  = withContext(Dispatchers.IO) { Database.getTotalFocusMinutesToday() }
-            val dg  = withContext(Dispatchers.IO) { Database.getSetting("daily_focus_goal")?.toIntOrNull() ?: 120 }
-            val un  = withContext(Dispatchers.IO) { Database.getSetting("user_name") ?: "" }
-            val al  = withContext(Dispatchers.IO) { Database.getDailyAllowances() }
-            val ba  = withContext(Dispatchers.IO) { Database.getTemptationsInRange(today.toString(), today.toString()) }
-            val lsv = withContext(Dispatchers.IO) { Database.getSetting("last_seen_version") }
-            val exeNoticeDismissed = withContext(Dispatchers.IO) {
-                Database.getSetting(EXE_PROTECTION_NOTICE_DISMISSED) == "true"
-            }
-            tasks           = t
-            streak          = s
-            focusToday      = ft
-            completedToday  = t.count { it.completed }
-            dailyGoal       = dg
-            userName        = un
-            allowances      = al
-            blockedAttempts = ba
-            val ins = withContext(Dispatchers.IO) { FocusInsightsService.compute() }
-            insights = ins
-            // Show "What's New" banner once for each release in the changelog.
-            if (latestChangelogVersion != null && lsv != latestChangelogVersion) {
+            allowanceState = loadAllowanceData(previous) {
                 withContext(Dispatchers.IO) {
-                    Database.setSetting("last_seen_version", latestChangelogVersion)
+                    check(Database.isReady) { "Database unavailable" }
+                    val loaded = Database.getDailyAllowances()
+                    DailyAllowanceTracker.reload().getOrThrow()
+                    loaded
                 }
-                showWhatsNew = true
             }
-            // Store/MSIX users are the audience for this one-time direct-installer
-            // notice. EXE/MSI users do not need to be told to switch channels.
-            showExeProtectionNotice =
-                InstallVariant.isWindows && InstallVariant.isMsix && !exeNoticeDismissed
         }
     }
+
+    fun reload() {
+        val latestChangelogVersion = LATEST_CHANGELOG_VERSION
+        reloadAllowances()
+        scope.launch {
+            try {
+                val t   = withContext(Dispatchers.IO) { Database.getTasksForDate(today) }
+                val s   = withContext(Dispatchers.IO) { Database.getCurrentStreak() }
+                val ft  = withContext(Dispatchers.IO) { Database.getTotalFocusMinutesToday() }
+                val dg  = withContext(Dispatchers.IO) { Database.getSetting("daily_focus_goal")?.toIntOrNull() ?: 120 }
+                val un  = withContext(Dispatchers.IO) { Database.getSetting("user_name") ?: "" }
+                val ba  = withContext(Dispatchers.IO) { Database.getTemptationsInRange(today.toString(), today.toString()) }
+                val lsv = withContext(Dispatchers.IO) { Database.getSetting("last_seen_version") }
+                val exeNoticeDismissed = withContext(Dispatchers.IO) {
+                    Database.getSetting(EXE_PROTECTION_NOTICE_DISMISSED) == "true"
+                }
+                tasks           = t
+                streak          = s
+                focusToday      = ft
+                completedToday  = t.count { it.completed }
+                dailyGoal       = dg
+                userName        = un
+                blockedAttempts = ba
+                val ins = withContext(Dispatchers.IO) { FocusInsightsService.compute() }
+                insights = ins
+                // Show "What's New" banner once for each release in the changelog.
+                if (latestChangelogVersion != null && lsv != latestChangelogVersion) {
+                    withContext(Dispatchers.IO) {
+                        Database.setSetting("last_seen_version", latestChangelogVersion)
+                    }
+                    showWhatsNew = true
+                }
+                // Store/MSIX users are the audience for this one-time direct-installer
+                // notice. EXE/MSI users do not need to be told to switch channels.
+                showExeProtectionNotice =
+                    InstallVariant.isWindows && InstallVariant.isMsix && !exeNoticeDismissed
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Allowance loading reports its own error and retry action.
+            }
+        }
+    }
+
+    val allowances = allowanceState.lastKnownValue().orEmpty()
 
     LaunchedEffect(refreshKey) { reload() }
 
@@ -420,6 +447,14 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
                     }
 
                     // ── Daily allowances usage (near stat cards, before tasks) ──
+                    if (allowanceState !is AllowanceLoadState.Loaded) {
+                        AllowanceLoadBanner(
+                            loading = allowanceState is AllowanceLoadState.Loading,
+                            failed = allowanceState is AllowanceLoadState.Failed,
+                            onRetry = ::reloadAllowances
+                        )
+                    }
+                    EmergencyBreakAllowanceNotice()
                     if (allowances.isNotEmpty()) {
                         Column(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -570,7 +605,7 @@ private fun AllowanceBarRow(
 ) {
     val usedMins  = DailyAllowanceTracker.getUsageMinutes(allowance.processName).toInt()
     val rawPct    = (usedMins.toFloat() / allowance.allowanceMinutes.coerceAtLeast(1)).coerceIn(0f, 1f)
-    val isBlocked = allowance.processName.lowercase() in DailyAllowanceTracker.blockedProcesses
+    val isBlocked = allowance.processName.trim().lowercase() in DailyAllowanceTracker.blockedProcesses
 
     val targetBarColor = when {
         isBlocked      -> Error.copy(alpha = 0.8f)
@@ -603,10 +638,19 @@ private fun AllowanceBarRow(
                             .background(Error.copy(alpha = 0.15f))
                             .padding(horizontal = 4.dp, vertical = 1.dp)
                     ) {
-                        Text(strings.dashBlockedTag, style = MaterialTheme.typography.bodySmall, color = Error, fontSize = 9.sp)
+                        Text(
+                            strings.blockerBlockedUntilMidnight,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Error,
+                            fontSize = 9.sp
+                        )
                     }
                 }
-                Text("${usedMins}m / ${allowance.allowanceMinutes}m",
+                val remainingMins = if (isBlocked) 0 else
+                    DailyAllowanceTracker.getRemainingMinutes(allowance).toInt()
+                Text(
+                    "${usedMins}m ${strings.blockerUsed} / ${allowance.allowanceMinutes}m · " +
+                        "${remainingMins}m ${strings.blockerLeft}",
                     style = MaterialTheme.typography.bodySmall, color = OnSurface2)
             }
         }

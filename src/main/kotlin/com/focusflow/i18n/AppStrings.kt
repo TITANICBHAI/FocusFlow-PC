@@ -545,6 +545,17 @@ data class AppStringsD(
     val blockerAllowanceDesc: String,
     val blockerAddDailyAllowance: String,
     val blockerBlockedUntilMidnight: String,
+    val blockerAllowanceSummaryFormat: String,
+    val blockerManage: String,
+    val blockerLoadFailed: String,
+    val blockerSaveFailed: String,
+    val blockerDeleteFailed: String,
+    val blockerRetry: String,
+    val blockerLoading: String,
+    val blockerChangesDisabled: String,
+    val blockerEmergencyBreakActive: String,
+    val blockerUsed: String,
+    val blockerLeft: String,
     val blockerLimit: String,
     val blockerNoDailyLimitsTitle: String,
     val blockerNoDailyLimitsBody: String,
@@ -1193,6 +1204,17 @@ class AppStrings(
     val blockerAllowanceDesc: String get() = appstringsd.blockerAllowanceDesc
     val blockerAddDailyAllowance: String get() = appstringsd.blockerAddDailyAllowance
     val blockerBlockedUntilMidnight: String get() = appstringsd.blockerBlockedUntilMidnight
+    val blockerAllowanceSummaryFormat: String get() = appstringsd.blockerAllowanceSummaryFormat
+    val blockerManage: String get() = appstringsd.blockerManage
+    val blockerLoadFailed: String get() = appstringsd.blockerLoadFailed
+    val blockerSaveFailed: String get() = appstringsd.blockerSaveFailed
+    val blockerDeleteFailed: String get() = appstringsd.blockerDeleteFailed
+    val blockerRetry: String get() = appstringsd.blockerRetry
+    val blockerLoading: String get() = appstringsd.blockerLoading
+    val blockerChangesDisabled: String get() = appstringsd.blockerChangesDisabled
+    val blockerEmergencyBreakActive: String get() = appstringsd.blockerEmergencyBreakActive
+    val blockerUsed: String get() = appstringsd.blockerUsed
+    val blockerLeft: String get() = appstringsd.blockerLeft
     val blockerLimit: String get() = appstringsd.blockerLimit
     val blockerNoDailyLimitsTitle: String get() = appstringsd.blockerNoDailyLimitsTitle
     val blockerNoDailyLimitsBody: String get() = appstringsd.blockerNoDailyLimitsBody

@@ -93,6 +93,15 @@ class AllowanceEngine(
             var wasActive = ports.breakState.isActive.value
             ports.breakState.isActive.collect { active ->
                 if (wasActive && !active) {
+                    if (eventTrackingEnabled) {
+                        runCatching {
+                            foregroundLedger
+                                .flush(ports.clock.monoNs(), ports.clock.today())
+                                .also(::applyLedgerUpdate)
+                        }.onFailure {
+                            warn("Could not flush foreground usage when Emergency Break ended", it)
+                        }
+                    }
                     runCatching { enforceNow() }
                         .onFailure { warn("Could not resume allowance enforcement after Emergency Break", it) }
                     flushUsageToStore(trackingDate)

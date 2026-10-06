@@ -1,7 +1,7 @@
 # FocusFlow Reliability Fixes — Batch Tracker
 
 **Source plan:** [FOCUSFLOW_IMPLEMENTATION_PLAN.md](FOCUSFLOW_IMPLEMENTATION_PLAN.md)  
-**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 audit found shared foundations but no ledger/event-tracking implementation, work now in progress.
+**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 implementation and Linux automated verification complete, with Windows manual acceptance pending.
 **Rule:** Work one batch at a time. Tick these items and the matching task checkboxes in the source plan as work is completed. Record evidence before marking a batch complete.
 
 ## Batch 0 — Evidence and spikes
@@ -159,31 +159,39 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 
 ## Batch 5 — Hybrid event-based tracking
 
-**Status:** In progress · **Plan section:** Phase 5
+**Status:** Implementation and Linux automated verification complete; Windows manual acceptance pending · **Plan section:** Phase 5
 
-**Audit — 2026-10-06:** Some groundwork is present: the allowance engine already has injectable clock/foreground ports, a 10-second safety tick, elapsed-gap protection, and the Windows `WinEventHook` already reports foreground changes to ProcessMonitor. However, allowance tracking does not subscribe to those events; it has no foreground ledger, hook listener registry, elevated/Store-host process resolver, lock/suspend integration, or allowance diagnostics. The legacy foreground helpers resolve only through `ProcessHandle`, and the hook drops unknown executable names before notifying ProcessMonitor. These shared foundations do not satisfy Phase 5.
+**Audit updated — 2026-10-06:** The current repository already contains most Phase 5 work that an earlier audit marked missing: foreground ledger and deterministic tests, nullable listener registry, elevated/Store-host resolver, event+heartbeat engine wiring, lock/suspend monitor, flush cadence, and diagnostics. That earlier audit/work-log entry is retained as history of the previous snapshot, not current status. This pass added a missing break-end flush for the still-open foreground interval. Display-off monitoring is intentionally omitted and the limitation is documented in all seven allowance-help translations.
 
-- [ ] Add pure foreground-ledger tests for switching, short sessions, null foreground, missed events, long gaps, and date rollover.
-- [ ] Add WinEventHook listeners without changing existing ProcessMonitor behavior.
-- [ ] Resolve foreground process names robustly, including elevated and Store-hosted apps.
-- [ ] Wire foreground events and heartbeat into the engine; retain/document the weaker non-Windows fallback.
-- [ ] Handle lock/unlock and suspend/resume; assess display-off support and document any omission.
-- [ ] Flush on app switch, break end, periodic interval, and stop.
-- [ ] Remove the old polling-credit path only after parity tests pass.
-- [ ] Add diagnostics for foreground process, credited usage, missed events, and discarded gaps.
-- [ ] Complete the Windows accuracy and limitation checks.
+- [x] Add pure foreground-ledger tests for switching, short sessions, null foreground, missed events, long gaps, and date rollover.
+- [x] Add WinEventHook listeners without changing existing ProcessMonitor behavior; unknown foreground events reach listeners.
+- [x] Resolve foreground process names robustly, including elevated and Store-hosted apps.
+- [x] Wire foreground events and heartbeat into the engine; retain and document the weaker non-Windows fallback.
+- [x] Handle lock/unlock and suspend/resume; assess display-off support and document the omission.
+- [x] Flush on app switch, break end, periodic interval, and stop.
+- [x] Remove the Windows polling-credit path after parity tests; retain only the non-Windows/event-unavailable fallback.
+- [x] Add diagnostics for foreground process, credited usage, missed events, and discarded gaps.
+- [ ] Complete the Windows foreground-accuracy and manual behavior checklist.
 
-**Acceptance:** Ledger/engine tests pass; Windows manual checklist passes; counting limitations are documented.
+**Acceptance:** Ledger/engine tests pass and counting limitations are documented. Windows manual acceptance is still pending; Phase 5 must not be represented as fully accepted until that checklist passes.
 
 ### Batch 5 work log — 2026-10-06
 
-- Began Phase 5 after auditing the live code. Existing ports and bounded polling are reusable; event accounting and all Phase 5-specific behaviors remain to be implemented.
-- Added failing-first pure ledger tests for app switching, sub-second intervals, null foreground, heartbeat correction, long/backwards gaps, and day rollover. The production ledger is not implemented yet; these tests are expected to fail to compile until the next change.
+- Began Phase 5 after an audit that found existing ports and bounded polling but did not find the Phase 5 event-accounting implementation in that snapshot.
+- Added failing-first pure ledger tests for app switching, sub-second intervals, null foreground, heartbeat correction, long/backwards gaps, and day rollover.
 - Batch 4's interactive Windows acceptance is still pending. The user explicitly asked to proceed with Batch 5; Windows-only verification remains a release blocker and will be recorded as blocked rather than inferred from Linux tests.
+- The initial audit/work-log assessment above was stale relative to the current source and is superseded by the verification update below.
+
+### Batch 5 verification update — 2026-10-06
+
+- Confirmed the ledger, listener hub, resolver, session-state monitor, engine integration, flush cadence, diagnostics, and seven-language limitation text were already present in the current source. The earlier “not implemented” audit was stale.
+- Added `endingEmergencyBreakFlushesTheOpenForegroundInterval`; before the fix it failed because only 30 of 35 seconds had been persisted. The engine now closes and credits the open foreground interval before resuming enforcement and persisting at break end.
+- Focused tests for `ForegroundLedgerTest`, `AllowanceEventTrackingTest`, `ForegroundEventHubTest`, `ProcessNameResolverTest`, and `SessionActivityGateTest` passed. Full `gradle test --no-daemon --console=plain` passed: 59 tests, 0 failures, 0 errors, 0 skipped. `git diff --check` passed.
+- No desktop app was launched, so the user's normal database was not opened. Windows-only accuracy and interaction checks remain unverified in this Linux environment.
 
 ## Batch 6 — Allowance UX
 
-**Status:** Not started · **Plan section:** Phase 6
+**Status:** In progress · **Plan section:** Phase 6
 
 - [ ] Add navigation from Focus to Blocker → Daily Allowance.
 - [ ] Show meaningful usage/status and unavailable/retry state instead of false zero values.
@@ -195,6 +203,11 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 - [ ] Verify a user can reach, edit, save, and recover from failed allowance operations.
 
 **Acceptance:** Focus navigation reaches the editor; database failures are visible; no spinner hangs or silent failed saves.
+
+### Batch 6 work log — 2026-10-06
+
+- Started Batch 6 at the user's direction. Current audit confirms the editor exists, but Focus has no navigation callback, load failures are silently swallowed or can leave the editor in an ambiguous empty state, write failures have no visible feedback, and Dashboard/Active/Profile can show stale or empty allowance data without a retry action.
+- Phase 4 already disables allowance mutations until DB and Global PIN state are known. Read-only startup is not shipped, so UI writes must continue to fail closed on `Database.isReady == false`; no read-only state will be invented.
 
 ## Batch 7 — Final verification and cleanup
 
@@ -219,4 +232,4 @@ Add an entry whenever work starts or finishes on a batch. Include evidence for c
 | 2026-10-06 | 2 | Audited existing tracker hotfix implementation; strengthened first-allowance and process-enumeration-gap regressions. | Targeted allowance-engine tests and full `gradle test --no-daemon` passed; `git diff --check` passed. Windows manual foreground-app verification unavailable in Linux. No user DB accessed. | Automated complete; manual check pending |
 | 2026-10-06 | 3 | Reconciled the stale “not started” tracker entry with existing startup/database code and tests. Fixed two compile errors in the startup gate so the project suite could run. Read-only startup remains intentionally absent pending Windows Spike A. | Full `gradle test --no-daemon`: 38 passed, 0 failed/errors; `git diff --check` passed. DB/guard/start-once cases are in `DatabaseTest`, `SingleInstanceGuardTest`, and `StartOnceTest`. Gate-to-service behavior was source-inspected but not exercised end-to-end. | Implementation present; integration/Windows evidence limited |
 | 2026-10-06 | 4 | Added failing-first tests, then implemented engine reconciliation, edit policy, Emergency Break pause/resume behavior, process-key normalization, v9 deduplication, and monotonic usage persistence. UI PIN wiring and DB-unavailable action disabling remain unfinished. | Four targeted regressions failed before fixes; full suite after implementation: 38 passed, 0 failed/errors; `git diff --check` passed. No Windows manual tests run. | In progress |
-| 2026-10-06 | 5 | Audited current source for existing hybrid-tracking work. Existing WinEventHook is enforcement-only; allowance accounting remains polling; no ledger/resolver/session-state/diagnostic implementation found. | Source search and inspection of `WinEventHook`, `ProcessMonitor`, `AllowanceEngine`, and `DailyAllowanceTracker`; no Phase 5 tests or implementation found. | Not started |
+| 2026-10-06 | 5 | Audited current source, completed the missing break-end ledger flush, and corrected the stale earlier audit. Linux-verifiable implementation is complete; Windows accuracy validation is still pending. | Five focused Phase 5 test classes passed; full suite: 59 passed, 0 failed/errors; `git diff --check` passed. No desktop app launched and no user DB opened. | Implementation/automated checks complete; Windows manual acceptance pending |

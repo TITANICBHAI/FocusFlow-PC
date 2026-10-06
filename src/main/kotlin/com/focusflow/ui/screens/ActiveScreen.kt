@@ -1,5 +1,7 @@
 package com.focusflow.ui.screens
 
+import com.focusflow.ui.components.AllowanceLoadBanner
+import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.FfVerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +29,7 @@ import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.*
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,7 +45,9 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
 
     var blockRules        by remember { mutableStateOf(listOf<BlockRule>()) }
     var schedules         by remember { mutableStateOf(listOf<BlockSchedule>()) }
-    var allowances        by remember { mutableStateOf(listOf<DailyAllowance>()) }
+    var allowanceState by remember {
+        mutableStateOf<AllowanceLoadState<List<DailyAllowance>>>(AllowanceLoadState.Loading())
+    }
     var todayFocusMins    by remember { mutableStateOf(0) }
     var todaySessions     by remember { mutableStateOf(0) }
     var todayCompleted    by remember { mutableStateOf(0) }
@@ -53,13 +58,28 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
     var keywordCount      by remember { mutableStateOf(0) }
     var tick              by remember { mutableStateOf(0) }
 
+    fun reloadAllowances() {
+        val previous = allowanceState.lastKnownValue()
+        allowanceState = AllowanceLoadState.Loading(previous)
+        scope.launch {
+            allowanceState = loadAllowanceData(previous) {
+                withContext(Dispatchers.IO) {
+                    check(Database.isReady) { "Database unavailable" }
+                    val loaded = Database.getDailyAllowances()
+                    DailyAllowanceTracker.reload().getOrThrow()
+                    loaded
+                }
+            }
+        }
+    }
+
     fun reload() {
+        reloadAllowances()
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     blockRules      = Database.getBlockRules()
                     schedules       = Database.getBlockSchedules()
-                    allowances      = Database.getDailyAllowances()
                     todayFocusMins  = Database.getTotalFocusMinutesToday()
                     currentStreak   = Database.getCurrentStreak()
                     alwaysOnEnabled = Database.getSetting("always_on_enforcement") == "true"
@@ -71,11 +91,15 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
                     todayCompleted  = tasks.count { it.completed }
                     todayTotal      = tasks.size
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 // DB temporarily unavailable — keep showing last known values
             }
         }
     }
+
+    val allowances = allowanceState.lastKnownValue().orEmpty()
 
     LaunchedEffect(Unit) {
         reload()
@@ -177,13 +201,33 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
             )
 
             // Daily allowances
-            val usingAllowance = allowances.isNotEmpty()
+            if (allowanceState !is AllowanceLoadState.Loaded) {
+                AllowanceLoadBanner(
+                    loading = allowanceState is AllowanceLoadState.Loading,
+                    failed = allowanceState is AllowanceLoadState.Failed,
+                    onRetry = ::reloadAllowances
+                )
+            }
+            EmergencyBreakAllowanceNotice()
+            val allowanceSummary = summarizeAllowanceUsage(
+                allowances,
+                DailyAllowanceTracker.blockedProcesses
+            )
+            val allowanceStatus = when (allowanceState) {
+                is AllowanceLoadState.Loading -> strings.blockerLoading
+                is AllowanceLoadState.Failed -> strings.blockerLoadFailed
+                is AllowanceLoadState.Loaded -> if (allowances.isEmpty()) {
+                    strings.blockerNoDailyLimitsTitle
+                } else {
+                    formatAllowanceSummary(strings.blockerAllowanceSummaryFormat, allowanceSummary)
+                }
+            }
+            val usingAllowance = allowanceState is AllowanceLoadState.Loaded && allowances.isNotEmpty()
             StatusCard(
                 icon   = Icons.Default.HourglassFull,
                 title  = strings.activeDailyAllowances,
                 color  = if (usingAllowance) Purple80 else OnSurface2,
-                status = if (allowances.isEmpty()) "No allowances configured — tap to add"
-                else "${allowances.size} app(s) with daily time limits",
+                status = allowanceStatus,
                 active = usingAllowance,
                 onClick = { onNavigate(Screen.BLOCK_APPS) }
             )

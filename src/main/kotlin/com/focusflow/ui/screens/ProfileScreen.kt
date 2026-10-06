@@ -1,5 +1,7 @@
 package com.focusflow.ui.screens
 
+import com.focusflow.ui.components.AllowanceLoadBanner
+import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.FfVerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,12 +24,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.data.models.DailyAllowance
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BackupService
 import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.WeeklyReportService
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -35,6 +39,9 @@ import kotlinx.coroutines.withContext
 fun ProfileScreen() {
     val strings = LocalizationManager.strings
     val scope = rememberCoroutineScope()
+    var allowanceUsageState by remember {
+        mutableStateOf<AllowanceLoadState<List<Pair<DailyAllowance, Long>>>>(AllowanceLoadState.Loading())
+    }
 
     val hasNewReport    by WeeklyReportService.hasNewReport.collectAsState()
 
@@ -52,27 +59,49 @@ fun ProfileScreen() {
     var totalTasks  by remember { mutableStateOf(0) }
     var last14Days  by remember { mutableStateOf(listOf<Pair<java.time.LocalDate, Boolean>>()) }
 
-    LaunchedEffect(Unit) {
-        userName  = withContext(Dispatchers.IO) { Database.getSetting("user_name") ?: "" }
-        val goal  = withContext(Dispatchers.IO) { Database.getSetting("daily_focus_goal")?.toIntOrNull() ?: 120 }
-        dailyGoal = goal
-
-        allTimeMins = withContext(Dispatchers.IO) { Database.getAllTimeFocusMinutes() }
-        allTimeSess = withContext(Dispatchers.IO) { Database.getAllTimeFocusSessions() }
-        bestStreak  = withContext(Dispatchers.IO) { Database.getBestStreak() }
-        curStreak   = withContext(Dispatchers.IO) { Database.getCurrentStreak() }
-        totalTasks  = withContext(Dispatchers.IO) { Database.getTasks().count { t -> t.completed } }
-
-        val today   = java.time.LocalDate.now()
-        val start14 = today.minusDays(13)
-        val sessions14 = withContext(Dispatchers.IO) {
-            Database.getSessionsInDateRange(start14, today)
+    fun reloadAllowanceUsage() {
+        val previous = allowanceUsageState.lastKnownValue()
+        allowanceUsageState = AllowanceLoadState.Loading(previous)
+        scope.launch {
+            allowanceUsageState = loadAllowanceData(previous) {
+                withContext(Dispatchers.IO) {
+                    check(Database.isReady) { "Database unavailable" }
+                    Database.getDailyAllowances()
+                    DailyAllowanceTracker.reload().getOrThrow()
+                    DailyAllowanceTracker.getUsageSummary()
+                }
+            }
         }
-        val byDate = sessions14.groupBy { it.startTime.toLocalDate() }
-        last14Days = (0..13).map { offset ->
-            val d = start14.plusDays(offset.toLong())
-            val mins = byDate[d]?.sumOf { it.actualMinutes } ?: 0
-            d to (mins >= goal)
+    }
+
+    LaunchedEffect(Unit) {
+        reloadAllowanceUsage()
+        try {
+            userName  = withContext(Dispatchers.IO) { Database.getSetting("user_name") ?: "" }
+            val goal  = withContext(Dispatchers.IO) { Database.getSetting("daily_focus_goal")?.toIntOrNull() ?: 120 }
+            dailyGoal = goal
+
+            allTimeMins = withContext(Dispatchers.IO) { Database.getAllTimeFocusMinutes() }
+            allTimeSess = withContext(Dispatchers.IO) { Database.getAllTimeFocusSessions() }
+            bestStreak  = withContext(Dispatchers.IO) { Database.getBestStreak() }
+            curStreak   = withContext(Dispatchers.IO) { Database.getCurrentStreak() }
+            totalTasks  = withContext(Dispatchers.IO) { Database.getTasks().count { t -> t.completed } }
+
+            val today   = java.time.LocalDate.now()
+            val start14 = today.minusDays(13)
+            val sessions14 = withContext(Dispatchers.IO) {
+                Database.getSessionsInDateRange(start14, today)
+            }
+            val byDate = sessions14.groupBy { it.startTime.toLocalDate() }
+            last14Days = (0..13).map { offset ->
+                val d = start14.plusDays(offset.toLong())
+                val mins = byDate[d]?.sumOf { it.actualMinutes } ?: 0
+                d to (mins >= goal)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // The allowance section has a separate visible load error and retry action.
         }
     }
 
@@ -256,7 +285,15 @@ fun ProfileScreen() {
         }
 
         // ── Today's app usage (daily allowances) ─────────────────────────────
-        val usageSummary = DailyAllowanceTracker.getUsageSummary()
+        val usageSummary = allowanceUsageState.lastKnownValue().orEmpty()
+        if (allowanceUsageState !is AllowanceLoadState.Loaded) {
+            AllowanceLoadBanner(
+                loading = allowanceUsageState is AllowanceLoadState.Loading,
+                failed = allowanceUsageState is AllowanceLoadState.Failed,
+                onRetry = ::reloadAllowanceUsage
+            )
+        }
+        EmergencyBreakAllowanceNotice()
         if (usageSummary.isNotEmpty()) {
             Column(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface2).padding(20.dp),
@@ -267,7 +304,7 @@ fun ProfileScreen() {
                     style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 usageSummary.forEach { (allowance, usedMins) ->
                     val pct       = (usedMins.toFloat() / allowance.allowanceMinutes.coerceAtLeast(1)).coerceIn(0f, 1f)
-                    val isBlocked = allowance.processName.lowercase() in DailyAllowanceTracker.blockedProcesses
+                    val isBlocked = allowance.processName.trim().lowercase() in DailyAllowanceTracker.blockedProcesses
                     val barColor: Color = when {
                         isBlocked   -> Error.copy(alpha = 0.8f)
                         pct > 0.75f -> Warning
@@ -284,12 +321,13 @@ fun ProfileScreen() {
                                     Box(modifier = Modifier.clip(RoundedCornerShape(3.dp))
                                         .background(Error.copy(alpha = 0.12f))
                                         .padding(horizontal = 5.dp, vertical = 1.dp)) {
-                                        Text(strings.profileBlockedTag, style = MaterialTheme.typography.bodySmall,
+                                    Text(strings.blockerBlockedUntilMidnight, style = MaterialTheme.typography.bodySmall,
                                             color = Error, fontSize = 9.sp)
                                     }
                                 }
-                                val remaining = DailyAllowanceTracker.getRemainingMinutes(allowance)
-                                Text("${usedMins}m used · ${remaining}m left",
+                                val remaining = if (isBlocked) 0L
+                                    else DailyAllowanceTracker.getRemainingMinutes(allowance)
+                                Text("${usedMins}m ${strings.blockerUsed} · ${remaining}m ${strings.blockerLeft}",
                                     style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                             }
                         }
