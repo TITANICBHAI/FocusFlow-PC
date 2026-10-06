@@ -1,5 +1,6 @@
 package com.focusflow.data
 
+import com.focusflow.data.models.DailyAllowance
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -285,6 +286,89 @@ class DatabaseTest {
             assertTrue(originalBytes.contentEquals(dbFile.readBytes()))
             assertTrue(tempDir.toFile().listFiles().orEmpty().none { ".broken_" in it.name })
             assertFalse(Database.isReady)
+        } finally {
+            Database.resetForTest()
+        }
+    }
+
+    @Test
+    fun migrationV9NormalizesAndDeduplicatesAllowanceAndUsageProcessNames() {
+        val dbFile = tempDir.resolve("v8-case-variants.db").toFile()
+        DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """
+                    CREATE TABLE daily_allowances (
+                        process_name TEXT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        allowance_minutes INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                statement.execute(
+                    """
+                    CREATE TABLE daily_usage (
+                        date TEXT NOT NULL,
+                        process_name TEXT NOT NULL,
+                        seconds_used INTEGER NOT NULL,
+                        PRIMARY KEY (date, process_name)
+                    )
+                    """.trimIndent()
+                )
+                statement.execute("INSERT INTO daily_allowances VALUES ('Discord.exe', 'Discord relaxed', 30)")
+                statement.execute("INSERT INTO daily_allowances VALUES ('discord.exe', 'Discord strict', 10)")
+                statement.execute("INSERT INTO daily_usage VALUES ('2026-01-02', 'Discord.exe', 45)")
+                statement.execute("INSERT INTO daily_usage VALUES ('2026-01-02', 'discord.exe', 90)")
+                statement.execute("PRAGMA user_version=8")
+            }
+        }
+
+        try {
+            assertIs<DbInitResult.Ready>(
+                Database.init(dbFile = dbFile, allowRecovery = false)
+            )
+
+            assertEquals(
+                listOf(DailyAllowance("discord.exe", "Discord strict", 10)),
+                Database.getDailyAllowances()
+            )
+            assertEquals(
+                mapOf("discord.exe" to 90L),
+                Database.getDailyUsage(java.time.LocalDate.of(2026, 1, 2))
+            )
+        } finally {
+            Database.resetForTest()
+        }
+    }
+
+    @Test
+    fun allowanceUpsertStoresTheNormalizedProcessKey() {
+        val dbFile = tempDir.resolve("normalized-allowance.db").toFile()
+        try {
+            assertIs<DbInitResult.Ready>(Database.init(dbFile = dbFile, allowRecovery = false))
+
+            Database.upsertDailyAllowance(DailyAllowance(" Discord.EXE ", "Discord", 30))
+
+            assertEquals(
+                listOf(DailyAllowance("discord.exe", "Discord", 30)),
+                Database.getDailyAllowances()
+            )
+        } finally {
+            Database.resetForTest()
+        }
+    }
+
+    @Test
+    fun staleDailyUsageUpsertCannotLowerThePersistedTotal() {
+        val dbFile = tempDir.resolve("monotonic-usage.db").toFile()
+        val date = java.time.LocalDate.of(2026, 1, 2)
+        try {
+            assertIs<DbInitResult.Ready>(Database.init(dbFile = dbFile, allowRecovery = false))
+
+            Database.upsertDailyUsage(date, "sample.exe", 120L)
+            Database.upsertDailyUsage(date, "sample.exe", 90L)
+
+            assertEquals(mapOf("sample.exe" to 120L), Database.getDailyUsage(date))
         } finally {
             Database.resetForTest()
         }

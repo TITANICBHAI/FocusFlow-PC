@@ -324,7 +324,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                         onRetry = { retryToken++ },
                         onOpenFolder = {
                             runCatching {
-                                if (Desktop.isDesktopSupported) {
+                                if (Desktop.isDesktopSupported()) {
                                     Desktop.getDesktop().open(databaseFile.parentFile)
                                 }
                             }

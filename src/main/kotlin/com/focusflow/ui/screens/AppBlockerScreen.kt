@@ -37,20 +37,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.data.normalizeProcessKey
 import com.focusflow.data.models.BlockRule
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.data.models.CustomBlockPreset
 import com.focusflow.data.models.DailyAllowance
 import com.focusflow.enforcement.AppIconExtractor
 import com.focusflow.enforcement.BlockPresets
+import com.focusflow.enforcement.InstallVariant
 import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.NetworkBlocker
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.ScannedApp
 import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.StandaloneBlockService
+import com.focusflow.services.allowance.AllowanceEditPolicy
+import com.focusflow.services.allowance.normalizeManualProcessName
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -918,28 +923,103 @@ private fun DailyAllowanceTab() {
     var allowances  by remember { mutableStateOf(listOf<DailyAllowance>()) }
     var scannedApps by remember { mutableStateOf(listOf<ScannedApp>()) }
     var isLoading   by remember { mutableStateOf(true) }
+    var databaseReady by remember { mutableStateOf(false) }
+    var globalPinStateLoaded by remember { mutableStateOf(false) }
+    var isMutating by remember { mutableStateOf(false) }
     var showPicker  by remember { mutableStateOf(false) }
     var editTarget  by remember { mutableStateOf<DailyAllowance?>(null) }
     var tick        by remember { mutableStateOf(0) }
     var globalPinSet by remember { mutableStateOf(false) }
     var showGlobalPinGate by remember { mutableStateOf(false) }
     var pendingGlobalAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingPinSubtitle by remember {
+        mutableStateOf("Enter your Global PIN to remove a daily allowance.")
+    }
+
+    fun canChangeAllowances(): Boolean {
+        if (!databaseReady || !globalPinStateLoaded) globalPinSet = false
+        return AllowanceEditPolicy.canMutate(databaseReady, globalPinStateLoaded, isMutating)
+    }
 
     fun reload() {
+        isLoading = true
+        globalPinStateLoaded = false
         scope.launch {
-            allowances  = withContext(Dispatchers.IO) { Database.getDailyAllowances() }
-            val running = withContext(Dispatchers.IO) { InstalledAppsScanner.getRunningApps() }
-            val curated = withContext(Dispatchers.IO) { InstalledAppsScanner.getCuratedApps() }
-            val runningNames = running.map { it.processName }.toSet()
-            scannedApps = running + curated.filter { it.processName !in runningNames }
-            isLoading   = false
-            DailyAllowanceTracker.reload()
-            globalPinSet = withContext(Dispatchers.IO) { com.focusflow.services.GlobalPin.isSet() }
+            try {
+                val ready = withContext(Dispatchers.IO) { Database.isReady }
+                databaseReady = ready
+                if (!ready) {
+                    globalPinSet = false
+                    return@launch
+                }
+
+                val loadedAllowances = withContext(Dispatchers.IO) { Database.getDailyAllowances() }
+                val running = withContext(Dispatchers.IO) { InstalledAppsScanner.getRunningApps() }
+                val curated = withContext(Dispatchers.IO) { InstalledAppsScanner.getCuratedApps() }
+                val runningNames = running.map { normalizeProcessKey(it.processName) }.toSet()
+                val loadedApps = running + curated.filter {
+                    normalizeProcessKey(it.processName) !in runningNames
+                }
+                withContext(Dispatchers.IO) { DailyAllowanceTracker.reload() }
+                val loadedPinState = withContext(Dispatchers.IO) {
+                    Database.isReady && com.focusflow.services.GlobalPin.isSet()
+                }
+
+                allowances = loadedAllowances
+                scannedApps = loadedApps
+                globalPinSet = loadedPinState
+                globalPinStateLoaded = true
+                databaseReady = withContext(Dispatchers.IO) { Database.isReady }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                databaseReady = withContext(Dispatchers.IO) { Database.isReady }
+                globalPinSet = false
+                globalPinStateLoaded = false
+            } finally {
+                isLoading = false
+            }
         }
     }
 
-    fun guardedRemoval(action: () -> Unit) {
-        if (globalPinSet) {
+    fun persistAllowance(allowance: DailyAllowance, onSaved: () -> Unit) {
+        if (!canChangeAllowances()) return
+        isMutating = true
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    check(Database.isReady) { "Database unavailable" }
+                    Database.upsertDailyAllowance(allowance)
+                    DailyAllowanceTracker.reload()
+                }
+                onSaved()
+                reload()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                databaseReady = false
+                globalPinSet = false
+                globalPinStateLoaded = false
+            } finally {
+                isMutating = false
+            }
+        }
+    }
+
+    fun requestAllowanceChange(
+        old: DailyAllowance?,
+        new: DailyAllowance?,
+        action: () -> Unit
+    ) {
+        if (!canChangeAllowances()) return
+        val change = AllowanceEditPolicy.classify(old, new)
+        if (AllowanceEditPolicy.shouldPromptForPin(old, new, globalPinSet)) {
+            pendingPinSubtitle = when {
+                new == null -> "Enter your Global PIN to remove a daily allowance."
+                change == com.focusflow.services.allowance.AllowanceEditChange.Loosen ->
+                    "Enter your Global PIN to raise this daily limit."
+                else -> "Enter your Global PIN to change this daily allowance."
+            }
             pendingGlobalAction = action
             showGlobalPinGate = true
         } else {
@@ -947,15 +1027,55 @@ private fun DailyAllowanceTab() {
         }
     }
 
+    fun deleteAllowance(allowance: DailyAllowance) {
+        requestAllowanceChange(allowance, null) {
+            if (!canChangeAllowances()) return@requestAllowanceChange
+            isMutating = true
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        check(Database.isReady) { "Database unavailable" }
+                        Database.deleteDailyAllowance(allowance.processName)
+                        DailyAllowanceTracker.reload()
+                    }
+                    reload()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    databaseReady = false
+                    globalPinSet = false
+                    globalPinStateLoaded = false
+                } finally {
+                    isMutating = false
+                }
+            }
+        }
+    }
+
     LaunchedEffect(Unit) { reload() }
 
     // Live tick every second to update progress bars
     LaunchedEffect(Unit) {
-        while (true) { delay(1000); tick++ }
+        while (true) {
+            delay(1000)
+            tick++
+            val wasReady = databaseReady
+            val ready = withContext(Dispatchers.IO) { Database.isReady }
+            databaseReady = ready
+            if (!ready) {
+                globalPinSet = false
+                globalPinStateLoaded = false
+            } else if (!wasReady && !globalPinStateLoaded && !isLoading) {
+                reload()
+            }
+        }
     }
 
     val blockedToday = remember(tick) { DailyAllowanceTracker.blockedProcesses }
-    val alreadyAllowed = remember(allowances) { allowances.map { it.processName.lowercase() }.toSet() }
+    val alreadyAllowed = remember(allowances) {
+        allowances.map { normalizeProcessKey(it.processName) }.toSet()
+    }
+    val changesEnabled = AllowanceEditPolicy.canMutate(databaseReady, globalPinStateLoaded, isMutating)
 
     val listState = rememberLazyListState()
     Box(modifier = Modifier.fillMaxSize()) {
@@ -987,10 +1107,21 @@ private fun DailyAllowanceTab() {
                 }
             }
 
+            if (!databaseReady || !globalPinStateLoaded) {
+                item {
+                    Text(
+                        "Database or PIN state unavailable; allowance changes are disabled.",
+                        color = Error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+
             // ── Add button ──────────────────────────────────────────────────
             item {
                 Button(
-                    onClick = { showPicker = true },
+                    onClick = { if (canChangeAllowances()) showPicker = true },
+                    enabled = changesEnabled,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Warning.copy(alpha = 0.85f)),
                     shape = RoundedCornerShape(12.dp)
@@ -1009,9 +1140,9 @@ private fun DailyAllowanceTab() {
                         contentAlignment = Alignment.Center
                     ) { CircularProgressIndicator(color = Warning) }
                 }
-            } else if (allowances.isEmpty()) {
+            } else if (allowances.isEmpty() && databaseReady && globalPinStateLoaded) {
                 item { EmptyAllowanceState() }
-            } else {
+            } else if (allowances.isNotEmpty()) {
                 item {
                     Text(
                         "${allowances.size} app${if (allowances.size == 1) "" else "s"} with daily limits",
@@ -1031,25 +1162,18 @@ private fun DailyAllowanceTab() {
                     val remaining = remember(tick) {
                         DailyAllowanceTracker.getRemainingMinutes(allowance)
                     }
-                    val isBlockedToday = allowance.processName.lowercase() in blockedToday
+                    val isBlockedToday = normalizeProcessKey(allowance.processName) in blockedToday
 
                     AllowanceCard(
                         allowance      = allowance,
                         usedMinutes    = usedMinutes,
                         remainingMinutes = remaining,
                         isBlockedToday = isBlockedToday,
-                        onEdit         = { editTarget = allowance },
-                        onDelete       = {
-                            guardedRemoval {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        Database.deleteDailyAllowance(allowance.processName)
-                                    }
-                                    DailyAllowanceTracker.reload()
-                                    reload()
-                                }
-                            }
-                        }
+                        changesEnabled = changesEnabled,
+                        onEdit         = {
+                            if (canChangeAllowances()) editTarget = allowance
+                        },
+                        onDelete       = { deleteAllowance(allowance) }
                     )
                 }
             }
@@ -1066,17 +1190,19 @@ private fun DailyAllowanceTab() {
         AllowancePickerDialog(
             scannedApps    = scannedApps,
             alreadyAllowed = alreadyAllowed,
+            changesEnabled = changesEnabled,
             onDismiss      = { showPicker = false },
             onConfirm      = { processName, displayName, minutes ->
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        Database.upsertDailyAllowance(
-                            DailyAllowance(processName, displayName, minutes)
-                        )
-                    }
-                    DailyAllowanceTracker.reload()
-                    showPicker = false
-                    reload()
+                val existing = allowances.firstOrNull {
+                    normalizeProcessKey(it.processName) == normalizeProcessKey(processName)
+                }
+                val updated = DailyAllowance(
+                    processName = existing?.processName ?: normalizeProcessKey(processName),
+                    displayName = displayName,
+                    allowanceMinutes = minutes
+                )
+                requestAllowanceChange(existing, updated) {
+                    persistAllowance(updated) { showPicker = false }
                 }
             }
         )
@@ -1086,17 +1212,12 @@ private fun DailyAllowanceTab() {
     editTarget?.let { target ->
         EditAllowanceDialog(
             allowance = target,
+            changesEnabled = changesEnabled,
             onDismiss = { editTarget = null },
             onSave    = { newMinutes ->
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        Database.upsertDailyAllowance(
-                            target.copy(allowanceMinutes = newMinutes)
-                        )
-                    }
-                    DailyAllowanceTracker.reload()
-                    editTarget = null
-                    reload()
+                val updated = target.copy(allowanceMinutes = newMinutes)
+                requestAllowanceChange(target, updated) {
+                    persistAllowance(updated) { editTarget = null }
                 }
             }
         )
@@ -1105,7 +1226,7 @@ private fun DailyAllowanceTab() {
     if (showGlobalPinGate) {
         PinGateDialog(
             title = "Global PIN required",
-            subtitle = "Enter your Global PIN to remove a daily allowance.",
+            subtitle = pendingPinSubtitle,
             allowReset = false,
             onSuccess = {
                 showGlobalPinGate = false
@@ -1126,6 +1247,7 @@ private fun AllowanceCard(
     usedMinutes:      Long,
     remainingMinutes: Long,
     isBlockedToday:   Boolean,
+    changesEnabled:   Boolean,
     onEdit:           () -> Unit,
     onDelete:         () -> Unit
 ) {
@@ -1202,12 +1324,12 @@ private fun AllowanceCard(
             }
 
             ShortcutTooltip("Edit allowance") {
-                IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onEdit, enabled = changesEnabled, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Edit, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
                 }
             }
             ShortcutTooltip("Delete allowance") {
-                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onDelete, enabled = changesEnabled, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.DeleteOutline, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
                 }
             }
@@ -1289,6 +1411,7 @@ private fun EmptyAllowanceState() {
 private fun AllowancePickerDialog(
     scannedApps:    List<ScannedApp>,
     alreadyAllowed: Set<String>,
+    changesEnabled: Boolean,
     onDismiss:      () -> Unit,
     onConfirm:      (processName: String, displayName: String, minutes: Int) -> Unit
 ) {
@@ -1425,8 +1548,10 @@ private fun AllowancePickerDialog(
                                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                         keyboardActions = KeyboardActions(onDone = {
                                             if (manualExe.isNotBlank()) {
-                                                val proc = manualExe.trim().lowercase()
-                                                    .let { if (it.endsWith(".exe")) it else "$it.exe" }
+                                                val proc = normalizeManualProcessName(
+                                                    manualExe,
+                                                    isWindows = InstallVariant.isWindows
+                                                )
                                                 pickedApp = ScannedApp(
                                                     processName = proc,
                                                     displayName = InstalledAppsScanner.friendlyNameFor(proc),
@@ -1445,8 +1570,10 @@ private fun AllowancePickerDialog(
                                     TextButton(
                                         onClick = {
                                             if (manualExe.isNotBlank()) {
-                                                val proc = manualExe.trim().lowercase()
-                                                    .let { if (it.endsWith(".exe")) it else "$it.exe" }
+                                                val proc = normalizeManualProcessName(
+                                                    manualExe,
+                                                    isWindows = InstallVariant.isWindows
+                                                )
                                                 pickedApp = ScannedApp(
                                                     processName = proc,
                                                     displayName = InstalledAppsScanner.friendlyNameFor(proc),
@@ -1638,6 +1765,7 @@ private fun AllowancePickerDialog(
                             onConfirm(app.processName, app.displayName, selectedMinutes)
                         }
                     },
+                    enabled = changesEnabled,
                     colors = ButtonDefaults.buttonColors(containerColor = Warning.copy(alpha = 0.85f))
                 ) { Text(strings.blockerSetLimit) }
             }
@@ -1659,6 +1787,7 @@ private fun AllowancePickerDialog(
 @Composable
 private fun EditAllowanceDialog(
     allowance: DailyAllowance,
+    changesEnabled: Boolean,
     onDismiss: () -> Unit,
     onSave:    (Int) -> Unit
 ) {
@@ -1703,6 +1832,7 @@ private fun EditAllowanceDialog(
                             FilterChip(
                                 selected = selectedMinutes == mins && customInput.isBlank(),
                                 onClick  = { selectedMinutes = mins; customInput = "" },
+                                enabled = changesEnabled,
                                 label    = {
                                     Text(
                                         label,
@@ -1720,6 +1850,7 @@ private fun EditAllowanceDialog(
                 }
                 OutlinedTextField(
                     value = customInput,
+                    enabled = changesEnabled,
                     onValueChange = { raw ->
                         customInput = raw
                         val parsed = raw.trim().toIntOrNull()
@@ -1746,7 +1877,8 @@ private fun EditAllowanceDialog(
         confirmButton = {
             Button(
                 onClick = { onSave(selectedMinutes) },
-                enabled = customInput.isBlank() || (customInput.trim().toIntOrNull()?.let { it in 1..1440 } == true),
+                enabled = changesEnabled &&
+                    (customInput.isBlank() || (customInput.trim().toIntOrNull()?.let { it in 1..1440 } == true)),
                 colors  = ButtonDefaults.buttonColors(containerColor = Warning.copy(alpha = 0.85f))
             ) { Text(LocalizationManager.strings.btnSave) }
         },

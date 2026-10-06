@@ -349,6 +349,142 @@ class AllowanceEngineTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
+    fun raisingAllowanceReconcilesAndUnblocksTheProcessImmediately() = runTest {
+        val store = FakeUsageStore(listOf(DailyAllowance("discord.exe", "Discord", 1))).apply {
+            savedUsage[TODAY] = mutableMapOf("discord.exe" to 90L)
+        }
+        val blockedSets = mutableListOf<Set<String>>()
+        val engine = createEngine(
+            backgroundScope,
+            store,
+            FixedClock,
+            blockedSet = BlockedSetSink { blockedSets += it }
+        )
+
+        engine.start()
+        assertEquals(setOf("discord.exe"), engine.blockedProcesses)
+
+        store.allowanceList = listOf(DailyAllowance("discord.exe", "Discord", 2))
+        engine.reload()
+
+        assertEquals(emptySet(), engine.blockedProcesses)
+        assertEquals(emptySet(), blockedSets.last())
+        engine.stop()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun deletingAllowanceRemovesItsExistingBlockImmediately() = runTest {
+        val store = FakeUsageStore(listOf(DailyAllowance("discord.exe", "Discord", 1))).apply {
+            savedUsage[TODAY] = mutableMapOf("discord.exe" to 90L)
+        }
+        val blockedSets = mutableListOf<Set<String>>()
+        val engine = createEngine(
+            backgroundScope,
+            store,
+            FixedClock,
+            blockedSet = BlockedSetSink { blockedSets += it }
+        )
+
+        engine.start()
+        assertEquals(setOf("discord.exe"), engine.blockedProcesses)
+
+        store.allowanceList = emptyList()
+        engine.reload()
+
+        assertEquals(emptySet(), engine.blockedProcesses)
+        assertEquals(emptySet(), blockedSets.last())
+        engine.stop()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun failedReloadReturnsFailureAndKeepsTheLastKnownAllowances() = runTest {
+        val original = DailyAllowance("discord.exe", "Discord", 30)
+        val store = FakeUsageStore(listOf(original))
+        val engine = createEngine(backgroundScope, store, FixedClock)
+        engine.start()
+
+        store.failNextAllowanceReads = 1
+        val result = engine.reload()
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf(original to 0L), engine.getUsageSummary())
+        engine.stop()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun loweringLimitBlocksImmediatelyButWaitsForEnforcementTickToKill() = runTest {
+        val store = FakeUsageStore(listOf(DailyAllowance("discord.exe", "Discord", 10))).apply {
+            savedUsage[TODAY] = mutableMapOf("discord.exe" to 120L)
+        }
+        val kills = AtomicInteger()
+        val engine = createEngine(
+            backgroundScope,
+            store,
+            FixedClock,
+            running = RunningProcessSource { listOf(RunningProcess("discord.exe", 42L)) },
+            killer = ProcessKiller { kills.incrementAndGet() }
+        )
+
+        engine.start()
+        assertEquals(emptySet(), engine.blockedProcesses)
+        assertEquals(0, kills.get())
+
+        store.allowanceList = listOf(DailyAllowance("discord.exe", "Discord", 1))
+        engine.reload()
+
+        assertEquals(setOf("discord.exe"), engine.blockedProcesses)
+        assertEquals(0, kills.get(), "Reload must reconcile state but not kill on the caller's thread")
+
+        engine.tickForTest()
+        assertTrue(kills.get() > 0, "The next enforcement tick must kill a newly blocked running app")
+        engine.stop()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun emergencyBreakKeepsCountingAndEnforcesImmediatelyWhenItEnds() = runTest {
+        val clock = MutableClock(TODAY, 1_000L, 1_000_000L)
+        val breakFlow = MutableStateFlow(true)
+        val allowance = DailyAllowance("discord.exe", "Discord", 1)
+        val store = FakeUsageStore(listOf(allowance))
+        val kills = AtomicInteger()
+        val notifications = mutableListOf<DailyAllowance>()
+        val engine = createEngine(
+            backgroundScope,
+            store,
+            clock,
+            running = RunningProcessSource { listOf(RunningProcess("discord.exe", 42L)) },
+            killer = ProcessKiller { kills.incrementAndGet() },
+            breakState = breakFlow,
+            notifier = LimitNotifier { notifications += it }
+        )
+
+        engine.start()
+        runCurrent()
+        repeat(7) {
+            clock.advanceBoth(10_000L)
+            engine.tickForTest()
+        }
+
+        assertTrue(engine.getUsageMinutes("discord.exe") >= 1L, "Usage must keep counting during a break")
+        assertEquals(setOf("discord.exe"), engine.blockedProcesses)
+        assertEquals(0, kills.get(), "Allowance-blocked apps must not be killed during a break")
+        assertEquals(emptyList(), notifications, "The limit notification must wait until the break ends")
+
+        breakFlow.value = false
+        runCurrent()
+
+        assertTrue(kills.get() > 0, "A blocked running app must be enforced as soon as the break ends")
+        assertEquals(listOf(allowance), notifications)
+        assertEquals(setOf("discord.exe"), engine.blockedProcesses, "Ending a break must not clear the block")
+        engine.stop()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
     fun loopRetriesKillerAfterARecoverableFailure() = runTest {
         val killerCalls = AtomicInteger()
         val unhandled = mutableListOf<Throwable>()
@@ -384,7 +520,9 @@ class AllowanceEngineTest {
         foreground: ForegroundSource = ForegroundSource { null },
         killer: ProcessKiller = ProcessKiller { },
         isWindows: Boolean = false,
-        blockedSet: BlockedSetSink = BlockedSetSink { }
+        blockedSet: BlockedSetSink = BlockedSetSink { },
+        breakState: MutableStateFlow<Boolean> = MutableStateFlow(false),
+        notifier: LimitNotifier = LimitNotifier { }
     ) = AllowanceEngine(
         AllowancePorts(
             clock = clock,
@@ -392,11 +530,12 @@ class AllowanceEngineTest {
             runningProcessSource = running,
             processKiller = killer,
             breakState = object : BreakState {
-                override val isActive = MutableStateFlow(false)
+                override val isActive = breakState
             },
             usageStore = store,
             blockedSetSink = blockedSet,
-            isWindows = isWindows
+            isWindows = isWindows,
+            limitNotifier = notifier
         ),
         scope
     )
@@ -438,14 +577,20 @@ class AllowanceEngineTest {
         var allowanceReads = 0
         var usageReads = 0
         var failNextUpserts = 0
+        var failNextAllowanceReads = 0
         var upsertAttempts = 0
         val deleteBeforeDates = mutableListOf<LocalDate>()
         val savedUsage = mutableMapOf<LocalDate, MutableMap<String, Long>>()
 
         override fun isAvailable() = available
 
-        override fun allowances() = allowanceList.also {
+        override fun allowances(): List<DailyAllowance> {
             allowanceReads++
+            if (failNextAllowanceReads > 0) {
+                failNextAllowanceReads--
+                error("temporary allowance read failure")
+            }
+            return allowanceList
         }
 
         override fun usage(date: LocalDate) = savedUsage[date].orEmpty().toMap().also {

@@ -68,5 +68,10 @@ data class AllowancePorts(
     val usageStore: UsageStore,
     val blockedSetSink: BlockedSetSink,
     val isWindows: Boolean,
-    val failureLogger: FailureLogger = FailureLogger { _, _, _ -> }
+    val failureLogger: FailureLogger = FailureLogger { _, _, _ -> },
+    val limitNotifier: LimitNotifier = LimitNotifier { }
 )
+
+fun interface LimitNotifier {
+    fun dailyLimitReached(allowance: DailyAllowance)
+}

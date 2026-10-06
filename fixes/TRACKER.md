@@ -1,7 +1,7 @@
 # FocusFlow Reliability Fixes — Batch Tracker
 
 **Source plan:** [FOCUSFLOW_IMPLEMENTATION_PLAN.md](FOCUSFLOW_IMPLEMENTATION_PLAN.md)  
-**Overall status:** Batch 1 complete — Batch 0 Windows-only limitations remain recorded
+**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 not started.
 **Rule:** Work one batch at a time. Tick these items and the matching task checkboxes in the source plan as work is completed. Record evidence before marking a batch complete.
 
 ## Batch 0 — Evidence and spikes
@@ -103,39 +103,65 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 
 ## Batch 3 — Database startup safety and recovery gate
 
-**Status:** Not started · **Plan section:** Phase 3
+**Status:** Implementation present; core automated checks pass; end-to-end and Windows evidence remain limited · **Plan section:** Phase 3
 
-- [ ] Add deterministic busy-lock and failure-classification tests.
-- [ ] Replace uninitialized connection state with explicit unavailable/readiness state.
-- [ ] Publish the connection only after migrations succeed; close failed local connections.
-- [ ] Make initialization synchronized/idempotent, retry BUSY/LOCKED within policy, and expose startup state.
-- [ ] Restrict recovery to confirmed corruption; preserve and verify the complete DB/WAL/SHM set before moving originals.
-- [ ] Prevent the uninstall wizard from running recovery.
-- [ ] Implement read-only mode only if Phase 0 spike supports it.
-- [ ] Add a single-instance guard before startup side effects.
-- [ ] Move startup side effects out of Compose recomposition and run bootstrap only once after database readiness.
-- [ ] Add the retryable startup gate and guard services from running before readiness.
-- [ ] Verify retry recovery, second-instance behavior, migration failure, data preservation, and wizard behavior.
+- [x] Add deterministic busy-lock and failure-classification tests.
+- [x] Replace uninitialized connection state with explicit unavailable/readiness state.
+- [x] Publish the connection only after migrations succeed; close failed local connections.
+- [x] Make initialization synchronized/idempotent, retry BUSY/LOCKED within policy, and expose startup state.
+- [x] Restrict recovery to confirmed corruption; preserve and verify the complete DB/WAL/SHM set before moving originals.
+- [x] Prevent the uninstall wizard from running recovery.
+- [ ] **NOT SHIPPED — Windows Spike A is still no-go.** Read-only startup remains disabled pending Windows WAL validation.
+- [x] Add a single-instance guard before startup side effects.
+- [x] Move startup side effects out of Compose recomposition and run bootstrap only once after database readiness.
+- [x] Add the retryable startup gate and guard services from running before readiness.
+- [x] Verify DB retry, second-instance handoff, migration failure, corruption preservation, and no-recovery initialization.
 
-**Acceptance:** Locked DB causes no data loss, no uninitialized-connection crash, and no dependent services running with an unavailable database; releasing the lock allows startup to continue.
+**Acceptance status:** Core source and automated DB/guard tests support the locked-DB safety path. The Main.kt gate-to-service path is implemented and retries automatically, but has no dedicated end-to-end UI test. Windows-only checks and Spike A/B remain blocked; do not claim those as verified.
+
+### Batch 3 evidence — 2026-10-06 repository audit
+
+- `DatabaseTest` covers typed unavailable access, SQLite failure classification, unchanged DB files on BUSY, successful initialization after lock release, migration failure without publishing a closed connection, verified DB/WAL/SHM recovery copies, copy failure preserving originals, and recovery-disabled initialization.
+- `SingleInstanceGuardTest` covers SHOW handoff, lock release, and an unresponsive holder. `StartOnceTest` covers once-only bootstrap and remembered failures.
+- `Main.kt` acquires the instance guard before pre-DB side effects, runs DB initialization in a `LaunchedEffect` on IO, retries BUSY after 10 seconds, and calls `StartupBootstrap.startServices()` only on Ready. `StartupBootstrap` wraps service startup in `StartOnce`.
+- Full suite currently passes 38 tests. The app-level gate-to-service transition was verified by source inspection, not an end-to-end UI test. Windows checks remain unavailable in this Linux environment.
 
 ## Batch 4 — Allowance state, PIN policy, and Emergency Break
 
-**Status:** Not started · **Plan section:** Phase 4
+**Status:** Implementation and automated checks complete; interactive UI/PIN and Windows acceptance pending · **Plan section:** Phase 4
 
-- [ ] Add failing reconciliation, edit-policy, and break-behavior tests.
-- [ ] Reconcile tracked allowances and blocked processes after every successful reload/change.
-- [ ] Implement shared allowance edit classification and Global PIN policy.
-- [ ] Make add/edit/delete unavailable while the database is unavailable or read-only.
-- [ ] Normalize process keys and migrate case-variant allowance/usage rows safely.
-- [ ] Make persisted usage updates resistant to stale writers.
-- [ ] Verify limit raise/lower/delete, break, and migration behavior.
+- [x] Add failing reconciliation, edit-policy, and break-behavior tests before the behavior changes.
+- [x] Reconcile tracked allowances and blocked processes after every successful reload/change.
+- [x] Implement pure allowance edit classification and PIN-required decision.
+- [x] Disable allowance mutations until database readiness and Global PIN state are known; fail closed on unavailable database/write errors. No `Database.mode`/read-only mode is exposed (read-only startup remains no-go).
+- [x] Normalize process keys and migrate case-variant allowance/usage rows safely.
+- [x] Make persisted usage updates resistant to stale writers.
+- [x] Wire the PIN policy into edit-save, delete, and case-insensitive picker collisions; normalize manual entry and append `.exe` only on Windows.
+- [ ] Verify the complete UI/PIN flow and Windows manual behavior.
 
-**Acceptance:** Raising/deleting follows the PIN policy, blocked state updates immediately, and Emergency Break pauses kills without clearing blocks or stopping usage counting.
+**Acceptance status:** The engine, policy, database changes, editor PIN routing, and fail-closed DB readiness guard are implemented; the full suite passes. Interactive UI/PIN behavior and the Windows blocking/Emergency Break checklist have not been run here, so Batch 4 is not accepted and Batch 5 must not start yet.
+
+### Batch 4 evidence — 2026-10-06
+
+- Four engine regressions were run before fixes and failed for raise/delete reconciliation, lowering a limit, and Emergency Break enforcement.
+- Added tests for failed reload retaining the previous allowance list, deferred limit notification during a break, and preserving the block after the break.
+- Added pure edit-policy classification/PIN tests and SQLite tests for v9 case-variant merging, normalized upsert keys, and non-decreasing usage totals.
+- `gradle test --no-daemon`: 38 tests passed, 0 failures/errors. `git diff --check` passed.
+- Initial audit identified missing `AppBlockerScreen` PIN-on-save/delete wiring and DB-unavailable disabling; the follow-up below records their implementation. Windows manual acceptance remains pending.
+
+### Batch 4 implementation follow-up — 2026-10-06
+
+- `DailyAllowanceTab` classifies changes through the pure policy: adding and tightening remain ungated; raising an existing limit and deleting require the configured Global PIN. PIN is requested on Save/delete, not when opening Edit. Picker collisions compare normalized process names and cannot silently replace a higher allowance.
+- Add/Edit/Delete controls stay disabled until the database is ready and the Global PIN state has loaded. Each write rechecks DB readiness on IO; errors fail closed. `Database.mode`/read-only is not implemented or exposed, consistent with the Phase 0 read-only no-go; any future read-only state must be added to this guard.
+- Manual picker process names are normalized and receive `.exe` only on Windows. Unit coverage now includes gate decisions, DB/PIN readiness gating, process-name case/whitespace, and the platform-specific suffix.
+- `gradle test --no-daemon`: 42 tests passed, 0 failures/errors. `git diff --check` passed.
+- The configured desktop workflow was not launched because it starts FocusFlow against the normal user profile/database. No user database was opened. Interactive Windows app-blocking, PIN, and Emergency Break checks remain pending in a Windows environment.
 
 ## Batch 5 — Hybrid event-based tracking
 
 **Status:** Not started · **Plan section:** Phase 5
+
+**Audit — 2026-10-06:** No Phase 5 implementation is present. The existing `WinEventHook` serves ProcessMonitor enforcement; allowance accounting still uses the polling engine. There is no ledger, allowance listener registry, robust name resolver, session lock/suspend listener, event-driven allowance wiring, or Phase 5 diagnostics. Shared Phase 1/2 foundations do not satisfy these tasks. Start only after Batch 4 acceptance.
 
 - [ ] Add pure foreground-ledger tests for switching, short sessions, null foreground, missed events, long gaps, and date rollover.
 - [ ] Add WinEventHook listeners without changing existing ProcessMonitor behavior.
@@ -185,3 +211,6 @@ Add an entry whenever work starts or finishes on a batch. Include evidence for c
 | 2026-10-06 | 0 | Temporary diagnostics added, exercised in isolated homes, then removed. H3 confirmed under forced recomposition. Owner confirmed full logs are unavailable; supplied exception excerpt confirms the startup failure chain. Safe Windows inspection steps and ranked causes documented. Linux read-only WAL smoke test passed; Windows-specific checks remain no-go until validated. | `gradle compileKotlin` passed with instrumentation; isolated Compose run showed four init calls; scratch sqlite-jdbc 3.47.1.0 exclusive-lock test returned code 5 after 10,027 ms with unchanged DB hash; Linux read-only WAL reader passed; excerpt matches BUSY-at-WAL then uninitialized tracker connection. | Complete with limitations |
 | 2026-10-06 | 1 | Added test infrastructure, injectable Database initialization/reset, tracker ports, and the `AllowanceEngine`; kept `DailyAllowanceTracker` as the production facade. Added deterministic process enumeration seam after Nix's `sleep` alias could not be identified reliably. | `gradle test --no-daemon`: 3 passed; isolated app launch with scratch DB recorded 41 seconds of `python3.13` allowance usage; `git diff --check` passed. No user DB accessed. | Complete |
 | 2026-10-06 | 2 | Audited existing tracker hotfix implementation; strengthened first-allowance and process-enumeration-gap regressions. | Targeted allowance-engine tests and full `gradle test --no-daemon` passed; `git diff --check` passed. Windows manual foreground-app verification unavailable in Linux. No user DB accessed. | Automated complete; manual check pending |
+| 2026-10-06 | 3 | Reconciled the stale “not started” tracker entry with existing startup/database code and tests. Fixed two compile errors in the startup gate so the project suite could run. Read-only startup remains intentionally absent pending Windows Spike A. | Full `gradle test --no-daemon`: 38 passed, 0 failed/errors; `git diff --check` passed. DB/guard/start-once cases are in `DatabaseTest`, `SingleInstanceGuardTest`, and `StartOnceTest`. Gate-to-service behavior was source-inspected but not exercised end-to-end. | Implementation present; integration/Windows evidence limited |
+| 2026-10-06 | 4 | Added failing-first tests, then implemented engine reconciliation, edit policy, Emergency Break pause/resume behavior, process-key normalization, v9 deduplication, and monotonic usage persistence. UI PIN wiring and DB-unavailable action disabling remain unfinished. | Four targeted regressions failed before fixes; full suite after implementation: 38 passed, 0 failed/errors; `git diff --check` passed. No Windows manual tests run. | In progress |
+| 2026-10-06 | 5 | Audited current source for existing hybrid-tracking work. Existing WinEventHook is enforcement-only; allowance accounting remains polling; no ledger/resolver/session-state/diagnostic implementation found. | Source search and inspection of `WinEventHook`, `ProcessMonitor`, `AllowanceEngine`, and `DailyAllowanceTracker`; no Phase 5 tests or implementation found. | Not started |

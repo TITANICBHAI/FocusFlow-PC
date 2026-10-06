@@ -15,6 +15,7 @@ import com.focusflow.services.allowance.Clock
 import com.focusflow.services.allowance.ForegroundInfo
 import com.focusflow.services.allowance.ForegroundSource
 import com.focusflow.services.allowance.FailureLogger
+import com.focusflow.services.allowance.LimitNotifier
 import com.focusflow.services.allowance.ProcessKiller
 import com.focusflow.services.allowance.RunningProcess
 import com.focusflow.services.allowance.RunningProcessSource
@@ -39,7 +40,7 @@ object DailyAllowanceTracker {
 
     fun start() = engine.start()
     fun stop() = engine.stop()
-    fun reload() = engine.reload()
+    fun reload(): Result<Unit> = engine.reload()
     fun getUsageMinutes(processName: String): Long = engine.getUsageMinutes(processName)
     fun getRemainingMinutes(allowance: com.focusflow.data.models.DailyAllowance): Long =
         engine.getRemainingMinutes(allowance)
@@ -90,6 +91,12 @@ object DailyAllowanceTracker {
         isWindows = isWindows,
         failureLogger = FailureLogger { tag, message, cause ->
             EnforcementLog.warn(tag, message, cause)
+        },
+        limitNotifier = LimitNotifier { allowance ->
+            SystemTrayManager.showNotification(
+                "Daily Limit Reached",
+                "${allowance.displayName} has used all ${allowance.allowanceMinutes}m today. Blocked until midnight."
+            )
         }
     )
 

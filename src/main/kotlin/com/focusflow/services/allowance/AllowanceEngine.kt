@@ -1,13 +1,13 @@
 package com.focusflow.services.allowance
 
 import com.focusflow.data.models.DailyAllowance
-import com.focusflow.services.SystemTrayManager
-import java.awt.TrayIcon
+import com.focusflow.data.normalizeProcessKey
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -20,9 +20,11 @@ class AllowanceEngine(
     private val scope: CoroutineScope
 ) {
     @Volatile private var job: Job? = null
+    @Volatile private var breakMonitorJob: Job? = null
 
     private val usageMs = mutableMapOf<String, Long>()
     private val blockedToday = mutableSetOf<String>()
+    private val pendingLimitNotifications = mutableMapOf<String, DailyAllowance>()
     private val pendingUsageWrites = mutableMapOf<LocalDate, MutableMap<String, Long>>()
     private val warnedStoreOperations = mutableSetOf<String>()
 
@@ -62,26 +64,24 @@ class AllowanceEngine(
         synchronized(usageMs) {
             usageMs.clear()
             persistedUsage.forEach { (processName, seconds) ->
-                usageMs[processName.lowercase()] = secondsToMillis(seconds)
+                usageMs[normalizeProcessKey(processName)] = secondsToMillis(seconds)
             }
         }
 
-        val blocked = synchronized(blockedToday) {
-            blockedToday.clear()
-            loadedAllowances.forEach { allowance ->
-                val used = synchronized(usageMs) {
-                    usageMs.getOrDefault(allowance.processName.lowercase(), 0L)
-                }
-                if (used / MILLIS_PER_MINUTE >= allowance.allowanceMinutes) {
-                    blockedToday.add(allowance.processName.lowercase())
-                }
-            }
-            blockedToday.toSet()
-        }
-        safelySetBlocked(blocked)
+        publishReconciledBlocks(loadedAllowances)
 
         lastTickWallMs = ports.clock.wallMs()
         lastTickMonoNs = ports.clock.monoNs()
+        breakMonitorJob = scope.launch {
+            var wasActive = ports.breakState.isActive.value
+            ports.breakState.isActive.collect { active ->
+                if (wasActive && !active) {
+                    runCatching { enforceNow() }
+                        .onFailure { warn("Could not resume allowance enforcement after Emergency Break", it) }
+                }
+                wasActive = active
+            }
+        }
         job = scope.launch {
             while (isActive) {
                 try {
@@ -111,18 +111,28 @@ class AllowanceEngine(
     fun stop() {
         job?.cancel()
         job = null
+        breakMonitorJob?.cancel()
+        breakMonitorJob = null
         flushUsageToStore(trackingDate)
         retryPendingCleanup()
         safelySetBlocked(emptySet())
     }
 
-    fun reload() {
-        if (!isUsageStoreAvailable()) return
+    @Synchronized
+    fun reload(): Result<Unit> {
+        if (!isUsageStoreAvailable()) {
+            return Result.failure(IllegalStateException("Daily allowance database is unavailable"))
+        }
         try {
-            allowances = ports.usageStore.allowances()
+            val refreshed = ports.usageStore.allowances()
+                .distinctBy { normalizeProcessKey(it.processName) }
+            allowances = refreshed
+            publishReconciledBlocks(refreshed)
             clearStoreWarning("read")
+            return Result.success(Unit)
         } catch (failure: Throwable) {
             warnStoreOnce("read", "Could not reload daily allowances; keeping the last known list", failure)
+            return Result.failure(failure)
         }
     }
 
@@ -143,10 +153,11 @@ class AllowanceEngine(
         if (currentAllowances.isEmpty()) return
 
         val foregroundProcess = if (ports.isWindows) {
-            ports.foregroundSource.current()?.executableName?.lowercase()
+            ports.foregroundSource.current()?.executableName?.let(::normalizeProcessKey)
         } else {
             null
         }
+        val breakActive = ports.breakState.isActive.value
 
         val hasBlockedApps = synchronized(blockedToday) { blockedToday.isNotEmpty() }
         val shouldScanProcesses = !ports.isWindows || hasBlockedApps
@@ -158,14 +169,16 @@ class AllowanceEngine(
         if (!ports.isWindows && runningProcesses == null) return
 
         val runningMap: Map<String, List<RunningProcess>> = runningProcesses.orEmpty()
-            .groupBy({ it.executableName.lowercase() }, { it })
+            .groupBy({ normalizeProcessKey(it.executableName) }, { it })
 
         for (allowance in currentAllowances) {
-            val processName = allowance.processName.lowercase()
+            val processName = normalizeProcessKey(allowance.processName)
             val running = runningMap[processName]
             val alreadyBlocked = synchronized(blockedToday) { processName in blockedToday }
             if (alreadyBlocked) {
-                if (ports.isWindows || running != null) killProcess(allowance.processName, running)
+                if (!breakActive && (ports.isWindows || running != null)) {
+                    killProcess(allowance.processName, running)
+                }
                 continue
             }
 
@@ -189,12 +202,14 @@ class AllowanceEngine(
                     blockedToday.toSet()
                 }
                 safelySetBlocked(blocked)
-                killProcess(allowance.processName, running)
-                SystemTrayManager.showNotification(
-                    "Daily Limit Reached",
-                    "${allowance.displayName} has used all ${allowance.allowanceMinutes}m today. Blocked until midnight.",
-                    TrayIcon.MessageType.WARNING
-                )
+                if (breakActive) {
+                    synchronized(pendingLimitNotifications) {
+                        pendingLimitNotifications[processName] = allowance
+                    }
+                } else {
+                    killProcess(allowance.processName, running)
+                    notifyLimitReached(allowance)
+                }
             }
         }
     }
@@ -229,7 +244,10 @@ class AllowanceEngine(
     private fun advanceTrackingDate(newDate: LocalDate) {
         flushUsageToStore(trackingDate)
         synchronized(usageMs) { usageMs.clear() }
-        synchronized(blockedToday) { blockedToday.clear() }
+        synchronized(blockedToday) {
+            blockedToday.clear()
+            pendingLimitNotifications.clear()
+        }
         trackingDate = newDate
         persistTick = 0
         pendingCleanupBefore = pendingCleanupBefore?.let { maxOf(it, newDate) } ?: newDate
@@ -335,7 +353,7 @@ class AllowanceEngine(
 
     fun getUsageMinutes(processName: String): Long =
         synchronized(usageMs) {
-            usageMs.getOrDefault(processName.lowercase(), 0L) / MILLIS_PER_MINUTE
+            usageMs.getOrDefault(normalizeProcessKey(processName), 0L) / MILLIS_PER_MINUTE
         }
 
     fun getRemainingMinutes(allowance: DailyAllowance): Long =
@@ -345,6 +363,61 @@ class AllowanceEngine(
         allowances.map { allowance -> allowance to getUsageMinutes(allowance.processName) }
 
     internal fun tickForTest() = tick()
+
+    private fun publishReconciledBlocks(currentAllowances: List<DailyAllowance>) {
+        val nextBlocked = currentAllowances.mapNotNull { allowance ->
+            val processName = normalizeProcessKey(allowance.processName)
+            val usedMs = synchronized(usageMs) { usageMs.getOrDefault(processName, 0L) }
+            if (usedMs / MILLIS_PER_MINUTE >= allowance.allowanceMinutes) processName else null
+        }.toSet()
+
+        synchronized(blockedToday) {
+            blockedToday.clear()
+            blockedToday.addAll(nextBlocked)
+        }
+        synchronized(pendingLimitNotifications) {
+            pendingLimitNotifications.keys.retainAll(nextBlocked)
+        }
+        safelySetBlocked(nextBlocked)
+    }
+
+    /** Enforces a reconciled blocked set without waiting for the next polling tick. */
+    private fun enforceNow() {
+        if (ports.breakState.isActive.value) return
+
+        val currentAllowances = allowances
+        val blocked = blockedProcesses
+        if (blocked.isEmpty()) return
+
+        val runningProcesses = ports.runningProcessSource.all()
+        if (!ports.isWindows && runningProcesses == null) {
+            warn("Could not enumerate running processes while resuming allowance enforcement")
+            return
+        }
+        val runningMap = runningProcesses.orEmpty()
+            .groupBy({ normalizeProcessKey(it.executableName) }, { it })
+
+        currentAllowances.forEach { allowance ->
+            val processName = normalizeProcessKey(allowance.processName)
+            if (processName !in blocked) return@forEach
+            val running = runningMap[processName]
+            if (ports.isWindows || running != null) {
+                killProcess(allowance.processName, running)
+            }
+        }
+
+        val notifications = synchronized(pendingLimitNotifications) {
+            val ready = pendingLimitNotifications.filterKeys { it in blocked }.values.toList()
+            pendingLimitNotifications.clear()
+            ready
+        }
+        notifications.forEach(::notifyLimitReached)
+    }
+
+    private fun notifyLimitReached(allowance: DailyAllowance) {
+        runCatching { ports.limitNotifier.dailyLimitReached(allowance) }
+            .onFailure { warn("Could not show daily allowance limit notification", it) }
+    }
 
     private fun secondsToMillis(seconds: Long): Long {
         if (seconds <= 0L) return 0L

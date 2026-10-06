@@ -502,7 +502,7 @@ object Database {
     // Every new schema change gets its own numbered migrate_vN() function.
     // Never edit an existing migrate_vN() — add a new one and bump TARGET_VERSION.
     //
-    private val TARGET_VERSION = 8
+    private val TARGET_VERSION = 9
 
     private fun migrate() {
         val current = connection.createStatement()
@@ -524,6 +524,7 @@ object Database {
             if (current < 6) migrateV6()
             if (current < 7) migrateV7()
             if (current < 8) migrateV8()
+            if (current < 9) migrateV9()
 
             // Bump stored version only after ALL steps succeed
             connection.createStatement()
@@ -767,6 +768,71 @@ object Database {
                     PRIMARY KEY (session_id, position)
                 )
             """.trimIndent())
+        }
+    }
+
+    // v9 — canonicalize process keys and merge legacy case variants safely.
+    private fun migrateV9() {
+        val allowances = connection.createStatement()
+            .executeQuery(
+                "SELECT process_name, display_name, allowance_minutes FROM daily_allowances"
+            ).use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            DailyAllowance(
+                                rs.getString("process_name"),
+                                rs.getString("display_name"),
+                                rs.getInt("allowance_minutes")
+                            )
+                        )
+                    }
+                }
+            }
+        val normalizedAllowances = allowances
+            .groupBy { normalizeProcessKey(it.processName) }
+            .map { (key, variants) ->
+                variants.minBy { it.allowanceMinutes }.copy(processName = key)
+            }
+
+        connection.createStatement().use { it.executeUpdate("DELETE FROM daily_allowances") }
+        connection.prepareStatement(
+            "INSERT INTO daily_allowances (process_name, display_name, allowance_minutes) VALUES (?, ?, ?)"
+        ).use { statement ->
+            normalizedAllowances.forEach { allowance ->
+                statement.setString(1, allowance.processName)
+                statement.setString(2, allowance.displayName)
+                statement.setInt(3, allowance.allowanceMinutes)
+                statement.addBatch()
+            }
+            statement.executeBatch()
+        }
+
+        data class UsageRow(val date: String, val processName: String, val seconds: Long)
+        val usage = connection.createStatement()
+            .executeQuery("SELECT date, process_name, seconds_used FROM daily_usage")
+            .use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(UsageRow(rs.getString("date"), rs.getString("process_name"), rs.getLong("seconds_used")))
+                    }
+                }
+            }
+        val normalizedUsage = usage
+            .groupBy { it.date to normalizeProcessKey(it.processName) }
+            .map { (key, variants) -> UsageRow(key.first, key.second, variants.maxOf { it.seconds }) }
+
+        connection.createStatement().use { it.executeUpdate("DELETE FROM daily_usage") }
+        connection.prepareStatement(
+            "INSERT INTO daily_usage (date, process_name, seconds_used) VALUES (?, ?, ?)"
+        ).use { statement ->
+            normalizedUsage.forEach { row ->
+                statement.setString(1, row.date)
+                statement.setString(2, row.processName)
+                statement.setLong(3, row.seconds)
+                statement.addBatch()
+            }
+            statement.executeBatch()
         }
     }
 
@@ -1165,7 +1231,7 @@ object Database {
         ).use { rs ->
             val list = mutableListOf<DailyAllowance>()
             while (rs.next()) list.add(DailyAllowance(
-                rs.getString("process_name"),
+                normalizeProcessKey(rs.getString("process_name")),
                 rs.getString("display_name"),
                 rs.getInt("allowance_minutes")
             ))
@@ -1181,14 +1247,14 @@ object Database {
             INSERT OR REPLACE INTO daily_allowances (process_name, display_name, allowance_minutes)
             VALUES (?,?,?)
         """.trimIndent()).use { ps ->
-            ps.setString(1, a.processName); ps.setString(2, a.displayName)
+            ps.setString(1, normalizeProcessKey(a.processName)); ps.setString(2, a.displayName)
             ps.setInt(3, a.allowanceMinutes); ps.executeUpdate()
         }
     }
 
     @Synchronized fun deleteDailyAllowance(processName: String) {
         connection.prepareStatement("DELETE FROM daily_allowances WHERE process_name = ?").use { ps ->
-            ps.setString(1, processName); ps.executeUpdate()
+            ps.setString(1, normalizeProcessKey(processName)); ps.executeUpdate()
         }
     }
 
@@ -1202,7 +1268,7 @@ object Database {
             ps.setString(1, date.format(dateFmt))
             ps.executeQuery().use { rs ->
                 val map = mutableMapOf<String, Long>()
-                while (rs.next()) map[rs.getString("process_name")] = rs.getLong("seconds_used")
+                while (rs.next()) map[normalizeProcessKey(rs.getString("process_name"))] = rs.getLong("seconds_used")
                 map
             }
         }
@@ -1211,11 +1277,13 @@ object Database {
     @Synchronized fun upsertDailyUsage(date: LocalDate, processName: String, seconds: Long) {
         if (!isReady) return
         connection.prepareStatement("""
-            INSERT OR REPLACE INTO daily_usage (date, process_name, seconds_used)
+            INSERT INTO daily_usage (date, process_name, seconds_used)
             VALUES (?, ?, ?)
+            ON CONFLICT(date, process_name) DO UPDATE
+            SET seconds_used = MAX(daily_usage.seconds_used, excluded.seconds_used)
         """.trimIndent()).use { ps ->
             ps.setString(1, date.format(dateFmt))
-            ps.setString(2, processName)
+            ps.setString(2, normalizeProcessKey(processName))
             ps.setLong(3, seconds)
             ps.executeUpdate()
         }
