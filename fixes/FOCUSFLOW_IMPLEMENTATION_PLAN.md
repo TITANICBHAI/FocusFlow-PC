@@ -185,6 +185,7 @@ Tasks
   - `Failed` result: explain the file is untouched and where it is; offer Retry, Open folder, Quit. No automatic reset.
 - [x] 3.11 Guard against startup leaks: `Bootstrap` services must not start while the gate is showing; the tray icon may be installed so the user can quit.
 - [ ] 3.12 Optional hardening: make the watchdog PowerShell check robust (compare by exe path), or at least log; the single-instance guard already makes duplicate launches harmless.
+- [ ] 3.13 Non-Windows integration verification: with an isolated home/database, hold the startup lock, confirm the gate appears, release the lock, and verify startup reaches Ready and starts services once. Never use the user's normal database.
 
 Acceptance
 - Locked DB (Phase 0 recipe): `init` returns `Busy` within the policy bound; DB files byte-identical; no `.broken_*` files; no service started; no `UninitializedPropertyAccessException` from any `Database` accessor (typed exception instead).
@@ -217,6 +218,7 @@ Tasks
 - [x] 4.6 Normalize process keys in one function (`trim().lowercase()`), used by tracker matching and by `upsertDailyAllowance`. Add `migrateV9()` (never edit older migrations; bump `TARGET_VERSION` to 9): lowercase `daily_allowances.process_name`; on case-variant duplicates keep the STRICTEST (smallest) allowance; merge same-day `daily_usage` rows by lowercase name keeping the MAX seconds. Test the migration on a DB containing `Discord.exe` + `discord.exe`.
 - [x] 4.7 In the allowance picker, normalize manual process names and append `.exe` on Windows when missing (do not append it on non-Windows).
 - [x] 4.8 Persistence write: change `upsertDailyUsage` to `INSERT ... ON CONFLICT(date, process_name) DO UPDATE SET seconds_used = MAX(seconds_used, excluded.seconds_used)` (check sqlite-jdbc >= 3.24). Totals can no longer decrease from a stale writer.
+- [ ] 4.9 Interactive non-Windows UI verification: exercise Add/Tighten without PIN, Raise/Delete with PIN, and disabled changes when database/PIN state is unavailable.
 
 Acceptance
 - All Phase 4 tests pass.
@@ -224,7 +226,7 @@ Acceptance
 
 Progress on 2026-10-06: Batch 4 is in progress. The engine now reconciles blocked state after reload, reports reload failures while retaining its last good allowance list, honors Emergency Break while continuing usage counting, and resumes enforcement/queued notifications when the break ends. The pure edit policy, normalized process keys, v9 deduplication migration, and monotonic usage upsert are implemented. Six added regression tests plus the existing suite pass (38 total). The PIN-gated editor, unavailable-DB UI defense, and Windows manual acceptance are not complete, so this phase is not accepted yet.
 
-Progress update on 2026-10-06: The allowance editor now gates limit increases and deletions with the Global PIN, routes case-insensitive picker collisions through the policy, and disables writes until both DB readiness and PIN state are known. Database readiness is rechecked on IO immediately before persistence; failures fail closed. The picker now adds `.exe` only on Windows. The full suite passes 42 tests. Interactive Windows acceptance remains pending; this Linux environment cannot verify actual app blocking across a PIN prompt or Emergency Break.
+Progress update on 2026-10-06: The allowance editor now gates limit increases and deletions with the Global PIN, routes case-insensitive picker collisions through the policy, and disables writes until both DB readiness and PIN state are known. Database readiness is rechecked on IO immediately before persistence; failures fail closed. The picker now adds `.exe` only on Windows. The full suite passes 42 tests. Interactive PIN/editor behavior has not been exercised; Windows app-blocking and Emergency Break acceptance also remains pending.
 
 ### Phase 5: Event-based tracking (hybrid) (fixes T1, H6; supersedes the polling loop)
 
@@ -253,19 +255,20 @@ Acceptance
 
 Audit updated on 2026-10-06: The current repository contains the Phase 5 ledger, tests, nullable foreground listener registry, elevated/Store-host process resolver, event+heartbeat engine wiring, lock/suspend monitor, persistence flush points, and diagnostics. The initial audit in the earlier tracker entry described an older repository snapshot and is superseded. Display-off monitoring is intentionally omitted and documented in the allowance help text. Automated Linux verification passes; Windows foreground accuracy and manual acceptance remain pending and are not claimed as complete.
 
-Progress update on 2026-10-06: Batch 5 has started at the user's direction while Batch 4's interactive Windows acceptance remains pending. Windows-only verification is still a blocker and must not be represented as passed.
+Progress update on 2026-10-06: Batch 5 proceeded at the user's direction while Batch 4's interactive PIN/editor acceptance and Windows manual acceptance remained pending. Windows-only verification is still a blocker and must not be represented as passed.
 
 Progress update on 2026-10-06: Audited the current Phase 5 implementation and corrected the stale audit above. All Linux-verifiable Phase 5 implementation tasks are present. Added a failing-first regression proving that Emergency Break end must flush the open foreground interval; it failed with 30 seconds persisted versus 35 expected, then passed after the engine flushes the ledger before resuming enforcement. Focused ledger/event/resolver/session tests and the full 59-test suite pass. The seven-language allowance help text documents foreground-counting limitations and the display-off omission. Windows manual accuracy checks remain blocked in this Linux environment.
 
 ### Phase 6: Allowance UX (fixes U1, U2)
 
 Tasks
-- [ ] 6.1 Navigation: `AppBlockerScreen(initialTab: Int = 0, ...)` with named tab constants (`TAB_ALWAYS = 0`, `TAB_ALLOWANCE = 1`; verify the other indices) and `selectedTab by remember(initialTab) { mutableStateOf(initialTab) }`. `App.kt`: add `blockerInitialTab` state; `FocusScreen(preloadTask, onOpenAllowances = { blockerInitialTab = TAB_ALLOWANCE; currentScreen = Screen.BLOCK_APPS })`; reset `blockerInitialTab = 0` after it is consumed and when navigating via the side nav.
-- [ ] 6.2 Focus screen: make the "Daily Allowance" row clickable (chevron + "Manage"), and show a useful summary from `DailyAllowanceTracker.getUsageSummary()` (e.g. "2 apps - 1 blocked today"). On load failure show "Unavailable - retry", NOT "0 apps".
-- [ ] 6.3 Editor states: `sealed interface LoadState { Loading; Loaded; Error(message) }`. Wrap `reload()`, add, edit-save and delete in try/catch (rethrow `CancellationException`). Load error -> inline banner with Retry; spinner never runs forever. Save error -> keep the dialog open and show the message in it; never close on failure.
-- [ ] 6.4 Card consistency: when blocked show "Blocked until midnight" and remaining = 0; when an Emergency Break is active show "Emergency Break active - limit not enforced right now"; in read-only mode show "Database busy - read-only, changes disabled" and disable editing (ties to 4.5).
-- [ ] 6.5 Same "couldn't load" handling in `DashboardScreen` (~line 95), `ActiveScreen` (~line 62), `ProfileScreen` (~line 259).
-- [ ] 6.6 i18n: `AppStrings`/`Translations.kt` has 7 languages in one `translations` map plus the wrapper properties. Check whether the `AppStrings` constructor has default values. Add new strings the same way as neighbouring ones in each touched file (some screens use hardcoded English; follow the local convention, and if you add keys add them to all 7 language blocks so it compiles).
+- [x] 6.1 Navigation: `AppBlockerScreen(initialTab: Int = 0, ...)` uses named tab constants. Focus routes to Blocker with the allowance tab selected; the parent consumes and clears the one-shot tab request, while the tab selection is keyed by the explicit side-navigation reset signal so clearing the request does not undo the selection.
+- [x] 6.2 Focus screen: the "Daily Allowance" row is clickable (chevron + "Manage") and shows a useful app/blocked summary. Loading and unavailable states are explicit; failure does not look like zero allowances.
+- [x] 6.3 Editor states: allowance loading, mutation failures, and cancellation are handled explicitly. Load failure shows Retry; failed saves keep the dialog open with the error; in-flight saves cannot be dismissed before their result is shown.
+- [x] 6.4 Card consistency: blocked apps show "Blocked until midnight" and zero remaining; a shared notice reports Emergency Break status; mutations are disabled when the database/safety state is unavailable. Read-only startup remains unshipped per Phase 3.7 and is not invented here.
+- [x] 6.5 The same visible load-error and Retry handling is used in `DashboardScreen`, `ActiveScreen`, and `ProfileScreen`.
+- [x] 6.6 Allowance feedback strings are present in all seven languages. The Profile usage note now accurately describes saved usage across app runs and midnight reset.
+- [ ] 6.7 Verify the Focus-to-editor, edit/save, and failed-operation recovery flows interactively.
 
 Acceptance
 - From Focus, one click opens Blocker -> Daily Allowance.
@@ -273,12 +276,17 @@ Acceptance
 - A failed save shows a message and keeps the dialog open.
 - Raising a limit requires the PIN (when set); blocked/remaining/break messages are consistent.
 
+Progress update on 2026-10-06: Audited the current Phase 6 source before editing. Navigation, retryable load states, DB/PIN mutation guards, consistent blocked/break messaging, and Dashboard/Active/Profile load banners were already present. Fixed the Focus row's blank failure/loading summary, guarded allowance dialogs against dismissal during writes, and corrected the Profile note that incorrectly said saved usage began at app launch. Added a regression test for Focus summary labels; the full test suite passes (61 tests). All Phase 6 strings are accounted for in seven language blocks. Interactive UI acceptance remains pending; the normal user database was not opened for this verification.
+
 ### Phase 7: Final verification and cleanup
 
-- [ ] 7.1 Run the full test matrix and the manual Windows checklist.
-- [ ] 7.2 Remove temporary spikes/logging; keep permanent diagnostics low-noise.
-- [ ] 7.3 Add a ChangelogScreen entry summarizing user-visible fixes (startup recovery screen, PIN to raise/delete, more accurate counting).
-- [ ] 7.4 Write the PR summary: findings confirmed/dropped, decisions, limitations, rollback notes (each phase is independently revertable).
+- [x] 7.1 Run the full automated test matrix and record results.
+- [ ] 7.2 Run the manual Windows checklist and record results. Blocked until a Windows environment is available.
+- [x] 7.3 Remove temporary spikes/logging; rate-limit useful permanent diagnostics.
+- [x] 7.4 Add the user-facing v2.0.2 changelog entry and synchronize app/package version references.
+- [x] 7.5 Write the final summary: findings confirmed/unresolved, decisions, limitations, verification, and rollback notes. Do not assume per-phase commits exist.
+
+Progress update on 2026-10-06: `gradle clean check --no-daemon --console=plain` passed all 62 tests (0 failures/errors/skips); the release changelog parser and `git diff --check` passed. Added a minimum 60-second allowance diagnostic interval after a failing-first regression. Prepared the v2.0.2 changelog and synchronized app/recovery version references. The manual Windows checklist and remaining interactive acceptance are still blocked in this Linux environment; the definition of done is not yet met. Full evidence and rollback notes are in `fixes/FINAL_VERIFICATION.md`.
 
 ## 6. Test matrix
 

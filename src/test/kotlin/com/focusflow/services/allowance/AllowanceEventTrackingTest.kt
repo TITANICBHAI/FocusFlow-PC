@@ -213,6 +213,41 @@ class AllowanceEventTrackingTest {
         engine.stop()
     }
 
+    @Test
+    fun diagnosticsAreRateLimitedDuringRapidForegroundSwitches() = runTest {
+        val clock = MutableClock()
+        val store = MemoryUsageStore(listOf(DailyAllowance("a.exe", "App A", 100)))
+        val events = FakeForegroundEvents()
+        val diagnostics = mutableListOf<AllowanceTrackingDiagnostics>()
+        val engine = createEngine(
+            backgroundScope,
+            clock,
+            store,
+            events,
+            ForegroundSource { ForegroundInfo("a.exe", 11L) },
+            diagnostics
+        )
+
+        engine.start()
+        runCurrent()
+        repeat(12) {
+            events.emit("a.exe", 11L, clock.monoNs())
+            runCurrent()
+            clock.advance(1_000L)
+        }
+        assertEquals(1, diagnostics.size)
+
+        clock.advance(60_000L)
+        repeat(6) {
+            events.emit("a.exe", 11L, clock.monoNs())
+            runCurrent()
+            clock.advance(1_000L)
+        }
+
+        assertEquals(2, diagnostics.size)
+        engine.stop()
+    }
+
     private fun createEngine(
         scope: CoroutineScope,
         clock: Clock,

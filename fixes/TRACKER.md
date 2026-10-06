@@ -1,7 +1,7 @@
 # FocusFlow Reliability Fixes — Batch Tracker
 
 **Source plan:** [FOCUSFLOW_IMPLEMENTATION_PLAN.md](FOCUSFLOW_IMPLEMENTATION_PLAN.md)  
-**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 implementation and Linux automated verification complete, with Windows manual acceptance pending.
+**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 implementation and Linux automated verification complete, with Windows manual acceptance pending; Batch 6 implementation and automated checks complete, with interactive acceptance pending.
 **Rule:** Work one batch at a time. Tick these items and the matching task checkboxes in the source plan as work is completed. Record evidence before marking a batch complete.
 
 ## Batch 0 — Evidence and spikes
@@ -116,6 +116,7 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 - [x] Move startup side effects out of Compose recomposition and run bootstrap only once after database readiness.
 - [x] Add the retryable startup gate and guard services from running before readiness.
 - [x] Verify DB retry, second-instance handoff, migration failure, corruption preservation, and no-recovery initialization.
+- [ ] Exercise the locked startup gate through lock release and once-only service startup using an isolated home/database (non-Windows integration acceptance).
 
 **Acceptance status:** Core source and automated DB/guard tests support the locked-DB safety path. The Main.kt gate-to-service path is implemented and retries automatically, but has no dedicated end-to-end UI test. Windows-only checks and Spike A/B remain blocked; do not claim those as verified.
 
@@ -124,7 +125,7 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 - `DatabaseTest` covers typed unavailable access, SQLite failure classification, unchanged DB files on BUSY, successful initialization after lock release, migration failure without publishing a closed connection, verified DB/WAL/SHM recovery copies, copy failure preserving originals, and recovery-disabled initialization.
 - `SingleInstanceGuardTest` covers SHOW handoff, lock release, and an unresponsive holder. `StartOnceTest` covers once-only bootstrap and remembered failures.
 - `Main.kt` acquires the instance guard before pre-DB side effects, runs DB initialization in a `LaunchedEffect` on IO, retries BUSY after 10 seconds, and calls `StartupBootstrap.startServices()` only on Ready. `StartupBootstrap` wraps service startup in `StartOnce`.
-- Full suite currently passes 38 tests. The app-level gate-to-service transition was verified by source inspection, not an end-to-end UI test. Windows checks remain unavailable in this Linux environment.
+- At the Batch 3 audit, the full suite passed 38 tests. The current full suite after Batch 6 passes 61 tests. The app-level gate-to-service transition is verified by source inspection, not an end-to-end integration/UI test. Windows checks remain unavailable in this Linux environment.
 
 ## Batch 4 — Allowance state, PIN policy, and Emergency Break
 
@@ -137,9 +138,10 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 - [x] Normalize process keys and migrate case-variant allowance/usage rows safely.
 - [x] Make persisted usage updates resistant to stale writers.
 - [x] Wire the PIN policy into edit-save, delete, and case-insensitive picker collisions; normalize manual entry and append `.exe` only on Windows.
-- [ ] Verify the complete UI/PIN flow and Windows manual behavior.
+- [ ] Verify the interactive UI/PIN and unavailable-database behavior (non-Windows acceptance).
+- [ ] Complete the Windows manual blocking/Emergency Break behavior checklist.
 
-**Acceptance status:** The engine, policy, database changes, editor PIN routing, and fail-closed DB readiness guard are implemented; the full suite passes. Interactive UI/PIN behavior and the Windows blocking/Emergency Break checklist have not been run here, so Batch 4 is not accepted and Batch 5 must not start yet.
+**Acceptance status:** The engine, policy, database changes, editor PIN routing, and fail-closed DB readiness guard are implemented; the full suite passes. Interactive UI/PIN behavior and the Windows blocking/Emergency Break checklist have not been run, so Batch 4 is not fully accepted. Batch 5 was subsequently undertaken at the user's direction.
 
 ### Batch 4 evidence — 2026-10-06
 
@@ -155,7 +157,7 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 - Add/Edit/Delete controls stay disabled until the database is ready and the Global PIN state has loaded. Each write rechecks DB readiness on IO; errors fail closed. `Database.mode`/read-only is not implemented or exposed, consistent with the Phase 0 read-only no-go; any future read-only state must be added to this guard.
 - Manual picker process names are normalized and receive `.exe` only on Windows. Unit coverage now includes gate decisions, DB/PIN readiness gating, process-name case/whitespace, and the platform-specific suffix.
 - `gradle test --no-daemon`: 42 tests passed, 0 failures/errors. `git diff --check` passed.
-- The configured desktop workflow was not launched because it starts FocusFlow against the normal user profile/database. No user database was opened. Interactive Windows app-blocking, PIN, and Emergency Break checks remain pending in a Windows environment.
+- The configured desktop workflow was not launched because it starts FocusFlow against the normal user profile/database. No user database was opened. Interactive PIN/editor UI remains unverified; Windows app-blocking and Emergency Break checks remain pending on Windows.
 
 ## Batch 5 — Hybrid event-based tracking
 
@@ -179,7 +181,7 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 
 - Began Phase 5 after an audit that found existing ports and bounded polling but did not find the Phase 5 event-accounting implementation in that snapshot.
 - Added failing-first pure ledger tests for app switching, sub-second intervals, null foreground, heartbeat correction, long/backwards gaps, and day rollover.
-- Batch 4's interactive Windows acceptance is still pending. The user explicitly asked to proceed with Batch 5; Windows-only verification remains a release blocker and will be recorded as blocked rather than inferred from Linux tests.
+- Batch 4's interactive PIN/editor acceptance is still pending. The user explicitly asked to proceed with Batch 5; Windows-only verification remains a release blocker and will be recorded as blocked rather than inferred from Linux tests.
 - The initial audit/work-log assessment above was stale relative to the current source and is superseded by the verification update below.
 
 ### Batch 5 verification update — 2026-10-06
@@ -191,35 +193,37 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 
 ## Batch 6 — Allowance UX
 
-**Status:** In progress · **Plan section:** Phase 6
+**Status:** Implementation and automated checks complete; interactive acceptance pending · **Plan section:** Phase 6
 
-- [ ] Add navigation from Focus to Blocker → Daily Allowance.
-- [ ] Show meaningful usage/status and unavailable/retry state instead of false zero values.
-- [ ] Add explicit loading/error states to allowance loading and save/delete flows.
-- [ ] Keep failed-save dialogs open with clear errors; disable changes when DB is unavailable/read-only.
-- [ ] Make blocked, remaining, and Emergency Break messages consistent.
-- [ ] Add matching load-error behavior to Dashboard, Active, and Profile screens.
-- [ ] Add/update translated strings consistently across all supported languages.
+- [x] Add navigation from Focus to Blocker → Daily Allowance.
+- [x] Show meaningful usage/status and unavailable/retry state instead of false zero values.
+- [x] Add explicit loading/error states to allowance loading and save/delete flows.
+- [x] Keep failed-save dialogs open with clear errors; disable changes when DB is unavailable. Read-only startup remains unshipped per Phase 3.7.
+- [x] Make blocked, remaining, and Emergency Break messages consistent.
+- [x] Add matching load-error behavior to Dashboard, Active, and Profile screens.
+- [x] Add/update translated strings consistently across all supported languages.
 - [ ] Verify a user can reach, edit, save, and recover from failed allowance operations.
 
-**Acceptance:** Focus navigation reaches the editor; database failures are visible; no spinner hangs or silent failed saves.
+**Acceptance:** Source implementation and automated checks pass. Interactive navigation and mutation/recovery scenarios remain unverified in this environment.
 
 ### Batch 6 work log — 2026-10-06
 
-- Started Batch 6 at the user's direction. Current audit confirms the editor exists, but Focus has no navigation callback, load failures are silently swallowed or can leave the editor in an ambiguous empty state, write failures have no visible feedback, and Dashboard/Active/Profile can show stale or empty allowance data without a retry action.
-- Phase 4 already disables allowance mutations until DB and Global PIN state are known. Read-only startup is not shipped, so UI writes must continue to fail closed on `Database.isReady == false`; no read-only state will be invented.
+- The initial Phase 6 audit note was stale. The current source already had the Focus route, load-state helpers, retry banners, DB/PIN guards, and load-error handling on Dashboard, Active, and Profile. A fresh audit found a blank Focus-row status on load failure and that in-flight saves could be dismissed before their result appeared.
+- Phase 4 already disables allowance mutations until DB and Global PIN state are known. Read-only startup remains unshipped per Phase 3.7; no read-only mode was invented.
+- Fixed the Focus row's loading/unavailable summary, prevented dismiss/back actions during writes, and replaced inaccurate Profile copy about usage beginning at app launch. Added a unit regression for loading, unavailable, and loaded-zero summaries.
+- `gradle test --no-daemon --console=plain`: 61 tests, 0 failures, 0 errors, 0 skipped. `git diff --check` passed. The new Profile note and allowance feedback strings are present in all seven language blocks. No additional desktop launch or user-database access was performed; interactive acceptance remains pending.
 
 ## Batch 7 — Final verification and cleanup
 
-**Status:** Not started · **Plan section:** Phase 7
+**Status:** Linux verification complete; Windows manual acceptance blocked · **Plan section:** Phase 7
 
-- [ ] Run the full automated test matrix.
-- [ ] Run the manual Windows checklist and record results.
-- [ ] Remove temporary diagnostics and keep useful permanent diagnostics low-noise.
-- [ ] Add the user-facing changelog entry.
-- [ ] Document confirmed/dropped findings, decisions, limitations, verification, and rollback notes.
+- [x] Run the full automated test matrix.
+- [ ] Run the manual Windows checklist and record results. **Blocked:** this workspace is Linux; no Windows results are claimed.
+- [x] Audit/remove temporary diagnostics and keep useful permanent diagnostics low-noise. Allowance event diagnostics are limited to at most one publish per 60 seconds.
+- [x] Add the user-facing v2.0.2 changelog entry and align app/recovery version strings.
+- [x] Document findings, decisions, limitations, verification, and rollback notes in `fixes/FINAL_VERIFICATION.md`.
 
-**Acceptance:** Definition of done in the source plan is met; verification evidence is recorded.
+**Acceptance:** Verification evidence is recorded, but the source plan's definition of done is not met until the Windows checklist and outstanding interactive acceptance are completed.
 
 ## Work log
 
@@ -233,3 +237,5 @@ Add an entry whenever work starts or finishes on a batch. Include evidence for c
 | 2026-10-06 | 3 | Reconciled the stale “not started” tracker entry with existing startup/database code and tests. Fixed two compile errors in the startup gate so the project suite could run. Read-only startup remains intentionally absent pending Windows Spike A. | Full `gradle test --no-daemon`: 38 passed, 0 failed/errors; `git diff --check` passed. DB/guard/start-once cases are in `DatabaseTest`, `SingleInstanceGuardTest`, and `StartOnceTest`. Gate-to-service behavior was source-inspected but not exercised end-to-end. | Implementation present; integration/Windows evidence limited |
 | 2026-10-06 | 4 | Added failing-first tests, then implemented engine reconciliation, edit policy, Emergency Break pause/resume behavior, process-key normalization, v9 deduplication, and monotonic usage persistence. UI PIN wiring and DB-unavailable action disabling remain unfinished. | Four targeted regressions failed before fixes; full suite after implementation: 38 passed, 0 failed/errors; `git diff --check` passed. No Windows manual tests run. | In progress |
 | 2026-10-06 | 5 | Audited current source, completed the missing break-end ledger flush, and corrected the stale earlier audit. Linux-verifiable implementation is complete; Windows accuracy validation is still pending. | Five focused Phase 5 test classes passed; full suite: 59 passed, 0 failed/errors; `git diff --check` passed. No desktop app launched and no user DB opened. | Implementation/automated checks complete; Windows manual acceptance pending |
+| 2026-10-06 | 6 | Audited the already-present navigation, retryable load states, shared Emergency Break notice, DB/PIN guards, and Dashboard/Active/Profile feedback. Fixed the Focus summary's blank loading/error state, prevented dismissing allowance dialogs during writes, and corrected the Profile usage persistence note. | Added a summary-state regression. `gradle test --no-daemon --console=plain`: 61 passed, 0 failures/errors/skips; `git diff --check` passed; localized note and allowance feedback strings each cover all seven languages. No desktop interaction was run and no user DB was opened. | Implementation and automated checks complete; interactive acceptance pending |
+| 2026-10-06 | 7 | Ran the clean automated matrix; added a failing-first test and 60-second minimum interval for allowance diagnostics; confirmed no temporary Phase 0 probes remain; prepared v2.0.2 changelog and synchronized version references. Recorded evidence, unresolved hypotheses, limits, and rollback guidance. | `gradle clean check --no-daemon --console=plain`: 62 tests, 0 failures/errors/skipped; targeted diagnostic test passed after fix; release parser found 4 v2.0.2 items; `git diff --check` passed. Windows checklist not run on Linux; no app restart or user DB access. | Linux checks complete; Windows and interactive acceptance pending |

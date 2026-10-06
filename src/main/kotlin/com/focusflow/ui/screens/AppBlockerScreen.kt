@@ -1271,10 +1271,13 @@ private fun DailyAllowanceTab() {
             scannedApps    = scannedApps,
             alreadyAllowed = alreadyAllowed,
             changesEnabled = changesEnabled,
+            dismissEnabled = !isMutating,
             errorMessage   = dialogError,
             onDismiss      = {
-                showPicker = false
-                dialogError = null
+                if (!isMutating) {
+                    showPicker = false
+                    dialogError = null
+                }
             },
             onConfirm      = { processName, displayName, minutes ->
                 val existing = allowances.firstOrNull {
@@ -1297,10 +1300,13 @@ private fun DailyAllowanceTab() {
         EditAllowanceDialog(
             allowance = target,
             changesEnabled = changesEnabled,
+            dismissEnabled = !isMutating,
             errorMessage = dialogError,
             onDismiss = {
-                editTarget = null
-                dialogError = null
+                if (!isMutating) {
+                    editTarget = null
+                    dialogError = null
+                }
             },
             onSave    = { newMinutes ->
                 val updated = target.copy(allowanceMinutes = newMinutes)
@@ -1498,6 +1504,7 @@ private fun AllowancePickerDialog(
     scannedApps:    List<ScannedApp>,
     alreadyAllowed: Set<String>,
     changesEnabled: Boolean,
+    dismissEnabled: Boolean = true,
     errorMessage:   String? = null,
     onDismiss:      () -> Unit,
     onConfirm:      (processName: String, displayName: String, minutes: Int) -> Unit
@@ -1557,6 +1564,9 @@ private fun AllowancePickerDialog(
             if (step == 0) {
                 // ── Step 1: App picker ─────────────────────────────────────
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    errorMessage?.let {
+                        Text(it, color = Error, style = MaterialTheme.typography.bodySmall)
+                    }
                     OutlinedTextField(
                         value = search,
                         onValueChange = { search = it },
@@ -1862,13 +1872,15 @@ private fun AllowancePickerDialog(
         },
         dismissButton = {
             if (step == 1) {
-                TextButton(onClick = { step = 0 }) {
+                TextButton(onClick = { step = 0 }, enabled = dismissEnabled) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(strings.btnBack, color = OnSurface2)
                 }
             } else {
-                TextButton(onClick = onDismiss) { Text(LocalizationManager.strings.btnCancel, color = OnSurface2) }
+                TextButton(onClick = onDismiss, enabled = dismissEnabled) {
+                    Text(LocalizationManager.strings.btnCancel, color = OnSurface2)
+                }
             }
         }
     )
@@ -1878,6 +1890,7 @@ private fun AllowancePickerDialog(
 private fun EditAllowanceDialog(
     allowance: DailyAllowance,
     changesEnabled: Boolean,
+    dismissEnabled: Boolean = true,
     errorMessage: String? = null,
     onDismiss: () -> Unit,
     onSave:    (Int) -> Unit
@@ -1977,7 +1990,9 @@ private fun EditAllowanceDialog(
             ) { Text(LocalizationManager.strings.btnSave) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(LocalizationManager.strings.btnCancel, color = OnSurface2) }
+            TextButton(onClick = onDismiss, enabled = dismissEnabled) {
+                Text(LocalizationManager.strings.btnCancel, color = OnSurface2)
+            }
         }
     )
 }

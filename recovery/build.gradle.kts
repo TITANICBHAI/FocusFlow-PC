@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.focusflow"
-version = "2.0.1"
+version = "2.0.2"
 
 repositories {
     google()
@@ -43,7 +43,7 @@ compose.desktop {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
 
             packageName        = "FocusFlow-Recovery"
-            packageVersion     = "2.0.1"
+            packageVersion     = "2.0.2"
             description        = "FocusFlow Emergency Recovery Tool — restores taskbar and clears all enforcement flags"
             vendor             = "TBTechs"
             copyright          = "© 2025 TBTechs"

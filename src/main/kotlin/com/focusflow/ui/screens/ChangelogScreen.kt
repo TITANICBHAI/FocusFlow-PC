@@ -31,6 +31,18 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "2.0.2",
+        date       = "October 2026",
+        badge      = "FIX",
+        badgeColor = Error,
+        changes    = listOf(
+            "FIX" to "Startup now shows a retryable recovery screen when the database is busy instead of continuing with missing data",
+            "SEC" to "When Global PIN protection is enabled, raising or deleting a daily allowance requires the PIN",
+            "IMP" to "Daily usage tracking captures short foreground sessions and avoids counting long inactive gaps as app use",
+            "IMP" to "Allowance loading and save/delete failures now show clear recovery options instead of silently losing changes"
+        )
+    ),
+    ChangelogEntry(
         version    = "2.0.1",
         date       = "September 2026",
         badge      = "FIX",

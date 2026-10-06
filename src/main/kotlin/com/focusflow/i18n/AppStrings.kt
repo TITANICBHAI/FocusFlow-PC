@@ -316,6 +316,7 @@ data class AppStringsB(
     val profileLastWeeklyReport: String,
     val profileNew: String,
     val profileTodayAppUsage: String,
+    val profileTodayAppUsageNote: String,
     val profileExportData: String,
     val profileExportSessions: String,
     val profileExportTasks: String,
@@ -981,6 +982,7 @@ class AppStrings(
     val profileLastWeeklyReport: String get() = appstringsb.profileLastWeeklyReport
     val profileNew: String get() = appstringsb.profileNew
     val profileTodayAppUsage: String get() = appstringsb.profileTodayAppUsage
+    val profileTodayAppUsageNote: String get() = appstringsb.profileTodayAppUsageNote
     val profileExportData: String get() = appstringsb.profileExportData
     val profileExportSessions: String get() = appstringsb.profileExportSessions
     val profileExportTasks: String get() = appstringsb.profileExportTasks

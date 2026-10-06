@@ -54,6 +54,18 @@ internal fun formatAllowanceSummary(
     .replace("{apps}", summary.appCount.toString())
     .replace("{blocked}", summary.blockedTodayCount.toString())
 
+internal fun allowanceSummaryLabel(
+    state: AllowanceLoadState<AllowanceUsageSummary>,
+    format: String,
+    loadingText: String,
+    unavailableText: String
+): String = when (state) {
+    is AllowanceLoadState.Loading ->
+        state.previous?.let { formatAllowanceSummary(format, it) } ?: loadingText
+    is AllowanceLoadState.Loaded -> formatAllowanceSummary(format, state.value)
+    is AllowanceLoadState.Failed -> unavailableText
+}
+
 internal fun summarizeAllowanceUsage(
     allowances: List<DailyAllowance>,
     blockedProcesses: Set<String>

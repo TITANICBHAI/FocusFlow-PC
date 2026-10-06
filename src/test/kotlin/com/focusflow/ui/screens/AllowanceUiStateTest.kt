@@ -48,4 +48,38 @@ class AllowanceUiStateTest {
 
         assertEquals(AllowanceUsageSummary(appCount = 2, blockedTodayCount = 1), summary)
     }
+
+    @Test
+    fun allowanceSummaryShowsLoadingAndUnavailableInsteadOfZeroCounts() {
+        val zeroSummary = AllowanceUsageSummary(appCount = 0, blockedTodayCount = 0)
+        val format = "{apps} apps · {blocked} blocked today"
+
+        assertEquals(
+            "Loading allowances",
+            allowanceSummaryLabel(
+                AllowanceLoadState.Loading(),
+                format,
+                loadingText = "Loading allowances",
+                unavailableText = "Unavailable · Retry"
+            )
+        )
+        assertEquals(
+            "Unavailable · Retry",
+            allowanceSummaryLabel(
+                AllowanceLoadState.Failed(null, IllegalStateException("database unavailable")),
+                format,
+                loadingText = "Loading allowances",
+                unavailableText = "Unavailable · Retry"
+            )
+        )
+        assertEquals(
+            "0 apps · 0 blocked today",
+            allowanceSummaryLabel(
+                AllowanceLoadState.Loaded(zeroSummary),
+                format,
+                loadingText = "Loading allowances",
+                unavailableText = "Unavailable · Retry"
+            )
+        )
+    }
 }

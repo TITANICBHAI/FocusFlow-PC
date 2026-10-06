@@ -50,6 +50,7 @@ class AllowanceEngine(
     private var missedForegroundEvents = 0L
     private var discardedForegroundGaps = 0L
     private var diagnosticsTick = 0
+    private var lastDiagnosticsMonoNs: Long? = null
     @Volatile private var eventTrackingEnabled = false
     private val foregroundLedger = ForegroundLedger()
 
@@ -394,9 +395,17 @@ class AllowanceEngine(
     }
 
     private fun publishDiagnosticsIfDue() {
-        diagnosticsTick++
+        diagnosticsTick = (diagnosticsTick + 1).coerceAtMost(DIAGNOSTICS_EVERY_EVENTS)
         if (diagnosticsTick < DIAGNOSTICS_EVERY_EVENTS) return
+        val nowMonoNs = ports.clock.monoNs()
+        val lastPublishedNs = lastDiagnosticsMonoNs
+        if (lastPublishedNs != null &&
+            nowMonoNs - lastPublishedNs < DIAGNOSTICS_MIN_INTERVAL_NS
+        ) {
+            return
+        }
         diagnosticsTick = 0
+        lastDiagnosticsMonoNs = nowMonoNs
         val snapshot = synchronized(usageMs) {
             AllowanceTrackingDiagnostics(
                 currentForeground = foregroundLedger.currentForeground(),
@@ -615,6 +624,7 @@ class AllowanceEngine(
     private companion object {
         const val TICK_INTERVAL_MS = 10_000L
         const val DIAGNOSTICS_EVERY_EVENTS = 6
+        const val DIAGNOSTICS_MIN_INTERVAL_NS = 60_000_000_000L
         const val MAX_GAP_MS = 25_000L
         const val PERSIST_EVERY_TICKS = 6
         const val MILLIS_PER_SECOND = 1_000L

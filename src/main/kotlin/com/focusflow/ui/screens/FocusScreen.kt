@@ -1092,9 +1092,12 @@ private fun StandaloneBlockPanel(
         } else {
             allowanceLoadState.lastKnownValue()
         }
-        val allowanceSubtitle = allowanceSummary?.let {
-            formatAllowanceSummary(strings.blockerAllowanceSummaryFormat, it)
-        }.orEmpty()
+        val allowanceSubtitle = allowanceSummaryLabel(
+            state = allowanceLoadState,
+            format = strings.blockerAllowanceSummaryFormat,
+            loadingText = strings.blockerLoading,
+            unavailableText = strings.blockerLoadFailed
+        )
         EnforcementRow(
             icon = Icons.Default.Timer,
             label = strings.blockerTabDailyAllowance,

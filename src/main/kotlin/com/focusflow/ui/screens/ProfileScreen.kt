@@ -300,7 +300,7 @@ fun ProfileScreen() {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(strings.profileTodayAppUsage, style = MaterialTheme.typography.headlineSmall, color = OnSurface)
-                Text("Measured since the app was last started. Resets at midnight.",
+                Text(strings.profileTodayAppUsageNote,
                     style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 usageSummary.forEach { (allowance, usedMins) ->
                     val pct       = (usedMins.toFloat() / allowance.allowanceMinutes.coerceAtLeast(1)).coerceIn(0f, 1f)
