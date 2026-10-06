@@ -455,41 +455,6 @@ fun FocusLauncherScreen() {
                 )
             }
 
-            if (isLoading) {
-                item {
-                    Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Purple80, modifier = Modifier.size(28.dp))
-                    }
-                }
-            } else if (availableApps.isEmpty()) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                            .background(Surface3).padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Info, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
-                        Text(strings.launcherNoAppsYet, color = OnSurface2,
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            } else {
-                // The process name is the app identity; the section prefix prevents
-                // collisions with search results in this LazyColumn.
-                items(availableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
-                    val key = app.processName.lowercase()
-                    val checked = key in selectedApps
-                    AppSelectRow(
-                        app = app,
-                        checked = checked,
-                        onToggle = {
-                            selectedApps = if (checked) selectedApps - key else selectedApps + key
-                        }
-                    )
-                }
-            }
-
             // ── Search & add ──────────────────────────────────────────────────
             item {
                 Spacer(Modifier.height(4.dp))
@@ -558,6 +523,42 @@ fun FocusLauncherScreen() {
                     }
                 }
             }
+
+            if (isLoading) {
+                item {
+                    Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Purple80, modifier = Modifier.size(28.dp))
+                    }
+                }
+            } else if (availableApps.isEmpty()) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .background(Surface3).padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Info, null, tint = OnSurface2, modifier = Modifier.size(16.dp))
+                        Text(strings.launcherNoAppsYet, color = OnSurface2,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                // The process name is the app identity; the section prefix prevents
+                // collisions with search results in this LazyColumn.
+                items(availableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
+                    val key = app.processName.lowercase()
+                    val checked = key in selectedApps
+                    AppSelectRow(
+                        app = app,
+                        checked = checked,
+                        onToggle = {
+                            selectedApps = if (checked) selectedApps - key else selectedApps + key
+                        }
+                    )
+                }
+            }
+
         }
 
         // ── Duration ─────────────────────────────────────────────────────────
