@@ -4,6 +4,8 @@
 **Status:** Linux-verifiable work complete; Windows/manual acceptance remains blocked.  
 **Release preparation:** v2.0.2 changelog and version references are aligned; nothing was published.
 
+The consolidated Windows and interactive runbook is [WINDOWS_VERIFICATION_GUIDE.md](WINDOWS_VERIFICATION_GUIDE.md). It covers outstanding checks across Batches 0–7 and distinguishes runnable app checks from engineering spikes that need a probe first.
+
 ## Findings
 
 ### Confirmed

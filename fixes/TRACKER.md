@@ -1,7 +1,7 @@
 # FocusFlow Reliability Fixes — Batch Tracker
 
 **Source plan:** [FOCUSFLOW_IMPLEMENTATION_PLAN.md](FOCUSFLOW_IMPLEMENTATION_PLAN.md)  
-**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 implementation and Linux automated verification complete, with Windows manual acceptance pending; Batch 6 implementation and automated checks complete, with interactive acceptance pending.
+**Overall status:** Batches 1–2 complete; Batch 3 implementation present with verification gaps; Batch 4 implementation and automated checks complete, with interactive/Windows acceptance pending; Batch 5 implementation and Linux automated verification complete, with Windows manual acceptance pending; Batch 6 implementation and automated checks complete, with interactive acceptance pending; Batch 7 Linux verification complete, with Windows/manual acceptance pending.
 **Rule:** Work one batch at a time. Tick these items and the matching task checkboxes in the source plan as work is completed. Record evidence before marking a batch complete.
 
 ## Batch 0 — Evidence and spikes
@@ -216,6 +216,8 @@ Do not kill a suspected holder or delete/rename `focusflow.db`, `-wal`, or `-shm
 ## Batch 7 — Final verification and cleanup
 
 **Status:** Linux verification complete; Windows manual acceptance blocked · **Plan section:** Phase 7
+
+See [WINDOWS_VERIFICATION_GUIDE.md](WINDOWS_VERIFICATION_GUIDE.md) for the consolidated run order, isolated-profile setup, and result template covering all remaining manual checks across the phases.
 
 - [x] Run the full automated test matrix.
 - [ ] Run the manual Windows checklist and record results. **Blocked:** this workspace is Linux; no Windows results are claimed.
