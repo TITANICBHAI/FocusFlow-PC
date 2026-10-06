@@ -1,18 +1,93 @@
 package com.focusflow.data
 
 import com.focusflow.data.models.*
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.UUID
 import org.sqlite.SQLiteDataSource
 import java.sql.Connection
+import java.sql.SQLException
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
-data class InitPolicy(val busyTimeoutMs: Int = 10_000) {
+sealed interface DbInitResult {
+    data object Ready : DbInitResult
+    data class Busy(
+        val cause: SQLException,
+        val attempts: Int,
+        val waitedMs: Long
+    ) : DbInitResult
+    data class Failed(
+        val cause: Throwable,
+        val untouchedPath: File
+    ) : DbInitResult
+}
+
+sealed interface DbStartupState {
+    data object NotStarted : DbStartupState
+    data class Opening(val attempt: Int, val elapsedMs: Long) : DbStartupState
+    data class Busy(val attempts: Int, val waitedMs: Long, val cause: SQLException) : DbStartupState
+    data class Failed(val cause: Throwable, val untouchedPath: File) : DbStartupState
+    data object Ready : DbStartupState
+}
+
+data class InitPolicy(
+    val busyTimeoutMs: Int = 10_000,
+    val maxAttempts: Int = 3,
+    val backoffMs: List<Long> = listOf(1_000, 2_000),
+    val totalDeadlineMs: Long = 35_000
+) {
+    init {
+        require(busyTimeoutMs >= 0)
+        require(maxAttempts >= 1)
+        require(backoffMs.all { it >= 0 })
+        require(totalDeadlineMs > 0)
+    }
+
     companion object {
         val Default = InitPolicy()
     }
+}
+
+enum class SqliteFailureKind {
+    BUSY, LOCKED, CORRUPT, NOTADB, IOERR, CANTOPEN, FULL, OTHER
+}
+
+internal fun classifySqliteFailure(failure: SQLException): SqliteFailureKind {
+    return when (failure.errorCode and 0xFF) {
+        5 -> SqliteFailureKind.BUSY
+        6 -> SqliteFailureKind.LOCKED
+        11 -> SqliteFailureKind.CORRUPT
+        26 -> SqliteFailureKind.NOTADB
+        10 -> SqliteFailureKind.IOERR
+        14 -> SqliteFailureKind.CANTOPEN
+        13 -> SqliteFailureKind.FULL
+        else -> {
+            val message = failure.message.orEmpty().lowercase()
+            if ("database is locked" in message || "sqlite_busy" in message) {
+                SqliteFailureKind.BUSY
+            } else {
+                SqliteFailureKind.OTHER
+            }
+        }
+    }
+}
+
+class DatabaseUnavailableException(
+    val state: DbInitResult?
+) : IllegalStateException("FocusFlow database is unavailable: $state")
+
+internal interface RecoveryFileOps {
+    fun copy(source: File, destination: File)
+    fun move(source: File, destination: File)
+    fun delete(file: File)
 }
 
 object Database {
@@ -21,48 +96,82 @@ object Database {
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
 
     @Volatile private var conn: Connection? = null
+    private val migrationConnection = ThreadLocal<Connection?>()
+    @Volatile private var lastInitResult: DbInitResult? = null
+
     private val connection: Connection
-        get() = conn ?: throw UninitializedPropertyAccessException(
-            "lateinit property connection has not been initialized"
-        )
+        get() {
+            val active = conn
+            if (active != null && runCatching { !active.isClosed }.getOrDefault(false)) return active
+            migrationConnection.get()?.let { return it }
+            throw DatabaseUnavailableException(lastInitResult)
+        }
 
-    /** True once the DB has been opened and migrated successfully. */
-    val isReady: Boolean get() = conn != null
+    /** True only after a migrated, open connection has been published. */
+    val isReady: Boolean
+        get() = conn?.let { runCatching { !it.isClosed }.getOrDefault(false) } == true
 
-    /**
-     * Stores the exception from the most recent failed tryOpenAndMigrate() call so
-     * init() can distinguish SQLITE_BUSY (another instance running) from real corruption.
-     */
-    @Volatile private var lastOpenFailure: Exception? = null
+    private val _startupState = MutableStateFlow<DbStartupState>(DbStartupState.NotStarted)
+    val startupState: StateFlow<DbStartupState> = _startupState.asStateFlow()
 
+    @Volatile
+    internal var recoveryFileOpsForTest: RecoveryFileOps? = null
+
+    @Synchronized
     fun init(
         dbFile: File = defaultDbFile(),
         policy: InitPolicy = InitPolicy.Default,
         allowRecovery: Boolean = true
-    ) {
-        val dbDir = dbFile.absoluteFile.parentFile ?: File(".")
-        dbDir.mkdirs()
+    ): DbInitResult {
+        if (isReady) return DbInitResult.Ready
 
-        // First attempt — open existing DB
-        if (!tryOpenAndMigrate(dbFile, policy)) {
-            // SQLITE_BUSY means another FocusFlow instance already has the file open.
-            // The database is valid — do NOT back it up or delete it. Log and return;
-            // the app runs with empty/default settings until the other instance exits.
-            val failure = lastOpenFailure
-            if (failure is org.sqlite.SQLiteException &&
-                failure.resultCode == org.sqlite.SQLiteErrorCode.SQLITE_BUSY) {
-                File(dbDir, "crash.log")
-                    .appendText("[${java.time.LocalDateTime.now()}] DB locked (SQLITE_BUSY) — another FocusFlow instance may be running. Starting with empty/default settings.\n\n")
-                return
-            }
-            if (!allowRecovery) return
-            // Any other failure (corruption, I/O error) — back up and start fresh
-            safeBackupBrokenDb(dbDir, dbFile)
-            // Second attempt — fresh DB
-            if (!tryOpenAndMigrate(dbFile, policy)) {
-                // Absolute last resort: delete everything and create blank
-                dbFile.delete()
-                tryOpenAndMigrate(dbFile, policy)
+        val dbDir = dbFile.absoluteFile.parentFile ?: File(".")
+        val startedAtNs = System.nanoTime()
+        if (!dbDir.exists() && !dbDir.mkdirs()) {
+            return finishFailed(IOException("Could not create database directory: $dbDir"), dbFile)
+        }
+
+        val (sidecarSnapshots, snapshotFailure) = captureSidecarSnapshots(dbFile)
+        if (snapshotFailure != null) return finishFailed(snapshotFailure, dbFile)
+
+        val first = openWithRetries(dbFile, policy, startedAtNs)
+        if (first is OpenResult.Ready) {
+            cleanupSidecarSnapshots(sidecarSnapshots)
+            return finishReady()
+        }
+
+        val sidecarRestoreFailure = restoreSidecarSnapshots(sidecarSnapshots)
+        if (sidecarRestoreFailure != null) {
+            return finishFailed(sidecarRestoreFailure, dbFile)
+        }
+        cleanupSidecarSnapshots(sidecarSnapshots)
+
+        val failure = first as OpenResult.Failure
+        val kind = failure.kind
+        if (kind == SqliteFailureKind.BUSY || kind == SqliteFailureKind.LOCKED) {
+            return finishBusy(failure, startedAtNs, dbFile)
+        }
+
+        if (kind != SqliteFailureKind.CORRUPT && kind != SqliteFailureKind.NOTADB) {
+            return finishFailed(failure.cause, dbFile)
+        }
+
+        if (!allowRecovery) return finishFailed(failure.cause, dbFile)
+
+        val archiveFailure = preserveCorruptDatabaseSet(dbFile)
+        if (archiveFailure != null) {
+            return finishFailed(
+                IOException("Could not safely preserve the corrupt database set; original files were not intentionally removed.", archiveFailure),
+                dbFile
+            )
+        }
+
+        val afterRecovery = openWithRetries(dbFile, policy, startedAtNs)
+        return when (afterRecovery) {
+            OpenResult.Ready -> finishReady()
+            is OpenResult.Failure -> when (afterRecovery.kind) {
+                SqliteFailureKind.BUSY, SqliteFailureKind.LOCKED -> finishBusy(afterRecovery, startedAtNs, dbFile)
+                else -> finishFailed(afterRecovery.cause, dbFile)
             }
         }
     }
@@ -71,104 +180,320 @@ object Database {
     internal fun resetForTest() {
         val previous = conn
         conn = null
-        lastOpenFailure = null
+        lastInitResult = null
+        _startupState.value = DbStartupState.NotStarted
+        recoveryFileOpsForTest = null
         runCatching { previous?.close() }
+    }
+
+    @Synchronized
+    fun close() {
+        val current = conn ?: return
+        runCatching {
+            current.createStatement().use { statement ->
+                statement.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            }
+        }
+        conn = null
+        runCatching { current.close() }
     }
 
     private fun defaultDbFile(): File =
         File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db")
 
-    private fun tryOpenAndMigrate(dbFile: File, policy: InitPolicy): Boolean {
-        var localConn: java.sql.Connection? = null
-        return try {
-            // Set busy_timeout at the driver level via SQLiteConfig so the handler
-            // is registered before ANY statement executes — including journal_mode=WAL
-            // which requires an exclusive lock during a rollback→WAL transition.
-            // Setting it via PRAGMA on a live connection does NOT register the handler
-            // through the sqlite-jdbc driver; the default handler fires SQLITE_BUSY
-            // immediately, making the PRAGMA statement-based approach ineffective for
-            // the very first contended operation.
-            val config = org.sqlite.SQLiteConfig()
-            config.setBusyTimeout(policy.busyTimeoutMs)
-            val ds = SQLiteDataSource(config)
-            ds.url = "jdbc:sqlite:${dbFile.absolutePath}"
-            localConn = ds.connection
-            localConn.autoCommit = true
+    private sealed interface OpenResult {
+        data object Ready : OpenResult
+        data class Failure(
+            val cause: Throwable,
+            val kind: SqliteFailureKind,
+            val attempts: Int,
+            val waitedMs: Long
+        ) : OpenResult
+    }
 
-            localConn.createStatement().use { it.execute("PRAGMA journal_mode=WAL") }
-            // In WAL mode, synchronous=NORMAL is crash-safe (no DB corruption risk) and
-            // avoids the per-commit fsync of the default FULL mode. Data is pushed to the
-            // OS page cache instantly; the OS batches the physical flush asynchronously.
-            // This eliminates micro-stutters on every temptation log / session tick write.
-            localConn.createStatement().use { it.execute("PRAGMA synchronous=NORMAL") }
+    private data class SidecarSnapshot(val original: File, val snapshot: File?)
 
-            // Checkpoint & truncate any leftover WAL files from a previous crash/uninstall.
-            // Best-effort only: wal_checkpoint(TRUNCATE) returns SQLITE_BUSY immediately
-            // (bypassing the busy timeout) when another connection has an open read
-            // transaction in WAL mode. Swallow the error — the WAL will self-checkpoint
-            // on the next successful launch or when the blocking connection closes.
-            try {
-                localConn.createStatement().use { it.execute("PRAGMA wal_checkpoint(TRUNCATE)") }
-            } catch (_: Exception) { /* best-effort — see comment above */ }
-
-            // Integrity check — catches bit-flipped or half-written databases
-            val integrity = localConn.createStatement()
-                .executeQuery("PRAGMA quick_check")
-                .use { rs -> if (rs.next()) rs.getString(1) else "error" }
-            if (integrity != "ok") {
-                localConn.close()
-                localConn = null
-                return false
+    private fun captureSidecarSnapshots(dbFile: File): Pair<List<SidecarSnapshot>, Throwable?> {
+        val snapshots = mutableListOf<SidecarSnapshot>()
+        val runId = UUID.randomUUID().toString()
+        try {
+            listOf(File("${dbFile.absolutePath}-wal"), File("${dbFile.absolutePath}-shm")).forEach { sidecar ->
+                if (!sidecar.exists()) {
+                    snapshots += SidecarSnapshot(sidecar, null)
+                } else {
+                    val snapshot = File(sidecar.parentFile, ".${sidecar.name}.startup_$runId")
+                    Files.copy(sidecar.toPath(), snapshot.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
+                    if (sidecar.length() != snapshot.length() ||
+                        !sha256(sidecar).contentEquals(sha256(snapshot))
+                    ) {
+                        throw IOException("Could not verify startup snapshot for ${sidecar.name}")
+                    }
+                    snapshots += SidecarSnapshot(sidecar, snapshot)
+                }
             }
-
-            conn = localConn
-            migrate()
-            true
-        } catch (e: Exception) {
-            lastOpenFailure = e
-            // Close any connection opened during this attempt to prevent a leak.
-            // If migrate() threw after `connection = localConn`, closing here is correct —
-            // the caller (init()) will retry and reassign the field to a fresh connection.
-            try { localConn?.close() } catch (_: Exception) {}
-            val logFile = java.io.File(
-                System.getProperty("user.home") + "/.focusflow/crash.log"
-            )
-            logFile.parentFile?.mkdirs()
-            logFile.appendText(
-                "[${java.time.LocalDateTime.now()}] DB open failed: ${e.message}\n${e.stackTraceToString()}\n\n"
-            )
-            // DB open failure means the app runs with no user settings / block rules.
-            // This is critical: all enforcement may be inactive. Alert Discord so we
-            // know which users are affected and can investigate schema corruption.
-            com.focusflow.services.CrashReporter.reportCritical(
-                source    = "Database.open",
-                message   = "Database failed to open — app will run with default/empty settings. All enforcement rules may be inactive.\n**Cause:** ${e.message}",
-                throwable = e
-            )
-            false
+            return snapshots to null
+        } catch (failure: Exception) {
+            cleanupSidecarSnapshots(snapshots)
+            return emptyList<SidecarSnapshot>() to failure
         }
     }
 
-    private fun safeBackupBrokenDb(dbDir: java.io.File, dbFile: java.io.File) {
-        val ts = java.time.LocalDateTime.now()
-            .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
-        listOf(dbFile, java.io.File(dbDir, "focusflow.db-shm"),
-               java.io.File(dbDir, "focusflow.db-wal")).forEach { f ->
-            if (f.exists()) {
-                val backup = java.io.File(dbDir, "${f.name}.broken_$ts")
-                // Best-effort per-file: if the auxiliary -shm or -wal file is still
-                // locked by the prior process, skip it rather than propagating the
-                // IOException and aborting the entire backup/recovery sequence.
-                try {
-                    f.copyTo(backup, overwrite = true)
-                    f.delete()
-                } catch (_: Exception) { /* locked by prior instance — skip */ }
+    private fun restoreSidecarSnapshots(snapshots: List<SidecarSnapshot>): Throwable? {
+        val runId = UUID.randomUUID().toString()
+        try {
+            snapshots.forEach { (original, snapshot) ->
+                if (snapshot == null) {
+                    if (original.exists()) {
+                        val observed = File(original.parentFile, "${original.name}.startup_created_$runId")
+                        Files.move(original.toPath(), observed.toPath())
+                    }
+                } else {
+                    val unchanged = original.exists() &&
+                        original.length() == snapshot.length() &&
+                        sha256(original).contentEquals(sha256(snapshot))
+                    if (!unchanged) {
+                        if (original.exists()) {
+                            val observed = File(original.parentFile, "${original.name}.startup_observed_$runId")
+                            Files.move(original.toPath(), observed.toPath())
+                        }
+                        Files.copy(snapshot.toPath(), original.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
+                    }
+                }
+            }
+            return null
+        } catch (failure: Exception) {
+            return failure
+        }
+    }
+
+    private fun cleanupSidecarSnapshots(snapshots: List<SidecarSnapshot>) {
+        snapshots.mapNotNull { it.snapshot }.forEach { snapshot ->
+            runCatching { Files.deleteIfExists(snapshot.toPath()) }
+        }
+    }
+
+    private fun openWithRetries(dbFile: File, policy: InitPolicy, startedAtNs: Long): OpenResult {
+        var attempt = 0
+        while (attempt < policy.maxAttempts) {
+            val elapsedMs = (System.nanoTime() - startedAtNs) / 1_000_000L
+            val remainingMs = policy.totalDeadlineMs - elapsedMs
+            if (remainingMs <= 0L) break
+
+            attempt++
+            _startupState.value = DbStartupState.Opening(attempt, elapsedMs)
+            val effectiveBusyTimeoutMs = minOf(policy.busyTimeoutMs.toLong(), remainingMs)
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            val failure = tryOpenAndMigrate(dbFile, effectiveBusyTimeoutMs)
+            if (failure == null) return OpenResult.Ready
+
+            val kind = (failure as? SQLException)?.let(::classifySqliteFailure)
+                ?: SqliteFailureKind.OTHER
+            if (kind != SqliteFailureKind.BUSY && kind != SqliteFailureKind.LOCKED) {
+                return OpenResult.Failure(
+                    failure,
+                    kind,
+                    attempt,
+                    (System.nanoTime() - startedAtNs) / 1_000_000L
+                )
+            }
+
+            val backoff = policy.backoffMs.getOrNull(attempt - 1) ?: 0L
+            val timeLeft = policy.totalDeadlineMs - (System.nanoTime() - startedAtNs) / 1_000_000L
+            if (attempt >= policy.maxAttempts || backoff >= timeLeft) {
+                return OpenResult.Failure(
+                    failure,
+                    kind,
+                    attempt,
+                    (System.nanoTime() - startedAtNs) / 1_000_000L
+                )
+            }
+            try {
+                Thread.sleep(backoff)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return OpenResult.Failure(
+                    interrupted,
+                    SqliteFailureKind.OTHER,
+                    attempt,
+                    (System.nanoTime() - startedAtNs) / 1_000_000L
+                )
             }
         }
-        val logFile = java.io.File(dbDir, "crash.log")
-        logFile.appendText(
-            "[${java.time.LocalDateTime.now()}] Corrupt DB backed up as focusflow.db.broken_$ts — starting fresh.\n\n"
+
+        val deadlineFailure = SQLException("SQLite initialization deadline expired", "SQLITE_BUSY", 5)
+        return OpenResult.Failure(
+            deadlineFailure,
+            SqliteFailureKind.BUSY,
+            attempt,
+            (System.nanoTime() - startedAtNs) / 1_000_000L
         )
+    }
+
+    private fun tryOpenAndMigrate(dbFile: File, busyTimeoutMs: Int): Throwable? {
+        var localConn: Connection? = null
+        try {
+            val config = org.sqlite.SQLiteConfig().apply {
+                setBusyTimeout(busyTimeoutMs)
+            }
+            val dataSource = SQLiteDataSource(config).apply {
+                url = "jdbc:sqlite:${dbFile.absolutePath}"
+            }
+            localConn = dataSource.connection
+            localConn.autoCommit = true
+
+            // quick_check is read-only. Run it before changing journal mode so a
+            // corrupt file and its WAL/SHM companions remain untouched until copied.
+            val integrity = localConn.createStatement()
+                .executeQuery("PRAGMA quick_check")
+                .use { resultSet -> if (resultSet.next()) resultSet.getString(1) else "error" }
+            if (!integrity.equals("ok", ignoreCase = true)) {
+                throw SQLException("SQLite quick_check failed: $integrity", "SQLITE_CORRUPT", 11)
+            }
+
+            val journalMode = localConn.createStatement()
+                .executeQuery("PRAGMA journal_mode=WAL")
+                .use { resultSet -> if (resultSet.next()) resultSet.getString(1) else "" }
+            if (!journalMode.equals("wal", ignoreCase = true)) {
+                throw SQLException("Could not enable WAL mode (result: $journalMode)", "SQLITE_BUSY", 5)
+            }
+            localConn.createStatement().use { it.execute("PRAGMA synchronous=NORMAL") }
+
+            try {
+                localConn.createStatement().use { it.execute("PRAGMA wal_checkpoint(TRUNCATE)") }
+            } catch (_: Exception) {
+                // A read transaction may prevent truncation; WAL remains valid.
+            }
+
+            migrationConnection.set(localConn)
+            try {
+                migrate()
+            } finally {
+                migrationConnection.remove()
+            }
+
+            conn = localConn
+            localConn = null
+            return null
+        } catch (failure: Exception) {
+            migrationConnection.remove()
+            runCatching { localConn?.close() }
+            return failure
+        } finally {
+            migrationConnection.remove()
+            runCatching { localConn?.close() }
+        }
+    }
+
+    private fun preserveCorruptDatabaseSet(dbFile: File): Throwable? {
+        if (!dbFile.exists()) return IOException("The corrupt database file no longer exists: $dbFile")
+
+        val sources = listOf(
+            dbFile,
+            File("${dbFile.absolutePath}-wal"),
+            File("${dbFile.absolutePath}-shm")
+        ).filter { it.exists() }
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS"))
+        val suffix = "${timestamp}_${UUID.randomUUID().toString().take(8)}"
+        val stagedCopies = mutableListOf<Triple<File, File, File>>()
+        val movedOriginals = mutableListOf<Pair<File, File>>()
+        val operations = recoveryFileOpsForTest ?: NioRecoveryFileOps
+
+        try {
+            sources.forEach { source ->
+                val archive = File(source.parentFile, "${source.name}.broken_$suffix")
+                val staged = File(source.parentFile, "${archive.name}.verifycopy")
+                stagedCopies += Triple(source, staged, archive)
+                operations.copy(source, staged)
+                if (source.length() != staged.length() || !sha256(source).contentEquals(sha256(staged))) {
+                    throw IOException("Verified copy did not match original file: ${source.name}")
+                }
+            }
+
+            stagedCopies.forEach { (original, _, archive) ->
+                operations.move(original, archive)
+                movedOriginals += original to archive
+            }
+
+            stagedCopies.forEach { (_, staged, _) -> runCatching { operations.delete(staged) } }
+            logDatabaseMessage(dbFile, "Corrupt database preserved as a verified .broken_$suffix file set.")
+            return null
+        } catch (failure: Exception) {
+            var rollbackFailure: Throwable? = null
+            movedOriginals.asReversed().forEach { (original, archive) ->
+                try {
+                    operations.move(archive, original)
+                } catch (restoreFailure: Exception) {
+                    rollbackFailure = rollbackFailure?.also { it.addSuppressed(restoreFailure) } ?: restoreFailure
+                }
+            }
+            stagedCopies.forEach { (_, staged, _) -> runCatching { operations.delete(staged) } }
+            rollbackFailure?.let(failure::addSuppressed)
+            return failure
+        }
+    }
+
+    private fun sha256(file: File): ByteArray =
+        MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file.toPath()))
+
+    private fun finishReady(): DbInitResult.Ready {
+        lastInitResult = DbInitResult.Ready
+        _startupState.value = DbStartupState.Ready
+        return DbInitResult.Ready
+    }
+
+    private fun finishBusy(
+        failure: OpenResult.Failure,
+        startedAtNs: Long,
+        dbFile: File
+    ): DbInitResult.Busy {
+        val sqlFailure = failure.cause as? SQLException
+            ?: SQLException(failure.cause.message ?: "SQLite remained busy", failure.cause)
+        val waitedMs = (System.nanoTime() - startedAtNs) / 1_000_000L
+        val result = DbInitResult.Busy(sqlFailure, failure.attempts, waitedMs)
+        lastInitResult = result
+        _startupState.value = DbStartupState.Busy(failure.attempts, waitedMs, sqlFailure)
+        logDatabaseMessage(dbFile, "Database is busy after ${failure.attempts} attempt(s) and ${waitedMs}ms; no recovery was attempted.")
+        return result
+    }
+
+    private fun finishFailed(cause: Throwable, untouchedPath: File): DbInitResult.Failed {
+        val result = DbInitResult.Failed(cause, untouchedPath)
+        lastInitResult = result
+        _startupState.value = DbStartupState.Failed(cause, untouchedPath)
+        logDatabaseMessage(untouchedPath, "Database initialization failed; the file was left untouched: ${cause.message}")
+        if (untouchedPath.absoluteFile == defaultDbFile().absoluteFile) {
+            com.focusflow.services.CrashReporter.reportCritical(
+                source = "Database.open",
+                message = "Database initialization failed. FocusFlow is waiting without starting dependent services.\n**Cause:** ${cause.message}",
+                throwable = cause
+            )
+        }
+        return result
+    }
+
+    private fun logDatabaseMessage(dbFile: File, message: String) {
+        val logFile = File(dbFile.absoluteFile.parentFile ?: File("."), "crash.log")
+        runCatching {
+            logFile.parentFile?.mkdirs()
+            logFile.appendText("[${LocalDateTime.now()}] $message\n\n")
+        }
+        runCatching {
+            com.focusflow.enforcement.EnforcementLog.warn("Database", message)
+        }
+    }
+
+    private object NioRecoveryFileOps : RecoveryFileOps {
+        override fun copy(source: File, destination: File) {
+            Files.copy(source.toPath(), destination.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
+        }
+
+        override fun move(source: File, destination: File) {
+            Files.move(source.toPath(), destination.toPath())
+        }
+
+        override fun delete(file: File) {
+            Files.deleteIfExists(file.toPath())
+        }
     }
 
     // ── Versioned schema migration ─────────────────────────────────────────────
@@ -206,14 +531,7 @@ object Database {
             connection.commit()
         } catch (e: Exception) {
             try { connection.rollback() } catch (_: Exception) {}
-            val logFile = java.io.File(
-                System.getProperty("user.home") + "/.focusflow/crash.log"
-            )
-            logFile.parentFile?.mkdirs()
-            logFile.appendText(
-                "[${java.time.LocalDateTime.now()}] Migration failed at schema v$current: ${e.message}\n${e.stackTraceToString()}\n\n"
-            )
-            throw e  // Propagate so init() triggers recovery flow
+            throw e // init() classifies and records the final outcome
         } finally {
             connection.autoCommit = true
         }

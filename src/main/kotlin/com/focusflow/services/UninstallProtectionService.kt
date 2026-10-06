@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.data.DbInitResult
 import com.focusflow.enforcement.InstallVariant
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
@@ -44,8 +45,12 @@ object UninstallProtectionService {
         if (!InstallVariant.isWindowsDirectInstall) return true
 
         return runCatching {
-            if (!Database.isReady) Database.init()
-            if (!Database.isReady) return false
+            val result = if (Database.isReady) {
+                DbInitResult.Ready
+            } else {
+                Database.init(allowRecovery = false)
+            }
+            if (result !is DbInitResult.Ready || !Database.isReady) return false
 
             ProcessMonitor.alwaysOnEnabled =
                 Database.getSetting("always_on_enforcement") == "true"

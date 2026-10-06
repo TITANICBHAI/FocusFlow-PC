@@ -5,248 +5,241 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import com.focusflow.data.Database
+import com.focusflow.data.DbInitResult
+import com.focusflow.data.DbStartupState
 import com.focusflow.enforcement.AppBlocker
 import com.focusflow.enforcement.KillSwitchService
-import com.focusflow.enforcement.NetworkBlocker
-import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.RegistryLockdown
-import com.focusflow.enforcement.WatchdogInstaller
-import com.focusflow.enforcement.FloatingBlockOverlay
-import com.focusflow.services.*
-import com.focusflow.services.FocusLauncherService
+import com.focusflow.services.CrashReporter
+import com.focusflow.services.FocusSessionService
+import com.focusflow.services.InstanceAcquireResult
+import com.focusflow.services.SingleInstanceGuard
+import com.focusflow.services.StartOnceResult
+import com.focusflow.services.StartupBootstrap
+import com.focusflow.services.SystemTrayManager
+import com.focusflow.services.UninstallProtectionService
+import com.focusflow.services.UninstallWizard
+import com.focusflow.services.UninstallWizardFlag
+import com.focusflow.services.WindowsUninstallRegistration
 import com.focusflow.ui.launcher.LauncherWindowHost
+import com.focusflow.ui.startup.StartupGateWindow
+import java.awt.Desktop
+import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 
-fun main(args: Array<String>) = application {
-    // Windows Settings and the MSI uninstall entry point to the installed
-    // executable with this flag. The wizard performs protection checks and
-    // then hands the original removal command back to Windows Installer.
+private sealed interface StartupView {
+    data object WaitingForInstance : StartupView
+    data object Starting : StartupView
+    data class DatabaseUnavailable(val result: DbInitResult) : StartupView
+    data class ServiceFailure(val cause: Throwable) : StartupView
+    data object Ready : StartupView
+}
+
+private class DesktopLaunch {
+    private val handle = AtomicReference<SingleInstanceGuard.Handle?>(null)
+    private val preDatabaseStarted = AtomicBoolean(false)
+    val showPending = AtomicBoolean(false)
+    val showRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+
+    val hasInstance: Boolean get() = handle.get() != null
+
+    fun acquire(): InstanceAcquireResult {
+        handle.get()?.let { return InstanceAcquireResult.Acquired(it) }
+
+        val result = SingleInstanceGuard.acquire {
+            showPending.set(true)
+            showRequests.tryEmit(Unit)
+        }
+        if (result !is InstanceAcquireResult.Acquired) return result
+
+        if (handle.compareAndSet(null, result.handle)) {
+            runPreDatabaseStartup()
+        } else {
+            result.handle.close()
+        }
+
+        return handle.get()?.let(InstanceAcquireResult::Acquired)
+            ?: InstanceAcquireResult.HolderUnresponsive
+    }
+
+    private fun runPreDatabaseStartup() {
+        if (!preDatabaseStarted.compareAndSet(false, true)) return
+
+        // These process-level actions run only after this process owns the
+        // single-instance lock and never from a composable body.
+        CrashReporter.install()
+        runCatching { WindowsUninstallRegistration.ensureRegistered() }
+            .onFailure { CrashReporter.report(Thread.currentThread(), it, source = "Windows uninstall registration") }
+        runCatching { RegistryLockdown.disable() }
+            .onFailure { CrashReporter.report(Thread.currentThread(), it, source = "RegistryLockdown.disable()") }
+    }
+
+    fun release() {
+        handle.getAndSet(null)?.close()
+    }
+}
+
+fun main(args: Array<String>) {
+    // The standalone uninstaller is intentionally outside the normal
+    // single-instance/database bootstrap path and is never allowed recovery.
     if (UninstallWizardFlag.isRequested(args)) {
         UninstallWizard.run()
-        exitApplication()
-        return@application
+        return
     }
 
-    // ── Crash reporter — MUST be first, before any other service ──────────────
-    // Installs handlers for:
-    //   • All Java/Kotlin threads (Thread.setDefaultUncaughtExceptionHandler)
-    //   • AWT Event Dispatch Thread (sun.awt.exception.handler)
-    //   • Kotlin coroutines (fall-through to thread handler via SupervisorJob)
-    // Writes a detailed report to Desktop/~/.focusflow/tmpdir with a Swing dialog.
-    CrashReporter.install()
+    val launch = DesktopLaunch()
+    if (launch.acquire() is InstanceAcquireResult.AlreadyRunning) return
 
-    // Register the wrapper before database/service bootstrap. The Windows
-    // uninstall entry is created by jpackage during installation, while this
-    // launch is the first opportunity for FocusFlow to point it at --uninstall.
-    // Keeping this independent of Database.init() prevents a database recovery
-    // problem from leaving the stock uninstaller exposed.
-    WindowsUninstallRegistration.ensureRegistered()
-
-    // ── Startup registry janitor ───────────────────────────────────────────────
-    // Unconditionally remove any leftover registry lockdown keys from a previous
-    // session that was terminated before RegistryLockdown.disable() could run
-    // (e.g. SIGKILL, power loss, OOM kill by the OS — scenarios where the JVM
-    // shutdown hook cannot fire). This is safe: tryDelete() is a no-op when the
-    // key doesn't exist, so a clean-boot startup is unaffected.
-    try { RegistryLockdown.disable() } catch (_: Throwable) {}
-
-    try {
-        Database.init()
-    } catch (e: Exception) {
-        // Database.init() has its own internal recovery. If it still throws,
-        // CrashReporter already installed the handler, so this is just logged.
-        CrashReporter.report(Thread.currentThread(), e, source = "Database.init()")
+    application {
+        FocusFlowDesktop(launch) { exitApplication() }
     }
+}
 
-    // Auto-backup: daily rolling backup of SQLite database
-    AutoBackupService.start()
-
-    ProcessMonitor.alwaysOnEnabled   = Database.getSetting("always_on_enforcement") == "true"
-    SoundAversion.isEnabled          = Database.getSetting("sound_aversion") != "false"
-    FocusSessionService.pomodoroMode = Database.getSetting("pomodoro_mode") == "true"
-    AppBlocker.overlayEnabled        = Database.getSetting("block_overlay_enabled") != "false"
-    FloatingBlockOverlay.overlayMessage =
-        Database.getSetting("overlay_message") ?: "Stay focused. You've got this."
-
-    ProcessMonitor.start()
-
-    BreakEnforcer.loadSettings()
-    NuclearMode.loadFromDb()
-    TaskAlarmService.start()
-
-    // Kill switch — restore today's remaining budget from the DB
-    KillSwitchService.loadFromDb()
-
-    // Watchdog — register (or overwrite) the Task Scheduler entry that relaunches
-    // FocusFlow every 2 minutes if it isn't running. No admin rights required.
-    WatchdogInstaller.install()
-
-    // Recurring tasks — auto-generate daily/weekday/weekly copies each morning
-    RecurringTaskService.start()
-
-    // Block schedules — recurring time-window enforcement
-    BlockScheduleService.start()
-
-    // Standalone block — restore a block that survived a restart
-    StandaloneBlockService.loadFromDb()
-
-    // Focus Launcher — resume a valid interrupted session, otherwise restore stale OS state.
-    try { FocusLauncherService.restoreInterruptedSession() } catch (_: Throwable) {
-        // Absolute fallback: if recovery itself throws, at minimum restore the taskbar
-        try { FocusLauncherService.emergencyRestoreWindows() } catch (_: Throwable) {}
+@Composable
+private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit) {
+    var startup by remember {
+        mutableStateOf(if (launch.hasInstance) StartupView.Starting else StartupView.WaitingForInstance)
     }
+    var retryToken by remember { mutableIntStateOf(0) }
+    var windowVisible by remember { mutableStateOf(true) }
 
-    // Daily allowances — per-app usage caps that reset at midnight
-    DailyAllowanceTracker.start()
+    val dbStartupState by Database.startupState.collectAsState()
+    val launcherActive by com.focusflow.services.FocusLauncherService.isActive.collectAsState()
+    val sessionState by FocusSessionService.state.collectAsState()
+    val killSwitchRemaining by KillSwitchService.remainingSecondsToday.collectAsState()
+    val killSwitchActive by KillSwitchService.isActive.collectAsState()
+    val ready = startup is StartupView.Ready
 
-    // Sync existing FocusFlow firewall rules from Windows Firewall on startup
-    // so rules created in a previous session are recognised without re-applying.
-    NetworkBlocker.syncFromFirewall()
-
-    // Start the hosts-file integrity monitor — re-applies blocks if an external
-    // tool (antivirus, etc.) removes our entries while the app is running.
-    if (HostsBlocker.getBlockedDomains().isNotEmpty()) {
-        HostsBlocker.startMonitor()
+    val databaseFile = remember {
+        File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db").absoluteFile
     }
-
-    WeeklyReportService.onReportReady = { report ->
-        NotificationService.weeklyReport(report)
-    }
-    WeeklyReportService.startScheduler()
-
-    var windowVisible by remember { mutableStateOf(!FocusLauncherService.isActive.value) }
+    val databaseLog = remember { File(databaseFile.parentFile, "crash.log").absolutePath }
 
     val windowState = rememberWindowState(
-        width     = 1100.dp,
-        height    = 720.dp,
+        width = 1100.dp,
+        height = 720.dp,
         placement = WindowPlacement.Floating
     )
 
-    val launcherActive by FocusLauncherService.isActive.collectAsState()
-    LaunchedEffect(launcherActive) {
-        // LauncherWindowHost owns the fullscreen session windows. Keep the
-        // normal FocusFlow window hidden until the session ends.
-        windowVisible = !launcherActive
+    val quitGate: () -> Unit = {
+        Thread({
+            Database.close()
+            launch.release()
+            exitApplication()
+        }, "FocusFlow-Gate-Quit").also { it.isDaemon = true }.start()
     }
 
-    // Dynamic title: tracks active session countdown in the OS window title bar
-    val sessionState by FocusSessionService.state.collectAsState()
-    val windowTitle = when {
-        sessionState.isActive && sessionState.isPaused ->
-            "FocusFlow — ${sessionState.taskName} (paused)"
-        sessionState.isActive -> {
-            val remSec = (sessionState.totalSeconds - sessionState.elapsedSeconds).coerceAtLeast(0)
-            val remMin = remSec / 60
-            val remS   = remSec % 60
-            "FocusFlow — ${sessionState.taskName} (${remMin}m ${remS.toString().padStart(2,'0')}s left)"
-        }
-        else -> "FocusFlow"
-    }
-
-    // Keep the kill-switch tray menu item label in sync with the live countdown
-    val ksRemaining by KillSwitchService.remainingSecondsToday.collectAsState()
-    val ksActive    by KillSwitchService.isActive.collectAsState()
-    LaunchedEffect(ksRemaining, ksActive) {
-        val m = ksRemaining / 60
-        val s = (ksRemaining % 60).toString().padStart(2, '0')
-        val label = when {
-            ksRemaining <= 0 -> "Emergency Break (exhausted for today)"
-            ksActive         -> "Stop Break — ${m}m ${s}s remaining today"
-            else             -> "Emergency Break (${m}m ${s}s left today)"
-        }
-        SystemTrayManager.updateKillSwitchItem(label)
-    }
-
-    // Shared shutdown action — runs ALL service teardown on a dedicated daemon
-    // thread so the AWT Event Dispatch Thread never blocks. A hung service (e.g.
-    // ProcessMonitor waiting on a thread join) would otherwise freeze the UI and
-    // trigger a Windows "Not Responding" dialog.
+    // Shared shutdown action keeps service teardown off the AWT event thread.
     val doShutdown: () -> Unit = {
         Thread({
             if (!UninstallProtectionService.authorizeQuit()) return@Thread
-            FocusLauncherService.exit()
+            com.focusflow.services.FocusLauncherService.exit()
             KillSwitchService.deactivate()
             FocusSessionService.end(completed = false)
-            // dispose() cancels the internal coroutine scope (timer job etc.) cleanly
-            // after end() has already cleared enforcement state. Without this the scope
-            // and its timer coroutine remain live until the JVM exits — not harmful, but
-            // it prevents a fully clean teardown of FocusSessionService's internal state.
             FocusSessionService.dispose()
-            WeeklyReportService.stopScheduler()
-            TaskAlarmService.stop()
-            RecurringTaskService.stop()
-            BlockScheduleService.stop()
-            DailyAllowanceTracker.stop()
-            AutoBackupService.stop()
-            NuclearMode.disable()
-            // Join the background firewall-cleanup thread before the JVM exits so
-            // firewall rules are never left active due to process death.
-            NuclearMode.awaitCleanup()
+            com.focusflow.services.WeeklyReportService.stopScheduler()
+            com.focusflow.services.TaskAlarmService.stop()
+            com.focusflow.services.RecurringTaskService.stop()
+            com.focusflow.services.BlockScheduleService.stop()
+            com.focusflow.services.DailyAllowanceTracker.stop()
+            com.focusflow.services.AutoBackupService.stop()
+            com.focusflow.enforcement.NuclearMode.disable()
+            com.focusflow.enforcement.NuclearMode.awaitCleanup()
             ProcessMonitor.dispose()
             AppBlocker.dispose()
             SystemTrayManager.remove()
+            Database.close()
+            launch.release()
             exitApplication()
         }, "FocusFlow-Shutdown").also { it.isDaemon = true }.start()
     }
 
-    if (SystemTrayManager.isSupported) {
-        SystemTrayManager.install(
-            SystemTrayManager.TrayCallbacks(
-                onRestore = { windowVisible = true },
-                onQuit = doShutdown,
-                onToggleBlocking = {
-                    val newState = !ProcessMonitor.alwaysOnEnabled
-                    // Disabling enforcement requires the GlobalPin if one is set
-                    if (!newState && GlobalPin.isSet()) {
-                        SystemTrayManager.showNotification(
-                            "PIN Required",
-                            "Open FocusFlow to disable enforcement — a PIN is required."
-                        )
-                        return@TrayCallbacks
-                    }
-                    ProcessMonitor.alwaysOnEnabled = newState
-                    Database.setSetting("always_on_enforcement", newState.toString())
-                    val status = if (newState) "ON" else "OFF"
-                    SystemTrayManager.showNotification(
-                        "FocusFlow Blocking $status",
-                        "Always-on enforcement is now $status"
-                    )
-                },
-                onKillSwitch = {
-                    val activated = KillSwitchService.toggle()
-                    when {
-                        !activated -> SystemTrayManager.showNotification(
-                            "Emergency Break Exhausted",
-                            "You've used your 5-minute daily break budget. Resets at midnight."
-                        )
-                        KillSwitchService.isActive.value -> {
-                            val secs = KillSwitchService.remainingSecondsToday.value
-                            val m = secs / 60
-                            val s = (secs % 60).toString().padStart(2, '0')
-                            SystemTrayManager.showNotification(
-                                "Emergency Break — Enforcement Paused",
-                                "${m}m ${s}s remaining in your daily budget."
-                            )
-                        }
-                        else -> {
-                            val secs = KillSwitchService.remainingSecondsToday.value
-                            val m = secs / 60
-                            val s = (secs % 60).toString().padStart(2, '0')
-                            SystemTrayManager.showNotification(
-                                "Enforcement Resumed",
-                                "${m}m ${s}s of emergency break budget remaining today."
-                            )
-                        }
-                    }
-                }
-            )
-        )
+    LaunchedEffect(Unit) {
+        if (launch.showPending.getAndSet(false)) windowVisible = true
+        launch.showRequests.collect { windowVisible = true }
     }
 
-    // Probe the classloader before calling painterResource — on some JVM environments
-    // (Linux sandbox, headless CI) the context classloader may not include the resources
-    // directory, causing painterResource to throw IllegalArgumentException.
-    // Null icon is safe: Window() accepts Painter? and simply shows the OS default.
+    LaunchedEffect(retryToken) {
+        while (true) {
+            when (withContext(Dispatchers.IO) { launch.acquire() }) {
+                is InstanceAcquireResult.Acquired -> Unit
+                InstanceAcquireResult.AlreadyRunning -> {
+                    launch.release()
+                    exitApplication()
+                    return@LaunchedEffect
+                }
+                InstanceAcquireResult.HolderUnresponsive -> {
+                    startup = StartupView.WaitingForInstance
+                    delay(10_000L)
+                    continue
+                }
+            }
+
+            startup = StartupView.Starting
+            val result = withContext(Dispatchers.IO) { Database.init() }
+            when (result) {
+                DbInitResult.Ready -> {
+                    when (val bootstrap = withContext(Dispatchers.IO) {
+                        StartupBootstrap.startServices(
+                            onRestore = { windowVisible = true },
+                            onQuit = doShutdown
+                        )
+                    }) {
+                        StartOnceResult.Started, StartOnceResult.AlreadyStarted ->
+                            startup = StartupView.Ready
+                        is StartOnceResult.Failed ->
+                            startup = StartupView.ServiceFailure(bootstrap.cause)
+                    }
+                    return@LaunchedEffect
+                }
+                is DbInitResult.Busy -> {
+                    startup = StartupView.DatabaseUnavailable(result)
+                    delay(10_000L)
+                }
+                is DbInitResult.Failed -> {
+                    startup = StartupView.DatabaseUnavailable(result)
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(launcherActive, ready) {
+        windowVisible = if (ready) !launcherActive else true
+    }
+
+    LaunchedEffect(killSwitchRemaining, killSwitchActive, ready) {
+        if (!ready) return@LaunchedEffect
+        val minutes = killSwitchRemaining / 60
+        val seconds = (killSwitchRemaining % 60).toString().padStart(2, '0')
+        val label = when {
+            killSwitchRemaining <= 0 -> "Emergency Break (exhausted for today)"
+            killSwitchActive -> "Stop Break — ${minutes}m ${seconds}s remaining today"
+            else -> "Emergency Break (${minutes}m ${seconds}s left today)"
+        }
+        SystemTrayManager.updateKillSwitchItem(label)
+    }
+
+    val windowTitle = when {
+        sessionState.isActive && sessionState.isPaused ->
+            "FocusFlow — ${sessionState.taskName} (paused)"
+        sessionState.isActive -> {
+            val remainingSeconds =
+                (sessionState.totalSeconds - sessionState.elapsedSeconds).coerceAtLeast(0)
+            val remainingMinutes = remainingSeconds / 60
+            val seconds = remainingSeconds % 60
+            "FocusFlow — ${sessionState.taskName} (${remainingMinutes}m ${seconds.toString().padStart(2, '0')}s left)"
+        }
+        else -> "FocusFlow"
+    }
+
     val iconAvailable = remember {
         Thread.currentThread().contextClassLoader
             ?.getResourceAsStream("focusflow_256.png")
@@ -254,12 +247,14 @@ fun main(args: Array<String>) = application {
     }
     val appIcon = if (iconAvailable) painterResource("focusflow_256.png") else null
 
-    LauncherWindowHost()
+    if (ready) LauncherWindowHost()
 
     if (windowVisible) {
         Window(
             onCloseRequest = {
-                if (SystemTrayManager.isSupported) {
+                if (!ready) {
+                    quitGate()
+                } else if (SystemTrayManager.isSupported) {
                     windowVisible = false
                     SystemTrayManager.showNotification(
                         "FocusFlow is still running",
@@ -269,12 +264,75 @@ fun main(args: Array<String>) = application {
                     doShutdown()
                 }
             },
-            state       = windowState,
-            title       = windowTitle,
-            icon        = appIcon,
+            state = windowState,
+            title = if (ready) windowTitle else "FocusFlow — Startup",
+            icon = appIcon,
             alwaysOnTop = false
         ) {
-            App()
+            if (ready) {
+                App()
+            } else {
+                val busy = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Busy
+                val failed = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Failed
+                val isStarting = startup is StartupView.Starting
+                val title = when {
+                    startup is StartupView.WaitingForInstance -> "Waiting for another instance"
+                    busy != null -> "Waiting for the database"
+                    failed != null -> "Database unavailable"
+                    startup is StartupView.ServiceFailure -> "Background services could not start"
+                    else -> "Starting safely"
+                }
+                val message = when {
+                    startup is StartupView.WaitingForInstance ->
+                        "Another FocusFlow process holds the startup lock but did not respond to the local show request. This window will retry automatically."
+                    busy != null ->
+                        "The database is locked. No recovery was attempted and FocusFlow has not started its background services. It will retry automatically."
+                    failed != null ->
+                        "FocusFlow could not safely open the database. It did not automatically reset or replace the database file. Fix the reported issue and retry."
+                    startup is StartupView.ServiceFailure ->
+                        "The database is ready, but startup stopped while a background service was being initialized. No automatic service restart will be attempted."
+                    else -> when (val state = dbStartupState) {
+                        is DbStartupState.Opening ->
+                            "Opening the database (attempt ${state.attempt}, ${state.elapsedMs / 1_000}s elapsed). Background services are waiting."
+                        else -> "FocusFlow is checking the database before starting background protection."
+                    }
+                }
+                val details = when {
+                    startup is StartupView.WaitingForInstance ->
+                        "The instance lock is held, but the current holder did not acknowledge SHOW. Close the other FocusFlow process or retry after it exits."
+                    busy != null ->
+                        "SQLite busy after ${busy.attempts} attempt(s), ${busy.waitedMs}ms elapsed. ${busy.cause.message.orEmpty()}"
+                    failed != null ->
+                        "${failed.cause::class.java.name}: ${failed.cause.message.orEmpty()}\nFile retained at: ${failed.untouchedPath.absolutePath}"
+                    startup is StartupView.ServiceFailure -> {
+                        val cause = (startup as StartupView.ServiceFailure).cause
+                        "${cause::class.java.name}: ${cause.message.orEmpty()}\n${cause.stackTraceToString()}"
+                    }
+                    else -> dbStartupState.toString()
+                }
+
+                com.focusflow.ui.theme.FocusFlowTheme {
+                    StartupGateWindow(
+                        title = title,
+                        message = message,
+                        details = details,
+                        databasePath = databaseFile.absolutePath,
+                        logPath = databaseLog,
+                        isStarting = isStarting,
+                        isBusy = busy != null,
+                        retryEnabled = startup !is StartupView.ServiceFailure,
+                        onRetry = { retryToken++ },
+                        onOpenFolder = {
+                            runCatching {
+                                if (Desktop.isDesktopSupported) {
+                                    Desktop.getDesktop().open(databaseFile.parentFile)
+                                }
+                            }
+                        },
+                        onQuit = quitGate
+                    )
+                }
+            }
         }
     }
 }
