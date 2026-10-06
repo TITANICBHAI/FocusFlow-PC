@@ -14,3 +14,4 @@
 - [Windows uninstall protection and Store packaging](windows-uninstall-protection.md) — MSIX removal is OS-controlled; direct installers can guard normal uninstall flows but not administrators or offline removal.
 - [Focus Launcher task brief](focus-launcher-task-brief.md) — Imported migration plan and live comparison govern future dedicated-window launcher work.
 - [Nix process names in tracker tests](nix-process-names.md) — `ProcessHandle` may report `coreutils` for shell aliases such as `sleep`; inspect the command or inject process data.
+- [Silent startup recovery gate](silent-startup-gate.md) — Keep routine JVM/database startup invisible; show recovery UI only when startup needs user action.
