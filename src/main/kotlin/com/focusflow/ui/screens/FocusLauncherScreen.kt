@@ -65,7 +65,6 @@ fun FocusLauncherScreen() {
     var selectedApps     by remember { mutableStateOf<Set<String>>(emptySet()) }
     var availableApps    by remember { mutableStateOf<List<FocusLauncherApp>>(emptyList()) }
     var searchQuery      by remember { mutableStateOf("") }
-    var searchResults    by remember { mutableStateOf<List<FocusLauncherApp>>(emptyList()) }
     var durationIndex    by remember { mutableStateOf(0) }
     var customDurationMinutes by remember { mutableStateOf<Int?>(null) }
     var showCustomDurationDialog by remember { mutableStateOf(false) }
@@ -90,6 +89,17 @@ fun FocusLauncherScreen() {
     val canBreak  by FocusLauncherService.canTakeBreak.collectAsState()
     val scope     = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val filteredAvailableApps = remember(searchQuery, availableApps) {
+        val query = searchQuery.trim()
+        if (query.isBlank()) {
+            availableApps
+        } else {
+            availableApps.filter {
+                it.displayName.contains(query, ignoreCase = true) ||
+                    it.processName.contains(query, ignoreCase = true)
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         val apps = withContext(Dispatchers.IO) {
@@ -114,29 +124,6 @@ fun FocusLauncherScreen() {
         launcherPresets = presets
 
         isLoading = false
-    }
-
-    LaunchedEffect(searchQuery, availableApps) {
-        if (searchQuery.isBlank()) {
-            searchResults = emptyList()
-            return@LaunchedEffect
-        }
-        val q = searchQuery.trim().lowercase()
-        val availableProcessNames = availableApps
-            .asSequence()
-            .map { it.processName.lowercase() }
-            .toSet()
-        searchResults = withContext(Dispatchers.IO) {
-            InstalledAppsScanner.getCuratedApps()
-                .filter {
-                    it.displayName.lowercase().contains(q) ||
-                    it.processName.lowercase().contains(q)
-                }
-                .filter { it.processName.lowercase() !in availableProcessNames }
-                .distinctBy { it.processName.lowercase() }
-                .take(10)
-                .map { FocusLauncherApp(it.processName, it.displayName, it.exePath) }
-        }
     }
 
     if (isActive) {
@@ -458,7 +445,7 @@ fun FocusLauncherScreen() {
             // ── Search & add ──────────────────────────────────────────────────
             item {
                 Spacer(Modifier.height(4.dp))
-                Text(strings.launcherAddMoreApps, color = OnSurface, fontWeight = FontWeight.SemiBold,
+                    Text(strings.launcherAddMoreApps, color = OnSurface, fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -480,50 +467,6 @@ fun FocusLauncherScreen() {
                 )
             }
 
-            if (searchResults.isNotEmpty()) {
-                items(searchResults, key = { "search:${it.processName.lowercase()}" }) { app ->
-                    val key = app.processName.lowercase()
-                    val added = availableApps.any { it.processName.equals(app.processName, ignoreCase = true) }
-                    val checked = key in selectedApps
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                            .background(Surface3).padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(app.displayName, color = OnSurface,
-                                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text(app.processName, color = OnSurface2,
-                                style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
-                        }
-                        if (!added) {
-                            ShortcutTooltip("Add to session") {
-                                IconButton(
-                                    onClick = {
-                                        availableApps = availableApps + app
-                                        selectedApps = selectedApps + key
-                                        searchQuery = ""
-                                    },
-                                    modifier = Modifier.size(32.dp).clip(CircleShape)
-                                        .background(Purple80.copy(alpha = 0.15f))
-                                ) {
-                                    Icon(Icons.Default.Add, null, tint = Purple80, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        } else {
-                            Checkbox(
-                                checked = checked,
-                                onCheckedChange = {
-                                    selectedApps = if (checked) selectedApps - key else selectedApps + key
-                                },
-                                colors = CheckboxDefaults.colors(checkedColor = Purple80)
-                            )
-                        }
-                    }
-                }
-            }
-
             if (isLoading) {
                 item {
                     Box(Modifier.fillMaxWidth().height(80.dp), contentAlignment = Alignment.Center) {
@@ -543,10 +486,23 @@ fun FocusLauncherScreen() {
                             style = MaterialTheme.typography.bodySmall)
                     }
                 }
+            } else if (filteredAvailableApps.isEmpty()) {
+                item {
+                    Box(
+                        Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "No apps match \"$searchQuery\"",
+                            color = OnSurface2,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             } else {
                 // The process name is the app identity; the section prefix prevents
                 // collisions with search results in this LazyColumn.
-                items(availableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
+                items(filteredAvailableApps, key = { "available:${it.processName.lowercase()}" }) { app ->
                     val key = app.processName.lowercase()
                     val checked = key in selectedApps
                     AppSelectRow(
