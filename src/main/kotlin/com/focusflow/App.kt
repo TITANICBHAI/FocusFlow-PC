@@ -36,6 +36,8 @@ import com.focusflow.enforcement.NetworkBlocker
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.RegistryLockdown
+import com.focusflow.enforcement.WindowsStartupManager
+import com.focusflow.enforcement.isWindows
 import com.focusflow.enforcement.VpnBlocker
 import com.focusflow.enforcement.isRunningAsAdmin
 import com.focusflow.services.HostsBlocker
@@ -55,6 +57,7 @@ import com.focusflow.services.ReviewPromptService
 import com.focusflow.ui.components.ReviewPromptDialog
 import com.focusflow.ui.components.SideNav
 import com.focusflow.ui.components.TelemetryConsentDialog
+import com.focusflow.ui.components.WindowsStartupPromptDialog
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.services.GlobalPin
 import com.focusflow.ui.screens.*
@@ -70,6 +73,8 @@ import com.focusflow.ui.LocalNavigate
 private const val APP_VERSION = "2.0.2"
 private const val EDGE_EXTENSION_PROMO_DISMISSED = "edge_extension_promo_dismissed"
 private const val POST_PIN_RECOMMENDATIONS_SHOWN = "post_pin_recommendations_shown"
+private const val WINDOWS_STARTUP_PROMPT_PENDING = "windows_startup_prompt_pending"
+private const val WINDOWS_STARTUP_PROMPT_SHOWN = "windows_startup_prompt_shown"
 private const val DIRECT_RELEASES_URL =
     "https://github.com/TITANICBHAI/FocusFlow-PC/releases"
 
@@ -103,6 +108,8 @@ fun App() {
     var overlayAppName   by remember { mutableStateOf("") }
     var showOnboarding      by remember { mutableStateOf(false) }
     var showGlobalPinSetup  by remember { mutableStateOf(false) }
+    var showWindowsStartupPrompt by remember { mutableStateOf(false) }
+    var pendingWindowsStartupPrompt by remember { mutableStateOf(false) }
     var showAndroidPromo    by remember { mutableStateOf(false) }
     var showEdgeExtensionPromo by remember { mutableStateOf(false) }
     var showPostPinRecommendations by remember { mutableStateOf(false) }
@@ -142,6 +149,24 @@ fun App() {
             val openCount = (Database.getSetting("app_open_count")?.toIntOrNull() ?: 0) + 1
             Database.setSetting("app_open_count", openCount.toString())
 
+            val startupEnabled = isWindows && WindowsStartupManager.isEnabled()
+            val startupPromptShown =
+                Database.getSetting(WINDOWS_STARTUP_PROMPT_SHOWN) == "true"
+            val startupPromptPending =
+                Database.getSetting(WINDOWS_STARTUP_PROMPT_PENDING) == "true"
+            val shouldOfferStartupPrompt = isWindows
+                && !fl
+                && !startupEnabled
+                && !startupPromptShown
+                && (openCount == 3 || startupPromptPending)
+
+            if (startupEnabled || startupPromptShown) {
+                Database.setSetting(WINDOWS_STARTUP_PROMPT_PENDING, "false")
+            } else if (shouldOfferStartupPrompt) {
+                // Keep the reminder queued if another launch dialog is still open.
+                Database.setSetting(WINDOWS_STARTUP_PROMPT_PENDING, "true")
+            }
+
             // PIN prompt: show on the second app open, after the first-run onboarding.
             val pn = !GlobalPin.isSet() && !GlobalPin.isDeclined() && openCount >= 2
 
@@ -180,7 +205,10 @@ fun App() {
                 Database.setSetting("android_promo_last_version", APP_VERSION)
             }
 
-            listOf(fl, pn, showAndroid, showConsent, showEdgeExtension, recommendationsShown)
+            listOf(
+                fl, pn, showAndroid, showConsent, showEdgeExtension,
+                recommendationsShown, shouldOfferStartupPrompt
+            )
         }
         val firstLaunch  = launchData[0]
         val pinNeeded    = launchData[1]
@@ -188,12 +216,53 @@ fun App() {
         val needsConsent = launchData[3]
         val edgeExtensionPromo = launchData[4]
         postPinRecommendationsShown = launchData[5]
+        pendingWindowsStartupPrompt = launchData[6]
 
         if (firstLaunch) showOnboarding = true
         if (pinNeeded && !firstLaunch) showGlobalPinSetup = true
         if (androidPromo) showAndroidPromo = true
         if (needsConsent) showTelemetryConsent = true
         if (edgeExtensionPromo) showEdgeExtensionPromo = true
+    }
+
+    // Remind on the third launch, but wait until startup/security/consent dialogs
+    // are closed so two modal windows are never shown on top of each other.
+    LaunchedEffect(
+        pendingWindowsStartupPrompt,
+        showWindowsStartupPrompt,
+        showOnboarding,
+        showGlobalPinSetup,
+        showPostPinRecommendations,
+        showAndroidPromo,
+        showEdgeExtensionPromo,
+        showTelemetryConsent,
+        showRegistryOrphanDialog,
+        showReviewPrompt
+    ) {
+        if (!pendingWindowsStartupPrompt || showWindowsStartupPrompt) return@LaunchedEffect
+
+        // Allow the delayed registry-recovery check to surface first as well.
+        delay(4_500L)
+        val anotherDialogIsOpen = showOnboarding
+            || showGlobalPinSetup
+            || showPostPinRecommendations
+            || showAndroidPromo
+            || showEdgeExtensionPromo
+            || showTelemetryConsent
+            || showRegistryOrphanDialog
+            || showReviewPrompt
+
+        if (!anotherDialogIsOpen) {
+            val stillDisabled = withContext(Dispatchers.IO) {
+                !WindowsStartupManager.isEnabled()
+            }
+            withContext(Dispatchers.IO) {
+                Database.setSetting(WINDOWS_STARTUP_PROMPT_PENDING, "false")
+                Database.setSetting(WINDOWS_STARTUP_PROMPT_SHOWN, "true")
+            }
+            pendingWindowsStartupPrompt = false
+            if (stillDisabled) showWindowsStartupPrompt = true
+        }
     }
 
     // ── Registry orphan check ─────────────────────────────────────────────────
@@ -437,6 +506,18 @@ fun App() {
                         Database.setSetting("crash_reports_enabled", "false")
                     }
                 }
+            )
+        }
+
+        if (showWindowsStartupPrompt) {
+            WindowsStartupPromptDialog(
+                onEnable = {
+                    showWindowsStartupPrompt = false
+                    scope.launch(Dispatchers.IO) {
+                        WindowsStartupManager.enable()
+                    }
+                },
+                onDismiss = { showWindowsStartupPrompt = false }
             )
         }
 
