@@ -6,7 +6,9 @@ plugins {
 }
 
 group = "com.focusflow"
-version = "2.0.2"
+version = file("../gradle.properties").useLines { lines ->
+    lines.first { it.startsWith("appVersion=") }.substringAfter("=").trim()
+}
 
 repositories {
     google()
@@ -43,7 +45,7 @@ compose.desktop {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
 
             packageName        = "FocusFlow-Recovery"
-            packageVersion     = "2.0.2"
+            packageVersion     = project.version.toString()
             description        = "FocusFlow Emergency Recovery Tool — restores taskbar and clears all enforcement flags"
             vendor             = "TBTechs"
             copyright          = "© 2025 TBTechs"

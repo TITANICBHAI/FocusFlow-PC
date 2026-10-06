@@ -31,6 +31,16 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "2.0.3",
+        date       = "October 2026",
+        badge      = "IMP",
+        badgeColor = Warning,
+        changes    = listOf(
+            "IMP" to "Focus Launcher search now filters allowed apps dynamically as you type, matching both app names and executable names",
+            "IMP" to "Moved Focus Launcher search above the allowed-app list so it is easy to find while choosing which apps are available"
+        )
+    ),
+    ChangelogEntry(
         version    = "2.0.2",
         date       = "October 2026",
         badge      = "FIX",

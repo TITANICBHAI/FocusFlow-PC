@@ -60,6 +60,7 @@ import com.focusflow.ui.components.TelemetryConsentDialog
 import com.focusflow.ui.components.WindowsStartupPromptDialog
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.services.GlobalPin
+import com.focusflow.services.CrashReporter
 import com.focusflow.ui.screens.*
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -70,7 +71,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.*
 import com.focusflow.ui.LocalNavigate
 
-private const val APP_VERSION = "2.0.2"
 private const val EDGE_EXTENSION_PROMO_DISMISSED = "edge_extension_promo_dismissed"
 private const val POST_PIN_RECOMMENDATIONS_SHOWN = "post_pin_recommendations_shown"
 private const val WINDOWS_STARTUP_PROMPT_PENDING = "windows_startup_prompt_pending"
@@ -183,7 +183,7 @@ fun App() {
 
             // Version-update trigger: show once per new app version.
             val lastPromoVersion = Database.getSetting("android_promo_last_version")
-            val isNewVersion = lastPromoVersion != APP_VERSION
+            val isNewVersion = lastPromoVersion != CrashReporter.APP_VERSION
 
             // Show at open 5+: cooldown elapsed OR new version — open count gate applies in both
             // cases so a fresh install or version update never fires this before open 5.
@@ -202,7 +202,7 @@ fun App() {
 
             if (showAndroid) {
                 Database.setSetting("android_promo_shown_date", java.time.LocalDate.now().toString())
-                Database.setSetting("android_promo_last_version", APP_VERSION)
+                Database.setSetting("android_promo_last_version", CrashReporter.APP_VERSION)
             }
 
             listOf(

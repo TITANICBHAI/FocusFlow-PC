@@ -51,8 +51,9 @@ object CrashReporter {
     /** Developer support email — pre-filled when the user clicks "Send Report". */
     const val SUPPORT_EMAIL = "support@tbtechs.dev"
 
-    /** Single source of truth for the app version string. */
-    const val APP_VERSION = "2.0.2"
+    /** Version supplied by the Gradle project version at application launch. */
+    val APP_VERSION: String = System.getProperty("focusflow.app.version")
+        ?: error("Missing focusflow.app.version JVM property")
 
     // ── Constants ─────────────────────────────────────────────────────────────
 

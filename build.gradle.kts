@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.focusflow"
-version = "2.0.2"
+version = providers.gradleProperty("appVersion").get()
 
 repositories {
     google()
@@ -46,6 +46,7 @@ compose.desktop {
             "-XX:MaxGCPauseMillis=50",
             "-XX:SoftRefLRUPolicyMSPerMB=50",
             "-Dfile.encoding=UTF-8",
+            "-Dfocusflow.app.version=${project.version}",
             "-Djava.awt.headless=false",
             "-Dskiko.renderApi=SOFTWARE",
             // Required when running inside MSIX AppContainer: Java NIO Selectors using
@@ -58,7 +59,7 @@ compose.desktop {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
 
             packageName        = "FocusFlow"
-            packageVersion     = "2.0.2"
+            packageVersion     = project.version.toString()
             description        = "Focus & productivity app with real app blocking"
             vendor             = "TBTechs"
             copyright          = "© 2025 TBTechs"

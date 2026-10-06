@@ -29,6 +29,7 @@ import com.focusflow.enforcement.*
 import com.focusflow.i18n.AppLanguage
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BreakEnforcer
+import com.focusflow.services.CrashReporter
 import com.focusflow.services.ChimeStyle
 import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.GlobalPin
@@ -822,7 +823,7 @@ fun SettingsScreen() {
 
         item {
             SectionCard(title = strings.settingsAbout) {
-                Text("FocusFlow PC v2.0.2", color = OnSurface)
+                Text("FocusFlow PC v${CrashReporter.APP_VERSION}", color = OnSurface)
                 Spacer(Modifier.height(4.dp))
                 Text("Kotlin 1.9.22 + Compose Multiplatform Desktop 1.6.1", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 Text("Enforcement: JNA Win32 + WinEventHook + Nuclear Mode + Windows Firewall", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
