@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Política de Privacidade — FocusFlow</title>
+  <meta name="description" content="Política de privacidade do FocusFlow. Seus dados ficam no PC; relatórios anônimos de falhas são enviados somente quando o diagnóstico está ativado." />
+  <link rel="canonical" href="https://focusflowpc.pages.dev/pt-br/privacy-policy/" />
+  <link rel="alternate" hreflang="en" href="https://focusflowpc.pages.dev/privacy-policy/" />
+  <link rel="alternate" hreflang="pt-BR" href="https://focusflowpc.pages.dev/pt-br/privacy-policy/" />
+  <link rel="alternate" hreflang="x-default" href="https://focusflowpc.pages.dev/privacy-policy/" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#09090f;color:#e8e6f0;line-height:1.75;padding:48px 24px 80px}
+    .wrap{max-width:760px;margin:0 auto}.logo-row{display:flex;align-items:center;gap:12px;margin-bottom:48px}.logo-text{font-size:22px;font-weight:700}.logo-sub{font-size:13px;color:#9d97ff}
+    h1{font-size:32px;margin-bottom:8px}h2{font-size:18px;font-weight:600;color:#9d97ff;margin:36px 0 10px;border-left:3px solid #7c4dff;padding-left:12px}
+    .lead{font-size:16px;color:#9d97ff;margin-bottom:8px}.updated{font-size:13px;color:#89859e;margin-bottom:30px}
+    p{margin-bottom:14px;color:#c8c6d8}ul{margin:0 0 14px 20px;color:#c8c6d8}li{margin-bottom:6px}
+    a{color:#9d97ff;text-decoration:none}a:hover{text-decoration:underline}code{font-family:monospace;font-size:.875em;background:#7c4dff20;padding:.1em .4em;border-radius:4px;color:#a78bfa}
+    .notice,.highlight{border-radius:10px;padding:16px 20px;margin-bottom:14px;font-size:14px}.notice{background:#1c1b26;border:1px solid #252436;color:#b0aec8}.highlight{background:#7c4dff14;border:1px solid #7c4dff33;color:#c8c6d8}
+    footer{margin-top:64px;font-size:13px;color:#77738d;border-top:1px solid #1c1b26;padding-top:24px}
+    @media(max-width:600px){body{padding:28px 18px 56px}h1{font-size:27px}}
+  </style>
+</head>
+<body><div class="wrap">
+  <div class="logo-row"><div><div class="logo-text">FocusFlow</div><div class="logo-sub">Bloqueador de aplicativos e foco profundo · por TBTechs</div></div></div>
+  <h1>Seus dados de foco ficam no seu PC.</h1>
+  <p class="lead">O FocusFlow é um aplicativo de produtividade para Windows que ajuda a criar sessões de foco bloqueando aplicativos que distraem e restringindo o acesso à área de trabalho. Esta política explica quais dados o aplicativo armazena, quais recursos do sistema usa e como seus dados são tratados.</p>
+  <p class="updated">Última atualização da versão em inglês: junho de 2026 · Aplicável ao FocusFlow para Windows (Desktop) v2.0.0+</p>
+  <div class="notice">Esta página é uma tradução informativa da Política de Privacidade em inglês. Em caso de divergência, consulte a <a href="/privacy-policy/">versão em inglês</a> e a legislação aplicável. Esta tradução não substitui aconselhamento jurídico.</div>
+  <div class="highlight">Resumo: o FocusFlow prioriza o armazenamento local. Tarefas, notas, hábitos e histórico de sessões ficam no seu PC. Não é necessário criar uma conta, e o uso normal do app não exige conexão com a internet. Se “Enviar diagnósticos anônimos” estiver ativado em Configurações → Privacidade, relatórios técnicos de falhas ou erros críticos podem ser enviados: classe e mensagem da exceção, rastreamento de pilha, origem, versões do Windows, Java e do app e uma impressão digital do erro. Se você escolher “Reportar um problema” na caixa de avaliação, a mensagem digitada (até 4.000 caracteres) e a versão do app serão enviadas ao desenvolvedor. O FocusFlow não anexa intencionalmente tarefas, notas ou outros dados locais a esses envios. Mensagens técnicas de erro podem conter detalhes do contexto original, e a mensagem enviada por você pode conter qualquer informação que incluir. O Discord pode tratar metadados de conexão conforme seus próprios termos de privacidade.</div>
+
+  <h2>Armazenamento somente local</h2>
+  <p>O FocusFlow armazena os dados em um banco SQLite local no seu PC com Windows, no arquivo <code>%USERPROFILE%\.focusflow\focusflow.db</code>. Isso inclui:</p>
+  <ul><li>Tarefas, horários e regras de tarefas recorrentes</li><li>Histórico, duração e notas das sessões de foco</li><li>Configuração das sessões do Focus Launcher (modo quiosque, hash do PIN e preferências de pausa)</li><li>Regras de bloqueio de aplicativos, bloqueio por palavra-chave e horários de bloqueio</li><li>Configurações e registros de uso dos limites diários</li><li>Dados e sequências do rastreador de hábitos</li><li>Notas diárias e configurações do app</li><li>Registro de tentações (quais aplicativos bloqueados foram tentados e quando)</li></ul>
+  <p>Esses dados não são transmitidos nem armazenados em servidores operados pelo FocusFlow ou pela TBTechs. Eles não saem do dispositivo, exceto conforme descrito na seção “Diagnósticos anônimos”.</p>
+
+  <h2>Sem conta ou serviço de backend</h2>
+  <p>O FocusFlow não exige uma conta, endereço de e-mail ou cadastro. Não há serviço de backend, sincronização na nuvem ou banco de dados remoto do FocusFlow. O app funciona localmente. A internet só é usada quando um relatório de diagnóstico ativado precisa ser enviado ou quando você escolhe enviar uma mensagem pela caixa de avaliação.</p>
+
+  <h2>Acesso a recursos do Windows</h2>
+  <ul>
+    <li><strong>Enumeração e encerramento de processos:</strong> o FocusFlow consulta a lista de processos em execução para detectar aplicativos bloqueados durante sessões de foco ou quando a aplicação contínua de regras está ativa. O app tenta encerrá-los usando APIs Win32. Ele não lê a memória dos processos, o conteúdo dos arquivos nem dados privados de outros aplicativos.</li>
+    <li><strong>API Win32 / JNA:</strong> usada para detectar a janela em primeiro plano (por meio de <code>SetWinEventHook</code> e <code>GetForegroundWindow</code>), enviar sinais de fechamento às janelas de aplicativos bloqueados e gerenciar a barra de tarefas durante sessões do Focus Launcher. O app não registra teclas digitadas, não grava a tela e não acessa a área de transferência.</li>
+    <li><strong>Focus Launcher (controle da barra de tarefas):</strong> durante uma sessão no modo quiosque, o app oculta a barra de tarefas do Windows. Há mecanismos de restauração no fim da sessão, no encerramento normal, durante o desligamento da JVM, em caso de falha e no próximo início de sessão do Windows. Falhas extremas do Windows ou do sistema ainda podem afetar a restauração. O estado da barra de tarefas não é armazenado fora do dispositivo.</li>
+    <li><strong>Windows Firewall (opcional):</strong> quando o bloqueio de rede está ativado para um aplicativo, o FocusFlow pode adicionar uma regra de saída usando <code>netsh advfirewall</code>. As regras estão associadas à sessão de bloqueio e são removidas quando o bloqueio é desativado. Isso exige privilégios de administrador.</li>
+    <li><strong>Bloqueio pelo arquivo hosts (opcional):</strong> quando o bloqueio de sites está ativado, o FocusFlow adiciona entradas ao arquivo <code>C:\Windows\System32\drivers\etc\hosts</code> para bloquear domínios específicos. Isso exige privilégios de administrador. As entradas são removidas quando o bloqueio é desativado.</li>
+    <li><strong>Área de notificação:</strong> exibe um ícone e oferece controles rápidos (restaurar a janela, alternar o bloqueio e sair) enquanto o app está em execução.</li>
+    <li><strong>Registro do Windows (opcional):</strong> se você ativar “Iniciar com o Windows” nas Configurações, o FocusFlow adiciona uma entrada em <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>. Essa opção exige consentimento explícito e pode ser desativada nas Configurações.</li>
+    <li><strong>Sistema de arquivos (somente perfil do usuário):</strong> usado para ler e gravar o banco SQLite local, os backups automáticos e o registro de falhas em <code>%USERPROFILE%\.focusflow\</code>. O FocusFlow não acessa arquivos fora dessa pasta, exceto o arquivo hosts quando o bloqueio de sites está ativado e a chave do Registro descrita acima.</li>
+    <li><strong>Backup automático:</strong> o FocusFlow cria backups rotativos periódicos do banco de dados local na mesma pasta <code>.focusflow</code>. Esses backups não saem do dispositivo.</li>
+  </ul>
+
+  <h2>Diagnósticos anônimos</h2>
+  <p>O FocusFlow pode enviar dados de diagnóstico anônimos ao desenvolvedor por meio de um webhook privado do Discord. Isso é controlado pela opção “Enviar diagnósticos anônimos” em <strong>Configurações → Privacidade</strong>, que vem <strong>ativada por padrão</strong> e pode ser desativada a qualquer momento. Os diagnósticos só são enviados quando ocorre uma falha não tratada ou um erro crítico que não pode ser recuperado com segurança; não são coletados durante o uso normal.</p>
+
+  <h2>1 · Relatórios de falha</h2>
+  <p>Se ocorrer uma falha não tratada, o FocusFlow envia automaticamente um relatório técnico anônimo, somente em caso de falha. O relatório contém:</p>
+  <ul><li>O nome da classe da exceção e a mensagem de erro (por exemplo, <code>NullPointerException: cannot read field</code>)</li><li>Um rastreamento de pilha truncado (até 1.500 caracteres com informações sobre os locais do código)</li><li>A versão e a arquitetura do Windows (por exemplo, <code>Windows 11 10.0</code>)</li><li>A versão do ambiente Java incluído no app</li><li>O número da versão do FocusFlow</li></ul>
+  <p>O FocusFlow não adiciona intencionalmente ao relatório seu nome de usuário, caminhos de arquivos, nomes de tarefas, notas, nomes de aplicativos bloqueados, hábitos ou histórico de sessões. Porém, mensagens de exceção e rastreamentos de pilha são textos técnicos do sistema e não há garantia de que estejam livres de caminhos ou outros detalhes identificadores caso apareçam no erro original. O conteúdo enviado não inclui um identificador de dispositivo ou de hardware; inclui uma impressão digital do erro apenas para agrupar falhas semelhantes. O relatório é enviado a um webhook do Discord, que pode tratar metadados de conexão conforme seus próprios termos de privacidade. O envio é descartado se não houver conexão com a internet.</p>
+
+  <h2>Feedback enviado por você</h2>
+  <p>Se você escolher “Reportar um problema” na caixa de avaliação, a mensagem digitada (até 4.000 caracteres) e a versão do FocusFlow serão enviadas ao desenvolvedor por meio de um webhook do Discord. Não inclua senhas, informações privadas ou qualquer conteúdo que não queira compartilhar. O Discord pode tratar metadados de conexão conforme seus próprios termos de privacidade.</p>
+
+  <h2>O que o FocusFlow não coleta</h2>
+  <ul><li>Dados de localização</li><li>Acesso à câmera ou ao microfone</li><li>Entradas do teclado, conteúdo da área de transferência ou gravações da tela</li><li>Senhas ou credenciais</li><li>Dados de pagamento</li><li>O FocusFlow não adiciona intencionalmente nomes de tarefas, conteúdo de notas, nomes de hábitos ou outros conteúdos do usuário aos relatórios</li><li>O FocusFlow não adiciona intencionalmente nomes de aplicativos bloqueados ou domínios de sites aos relatórios</li><li>O FocusFlow não adiciona caminhos de arquivos, nomes de usuário, endereços IP ou identificadores pessoais como campos do relatório; mensagens técnicas de erro podem conter detalhes do contexto original</li><li>Identificadores de dispositivo ou de hardware não são adicionados ao conteúdo enviado; a impressão digital técnica serve apenas para agrupar erros semelhantes</li><li>Conteúdo de outros aplicativos</li><li>Contas na nuvem, sincronização ou banco de dados remoto — os dados do usuário são armazenados localmente</li></ul>
+
+  <h2>Seu controle sobre os relatórios de diagnóstico</h2>
+  <p>A opção “Enviar diagnósticos anônimos” em <strong>Configurações → Privacidade</strong> controla o envio de relatórios de falha. Ao desativá-la, o envio é interrompido. A configuração fica armazenada localmente e é mantida entre reinicializações do app. Nenhum dado fica na fila para envio posterior.</p>
+
+  <h2>Pacote do Windows (MSIX) e Microsoft Store</h2>
+  <p>A versão do FocusFlow na Microsoft Store é distribuída como pacote MSIX. O app declara a capacidade restrita <code>runFullTrust</code>, necessária para enumerar e encerrar processos em execução e gerenciar a barra de tarefas e as regras de firewall do Windows para aplicar o foco. Essa capacidade não é usada para coletar, transmitir ou armazenar dados além do que está descrito nesta política.</p>
+  <p>A Microsoft pode coletar dados padrão de uso da Store (instalações, atualizações e falhas) como parte da telemetria normal da plataforma, independentemente do FocusFlow. Isso é regido pela política de privacidade da Microsoft, não pela TBTechs.</p>
+
+  <h2>Seu controle</h2>
+  <p>Você pode desinstalar o FocusFlow a qualquer momento em Configurações do Windows → Aplicativos. Para remover todos os dados armazenados, exclua a pasta <code>%USERPROFILE%\.focusflow\</code> após a desinstalação. Para remover regras do Windows Firewall criadas pelo bloqueio de rede, abra o Firewall do Windows Defender → Regras de Saída e exclua as regras chamadas “FocusFlow - Block [appname]”. Nenhum dado de tarefas, notas ou sessões é transmitido a servidores.</p>
+
+  <h2>Privacidade de crianças</h2>
+  <p>O FocusFlow não coleta intencionalmente dados pessoais de ninguém. Como dados pessoais não são coletados nem transmitidos, o app pode ser usado independentemente da idade. Pais e responsáveis podem usar o FocusFlow para gerenciar sessões de foco em dispositivos compartilhados ou familiares.</p>
+
+  <h2>Alterações nesta política</h2>
+  <p>Esta Política de Privacidade pode ser atualizada sem aviso prévio. A versão mais recente está sempre disponível neste endereço. Recomendamos revisar a página ao atualizar o app. O texto em inglês informa a política original; consulte-o para acompanhar alterações.</p>
+
+  <h2>Código aberto</h2>
+  <p>O código-fonte da versão para Windows está disponível em <a href="https://github.com/TITANICBHAI/FocusFlow-PC">github.com/TITANICBHAI/FocusFlow-PC</a>. Se o tratamento de dados mudar em uma versão futura, a política será atualizada e a alteração ficará visível no histórico de commits do repositório.</p>
+
+  <h2>Contato</h2>
+  <p>Para perguntas ou correções relacionadas à privacidade, abra uma issue no <a href="https://github.com/TITANICBHAI/FocusFlow-PC/issues">repositório do FocusFlow no GitHub</a>.</p>
+
+  <footer>&copy; 2026 TBTechs &nbsp;·&nbsp; <a href="/pt-br/">FocusFlow</a> &nbsp;·&nbsp; <a href="/pt-br/terms-of-service/">Termos de Serviço</a> &nbsp;·&nbsp; <a href="/privacy-policy/">Versão em inglês</a> &nbsp;·&nbsp; <a href="https://github.com/TITANICBHAI/FocusFlow-PC">GitHub</a></footer>
+</div></body>
+</html>

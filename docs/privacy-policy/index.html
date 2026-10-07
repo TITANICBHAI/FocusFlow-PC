@@ -10,6 +10,7 @@
   <link rel="canonical" href="https://focusflowpc.pages.dev/privacy-policy/" />
 
   <link rel="alternate" hreflang="en" href="https://focusflowpc.pages.dev/privacy-policy/" />
+  <link rel="alternate" hreflang="pt-BR" href="https://focusflowpc.pages.dev/pt-br/privacy-policy/" />
   <link rel="alternate" hreflang="x-default" href="https://focusflowpc.pages.dev/privacy-policy/" />
 
   <style>
@@ -76,7 +77,7 @@
   </div>
 
   <div class="highlight">
-    Short version: FocusFlow is local-first. Your tasks, notes, habits, and session history stay locally on your PC. No account is needed, and the app does not require internet access for normal use. If "Send anonymous diagnostics" is enabled in Settings → Privacy, the only data that can leave your device is a limited anonymous crash or critical-error report (exception details, stack trace, OS/app version, and a non-identifying fingerprint). Reports do not include task names, note contents, usernames, file paths, or any other personal information.
+    Short version: FocusFlow is local-first. Your tasks, notes, habits, and session history stay on your PC. No account is needed, and normal use does not require internet access. If "Send anonymous diagnostics" is enabled in Settings → Privacy, FocusFlow may send technical crash or critical-error reports containing exception details, stack trace, source, OS/Java/app versions, and an error fingerprint. If you choose "Report an Issue" in the rating dialog, the message you enter (up to 4,000 characters) and app version are sent to the developer. FocusFlow does not intentionally attach local tasks, notes, or other app data to either report. Technical exception text may contain context from the original error, and user-submitted feedback may contain anything you choose to include. Discord may process connection metadata under its own privacy terms.
   </div>
 
   <h2>Local-only storage</h2>
@@ -94,13 +95,13 @@
   <p>None of this data is transmitted to or stored on any FocusFlow-operated or TBTechs-operated server. It never leaves your device except as described in the "Anonymous diagnostics" section below.</p>
 
   <h2>No account system or backend</h2>
-  <p>FocusFlow does not require a user account, email address, or any form of registration. There is no FocusFlow backend service, cloud sync, or remote database. The app operates locally on your device; internet access is used only if you enable anonymous diagnostics and a report needs to be delivered.</p>
+  <p>FocusFlow does not require a user account, email address, or any form of registration. There is no FocusFlow backend service, cloud sync, or remote database. The app operates locally on your device. Internet access is used only when an enabled diagnostic report needs to be sent or when you choose to send feedback from the rating dialog.</p>
 
   <h2>Windows system access used</h2>
   <ul>
     <li><strong>Process enumeration and termination:</strong> FocusFlow reads the list of running Windows processes to detect blocked applications during focus sessions or always-on enforcement, and terminates them using Win32 APIs. It does not read process memory, file contents, or private data from other applications.</li>
     <li><strong>Win32 API / JNA:</strong> Used to detect the foreground window (via <code>SetWinEventHook</code> and <code>GetForegroundWindow</code>), send close signals to blocked application windows, and manage the Windows taskbar state during Focus Launcher kiosk sessions. No keystroke logging, screen recording, or clipboard access is performed.</li>
-    <li><strong>Focus Launcher (taskbar control):</strong> During a Focus Launcher kiosk session, the app hides the Windows taskbar to create a distraction-free desktop. The taskbar is restored unconditionally when the session ends, when the app exits normally, when the JVM shuts down, and via a global crash recovery handler. At no point is the taskbar state stored off-device.</li>
+    <li><strong>Focus Launcher (taskbar control):</strong> During a Focus Launcher kiosk session, the app hides the Windows taskbar to create a distraction-free desktop. Recovery mechanisms attempt to restore it when the session ends, when the app exits, when the JVM shuts down, through a crash handler, and at the next Windows sign-in. Severe Windows or system failures may still affect recovery. The taskbar state is not stored off-device.</li>
     <li><strong>Windows Firewall (optional):</strong> When network blocking is enabled for a specific app, FocusFlow adds an outbound block rule via <code>netsh advfirewall</code>. These rules are associated with the app's blocking session and are removed when blocking is disabled. This requires administrator privileges.</li>
     <li><strong>Hosts-file blocking (optional):</strong> When website blocking is enabled, FocusFlow adds entries to <code>C:\Windows\System32\drivers\etc\hosts</code> to block specific domains. This requires administrator privileges. Entries are removed when blocking is disabled.</li>
     <li><strong>System tray:</strong> Used to display a tray icon and provide quick controls (restore window, toggle blocking, quit) while the app runs in the background.</li>
@@ -121,7 +122,10 @@
     <li>The Java runtime version bundled with the app</li>
     <li>The FocusFlow app version number</li>
   </ul>
-  <p>The crash report does <strong>not</strong> contain your username, file paths, task names, notes, blocked app names, habits, session history, or any other user-generated content. No device identifier or hardware ID is included. It is sent on a background thread and is silently discarded if the internet connection is unavailable.</p>
+  <p>FocusFlow does not intentionally add your username, file paths, task names, notes, blocked app names, habits, or session history to crash reports. However, exception messages and stack traces are technical text from the system and are not guaranteed to be free of paths or other identifying context if that information appears in an error. The payload does not add a device or hardware identifier; it includes an error fingerprint for deduplication, not a device fingerprint. Reports are sent to a Discord webhook, which may process connection metadata under its own privacy terms. Reports are discarded if the internet connection is unavailable.</p>
+
+  <h2>User-submitted feedback</h2>
+  <p>If you choose "Report an Issue" in the rating dialog, the message you enter (up to 4,000 characters) and your FocusFlow app version are sent to the developer through a Discord webhook. Do not include passwords, private information, or anything you do not want to share. Discord may process connection metadata under its own privacy terms.</p>
 
   <h2>What FocusFlow does not collect</h2>
   <ul>
@@ -130,10 +134,9 @@
     <li>No keyboard input, clipboard contents, or screen recordings</li>
     <li>No passwords or credentials of any kind</li>
     <li>No payment data</li>
-    <li>No task names, note contents, habit names, or any user-generated content in crash reports</li>
-    <li>No blocked app names or website domains in crash reports</li>
-    <li>No file paths, usernames, IP addresses, or personal identifiers of any kind</li>
-    <li>No device identifiers, hardware IDs, or fingerprinting</li>
+    <li>FocusFlow does not intentionally add task names, note contents, habit names, blocked app names, or website domains to diagnostic reports</li>
+    <li>FocusFlow does not intentionally add file paths, usernames, IP addresses, or personal identifiers as report fields; technical exception text may contain context from an underlying error</li>
+    <li>No device or hardware identifier is added to the report payload; an error fingerprint is included only to group similar crashes</li>
     <li>No content from other applications</li>
     <li>No cloud accounts, sync, or remote database — all user data is stored locally</li>
   </ul>
@@ -163,7 +166,8 @@
   <footer>
     &copy; 2026 TBTechs &nbsp;&middot;&nbsp;
     <a href="../">FocusFlow</a> &nbsp;&middot;&nbsp;
-    <a href="../terms-of-service/">Terms of Service</a> &nbsp;&middot;&nbsp;
+     <a href="../terms-of-service/">Terms of Service</a> &nbsp;&middot;&nbsp;
+     <a href="../pt-br/privacy-policy/">Política de Privacidade (português)</a> &nbsp;&middot;&nbsp;
     <a href="https://github.com/TITANICBHAI/FocusFlow-PC">GitHub</a>
   </footer>
 </div>

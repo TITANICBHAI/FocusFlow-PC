@@ -10,6 +10,7 @@
   <link rel="canonical" href="https://focusflowpc.pages.dev/terms-of-service/" />
 
   <link rel="alternate" hreflang="en" href="https://focusflowpc.pages.dev/terms-of-service/" />
+  <link rel="alternate" hreflang="pt-BR" href="https://focusflowpc.pages.dev/pt-br/terms-of-service/" />
   <link rel="alternate" hreflang="x-default" href="https://focusflowpc.pages.dev/terms-of-service/" />
 
   <style>
@@ -84,7 +85,7 @@
   <ul>
     <li><strong>Focus Launcher</strong> — a CBT-style kiosk mode that hides the Windows taskbar, activates Nuclear Mode, and enforces PIN-gated breaks or hard-lock sessions for deep work</li>
     <li><strong>App blocking</strong> — real-time termination of user-selected Windows processes via Win32 APIs during focus sessions or always-on enforcement</li>
-    <li><strong>Website blocking</strong> — hosts-file domain blocking affecting all browsers</li>
+    <li><strong>Website blocking</strong> — domain blocking through the Windows hosts file; VPNs, Secure DNS, cached DNS, and existing connections may affect blocking</li>
     <li><strong>Network blocking</strong> — Windows Firewall outbound rules via <code>netsh advfirewall</code> (requires administrator privileges)</li>
     <li><strong>Nuclear Mode</strong> — maximum enforcement mode that blocks over 30 system utility escape routes</li>
     <li><strong>Block Defense, Block Schedules, Daily Allowances, Keyword Blocker, Standalone Blocks</strong></li>
@@ -105,7 +106,7 @@
   </div>
 
   <h2>5. Focus Launcher — Taskbar and Desktop Control</h2>
-  <p>The Focus Launcher feature hides the Windows taskbar during kiosk sessions using the Win32 <code>ShowWindow</code> API on the Shell_TrayWnd handle. While multiple safety mechanisms restore the taskbar on session end, normal app exit, JVM shutdown, and crash recovery, no software guarantee is absolute. By using the Focus Launcher, you acknowledge that:</p>
+  <p>The Focus Launcher feature hides the Windows taskbar during kiosk sessions using the Win32 <code>ShowWindow</code> API on the Shell_TrayWnd handle. Recovery mechanisms attempt to restore the taskbar on session end, normal app exit, JVM shutdown, crash recovery, and at the next Windows sign-in, but no software guarantee is absolute. By using the Focus Launcher, you acknowledge that:</p>
   <ul>
     <li>The taskbar will be hidden for the duration of your session</li>
     <li>Break access requires your session PIN during PIN-gated sessions</li>
@@ -133,7 +134,7 @@
   </ul>
 
   <h2>10. Anonymous Diagnostics and Telemetry</h2>
-  <p>FocusFlow may send limited anonymous crash or critical-error reports to the developer via a private Discord webhook when the "Send anonymous diagnostics" option is enabled in Settings → Privacy. This toggle is on by default and can be turned off at any time. Reports contain technical exception details only; they do not include personal data, task content, file paths, usernames, or device identifiers. By using FocusFlow with this toggle enabled, you consent to the collection of anonymous diagnostics as described in the <a href="../privacy-policy/">Privacy Policy</a>.</p>
+  <p>FocusFlow may send crash or critical-error reports to the developer via a private Discord webhook when the "Send anonymous diagnostics" option is enabled in Settings → Privacy. This toggle is on by default and can be turned off at any time. Reports include technical exception details, error messages, stack traces, operating-system and Java versions, and an error fingerprint. FocusFlow does not intentionally add task content, usernames, file paths, or device identifiers, but exception text may contain technical context from an underlying error. Separately, if you choose "Report an Issue" in the rating dialog, the message you enter (up to 4,000 characters) and app version are sent to the developer. Discord may process connection metadata under its own privacy terms. See the <a href="../privacy-policy/">Privacy Policy</a> for details.</p>
 
   <h2>11. Termination</h2>
   <p>You may stop using FocusFlow at any time by uninstalling it through Windows Settings → Apps. TBTechs reserves the right to update, modify, or discontinue the application at any time without notice. These Terms survive termination with respect to all provisions that by their nature should survive.</p>
@@ -150,7 +151,8 @@
   <footer>
     &copy; 2026 TBTechs &nbsp;&middot;&nbsp;
     <a href="../">FocusFlow</a> &nbsp;&middot;&nbsp;
-    <a href="../privacy-policy/">Privacy Policy</a> &nbsp;&middot;&nbsp;
+     <a href="../privacy-policy/">Privacy Policy</a> &nbsp;&middot;&nbsp;
+     <a href="../pt-br/terms-of-service/">Termos de Serviço (português)</a> &nbsp;&middot;&nbsp;
     <a href="https://github.com/TITANICBHAI/FocusFlow-PC">GitHub</a>
   </footer>
 </div>

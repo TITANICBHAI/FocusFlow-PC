@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FocusFlow — Recursos para foco e bloqueio no Windows</title>
+  <meta name="description" content="Conheça os recursos do FocusFlow para bloquear distrações, criar sessões de foco e organizar seu trabalho no Windows." />
+  <link rel="canonical" href="https://focusflowpc.pages.dev/pt-br/features/" />
+  <meta property="og:title" content="FocusFlow — Recursos para foco no Windows" />
+  <meta property="og:description" content="Conheça os recursos de bloqueio, foco e produtividade do FocusFlow." />
+  <meta property="og:image" content="https://focusflowpc.pages.dev/assets/focusflow-app-icon.jpeg" />
+  <meta property="og:url" content="https://focusflowpc.pages.dev/pt-br/features/" />
+  <link rel="icon" href="https://focusflowpc.pages.dev/assets/focusflow-icon.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"FocusFlow","item":"https://focusflowpc.pages.dev/pt-br/"},{"@type":"ListItem","position":2,"name":"Recursos","item":"https://focusflowpc.pages.dev/pt-br/features/"}]}</script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#0a0b0f;--surface:#111318;--surface2:#181b22;--border:rgba(255,255,255,.08);--border2:rgba(255,255,255,.14);--purple:#7c4dff;--purple-light:#a78bfa;--text:#f1f5f9;--muted:#94a3b8;--muted2:#64748b;--radius:14px}
+    body{font-family:Inter,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.65;min-height:100vh}
+    nav{position:fixed;inset:0 0 auto;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:1rem 2rem;background:rgba(10,11,15,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border)}
+    .brand,.nav-links,.right,.lang-menu,.btn{display:flex;align-items:center}
+    .brand{gap:.7rem;color:var(--text);text-decoration:none;font-weight:700}
+    .brand img{width:28px;height:28px;border-radius:6px}
+    .nav-links{gap:1.5rem}.nav-links a,footer a{color:var(--muted);text-decoration:none}.nav-links a:hover,footer a:hover{color:var(--text)}
+    .right{gap:.7rem}.lang-switcher{position:relative}
+    .lang-btn{background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.45rem .7rem;cursor:pointer;font:inherit}
+    .lang-menu{display:none;position:absolute;right:0;top:calc(100% + 8px);z-index:110;min-width:205px;padding:.4rem;background:var(--surface);border:1px solid var(--border2);border-radius:10px;box-shadow:0 8px 32px #0008;flex-direction:column;align-items:stretch}
+    .lang-switcher.open .lang-menu{display:flex}.lang-menu a{padding:.5rem .7rem;border-radius:6px;color:var(--muted);text-decoration:none;white-space:nowrap}.lang-menu a:hover,.lang-menu a.active{background:var(--surface2);color:var(--text)}
+    .btn{justify-content:center;padding:.65rem .9rem;border-radius:8px;background:var(--purple);color:#fff;text-decoration:none;font-size:.9rem;font-weight:650}
+    .hero{padding:9rem 1.5rem 4rem;text-align:center;border-bottom:1px solid var(--border)}
+    .label{color:var(--purple-light);font-size:.75rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase}
+    h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.15;margin:.8rem 0}
+    .hero p{color:var(--muted);max-width:680px;margin:0 auto 1.5rem}
+    .grid{max-width:1100px;margin:0 auto;padding:3rem 2rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:1rem}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem}
+    .tag{color:var(--purple-light);font-size:.72rem;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
+    h2{font-size:1.1rem;margin:.45rem 0}.card p{color:var(--muted);font-size:.92rem}
+    .cta{max-width:680px;margin:0 auto 4rem;padding:2rem;text-align:center;background:var(--surface);border:1px solid #7c4dff55;border-radius:16px}
+    .cta p{color:var(--muted);margin:.5rem 0 1.2rem}.cta .btn{display:inline-flex}
+    footer{border-top:1px solid var(--border);padding:2rem;text-align:center;color:var(--muted2);font-size:.85rem}
+    .footer-links{display:flex;justify-content:center;flex-wrap:wrap;gap:1.2rem;margin-bottom:.8rem}
+    @media(max-width:760px){nav{padding:.8rem 1rem}.nav-links{display:none}.right .btn{display:none}.grid{padding:2rem 1rem}}
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="brand" href="/pt-br/"><img src="https://focusflowpc.pages.dev/assets/focusflow-icon.png" alt="" />FocusFlow</a>
+    <div class="nav-links"><a href="/pt-br/">Início</a><a href="/pt-br/features/">Recursos</a><a href="/pt-br/blog/">Blog</a><a href="https://github.com/TITANICBHAI/FocusFlow-PC" target="_blank" rel="noopener">GitHub</a></div>
+    <div class="right">
+      <div class="lang-switcher" id="langSwitcher"><button class="lang-btn" aria-label="Selecionar idioma" onclick="document.getElementById('langSwitcher').classList.toggle('open')">🌐 PT-BR ▾</button>
+        <div class="lang-menu"><a href="https://focusflowpc.pages.dev/">🇺🇸 English</a><a href="https://focusflowpc.pages.dev/es/">🇪🇸 Español</a><a href="https://focusflowpc.pages.dev/fr/">🇫🇷 Français</a><a href="https://focusflowpc.pages.dev/de/">🇩🇪 Deutsch</a><a href="https://focusflowpc.pages.dev/ja/">🇯🇵 日本語</a><a href="https://focusflowpc.pages.dev/zh/">🇨🇳 中文</a><a href="https://focusflowpc.pages.dev/ko/">🇰🇷 한국어</a><a href="https://focusflowpc.pages.dev/pt-br/" class="active">🇧🇷 Português (Brasil)</a></div>
+      </div>
+      <a class="btn" href="https://apps.microsoft.com/detail/9NJN9FPRQ7T1" target="_blank" rel="noopener">Baixar na Microsoft Store</a>
+    </div>
+  </nav>
+  <main>
+    <header class="hero"><div class="label">Recursos</div><h1>O que o FocusFlow faz</h1><p>Conheça as ferramentas de bloqueio, foco e produtividade disponíveis no FocusFlow para Windows.</p><a class="btn" href="https://apps.microsoft.com/detail/9NJN9FPRQ7T1" target="_blank" rel="noopener">Baixar na Microsoft Store</a></header>
+    <section class="grid" aria-label="Lista de recursos">
+      <article class="card"><div class="tag">Essencial</div><h2>Encerramento de processos</h2><p>O FocusFlow encerra aplicativos bloqueados usando APIs Win32 durante a aplicação das regras. O resultado pode depender das permissões e da configuração do Windows.</p></article>
+      <article class="card"><div class="tag">Modo quiosque</div><h2>Focus Launcher</h2><p>Limita a área de trabalho do Windows aos aplicativos escolhidos. A barra de tarefas é ocultada e outros processos podem ser bloqueados durante a sessão.</p></article>
+      <article class="card"><div class="tag">Bloqueio</div><h2>Nuclear Mode</h2><p>Restringe atalhos do Windows, o Gerenciador de Tarefas e outros caminhos de saída durante uma sessão de foco, conforme as regras ativas.</p></article>
+      <article class="card"><div class="tag">Sites</div><h2>Bloqueador pelo arquivo hosts</h2><p>Bloqueia domínios pelo arquivo hosts do Windows. Requer permissão de administrador; VPNs, DNS seguro, DNS em cache e conexões já abertas podem afetar o bloqueio.</p></article>
+      <article class="card"><div class="tag">Pausa de emergência</div><h2>Kill Switch</h2><p>Permite pausar a aplicação das regras usando o orçamento diário configurado; a ativação pode exigir um PIN, conforme suas configurações.</p></article>
+      <article class="card"><div class="tag">Recuperação</div><h2>Restauração da barra de tarefas</h2><p>Há mecanismos de restauração na inicialização, no encerramento da JVM, em caso de falha e ao entrar no Windows. Falhas extremas ainda podem afetar a recuperação.</p></article>
+      <article class="card"><div class="tag">Anotações</div><h2>Notas diárias</h2><p>Planeje uma sessão de foco e registre observações depois. As notas são armazenadas localmente no dispositivo.</p></article>
+      <article class="card"><div class="tag">Progresso</div><h2>Hábitos e estatísticas</h2><p>Acompanhe sequências, número de sessões e tempo diário de foco para observar seus padrões ao longo do tempo.</p></article>
+      <article class="card"><div class="tag">Organização</div><h2>Tarefas e sessões</h2><p>Use sessões Pomodoro ou personalizadas e organize tarefas com prioridades, prazos, recorrência e notificações do Windows.</p></article>
+    </section>
+    <section class="cta"><h2>Pronto para começar?</h2><p>Grátis na Microsoft Store. Não é necessário criar uma conta.</p><a class="btn" href="https://apps.microsoft.com/detail/9NJN9FPRQ7T1" target="_blank" rel="noopener">Baixar o FocusFlow</a></section>
+  </main>
+  <footer><div class="footer-links"><a href="/pt-br/">Início</a><a href="/pt-br/features/">Recursos</a><a href="/pt-br/blog/">Blog</a><a href="/pt-br/privacy-policy/">Privacidade</a><a href="/pt-br/terms-of-service/">Termos de Serviço</a><a href="https://github.com/TITANICBHAI/FocusFlow-PC">GitHub</a></div><p>FocusFlow — foco e bloqueio de aplicativos para Windows — grátis na Microsoft Store.</p></footer>
+  <script>document.addEventListener('click',function(e){var s=document.getElementById('langSwitcher');if(s&&!s.contains(e.target))s.classList.remove('open')});</script>
+</body>
+</html>

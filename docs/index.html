@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FocusFlow — Deep Focus App Blocker for Windows | TBTechs</title>
-  <meta name="description" content="Block distracting apps, lock your Windows desktop with Focus Launcher kiosk mode, and stop website procrastination. Free on the Microsoft Store." />
-  <meta name="keywords" content="focus app Windows, app blocker Windows, distraction blocker, pomodoro Windows, deep work, nuclear mode, focus launcher, website blocker Windows, screen time Windows, productivity app Windows, ADHD focus tool, unbypassable app blocker, strict focus app, hard lock screen screen time, force close distracting apps, free Windows store productivity apps, no account productivity tool, " />
+  <meta name="description" content="Block distracting apps, use Focus Launcher kiosk mode, and organize focus sessions on Windows. Blocking depends on Windows permissions and system settings. Free on the Microsoft Store." />
+  <meta name="keywords" content="focus app Windows, app blocker Windows, distraction blocker, pomodoro Windows, deep work, nuclear mode, focus launcher, website blocker Windows, screen time Windows, productivity app Windows, ADHD focus tool, strict focus app, hard lock screen screen time, force close distracting apps, free Windows store productivity apps, no account productivity tool" />
   <meta name="author" content="TBTechs" />
     <meta name="google-site-verification" content="sou-98cZYPWFJmbwxJgJptO-ZaIPNJqz2ven_iS4NjI" />
   <meta name="msvalidate.01" content="FC2887EF2F94BFFE090CAB25A456AE86" />
@@ -19,6 +19,7 @@
   <link rel="alternate" hreflang="ja" href="https://focusflowpc.pages.dev/ja/" />
   <link rel="alternate" hreflang="zh" href="https://focusflowpc.pages.dev/zh/" />
   <link rel="alternate" hreflang="ko" href="https://focusflowpc.pages.dev/ko/" />
+  <link rel="alternate" hreflang="pt-BR" href="https://focusflowpc.pages.dev/pt-br/" />
   <link rel="alternate" hreflang="x-default" href="https://focusflowpc.pages.dev/" />
 
   <meta property="og:type" content="website" />
@@ -29,6 +30,7 @@
   <meta property="og:locale:alternate" content="ja_JP" />
   <meta property="og:locale:alternate" content="zh_CN" />
   <meta property="og:locale:alternate" content="ko_KR" />
+  <meta property="og:locale:alternate" content="pt_BR" />
   <meta property="og:title" content="FocusFlow — Deep Focus App Blocker for Windows" />
   <meta property="og:description" content="Block distracting apps, lock your desktop with Focus Launcher, and enforce deep work sessions. Real Win32 enforcement — no soft timers, no workarounds. Free on the Microsoft Store." />
   <meta property="og:url" content="https://focusflowpc.pages.dev/" />
@@ -55,12 +57,12 @@
     "operatingSystem": "Windows 10, Windows 11",
     "applicationCategory": "ProductivityApplication",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-    "description": "FocusFlow is a free Windows productivity app that enforces deep focus sessions by killing distracting processes via Win32 APIs, locking the desktop in kiosk mode, and blocking websites at the hosts-file level.",
+    "description": "FocusFlow is a free Windows productivity app with app blocking, Focus Launcher kiosk sessions, and website blocking through the Windows hosts file. Results depend on Windows permissions and system settings.",
     "author": { "@type": "Organization", "name": "TBTechs", "url": "https://titanicbhai.github.io" },
     "url": "https://focusflowpc.pages.dev/",
     "downloadUrl": "https://github.com/TITANICBHAI/FocusFlow-PC/releases",
-    "softwareVersion": "1.0.6",
-    "inLanguage": ["en","es","fr","de","ja","zh","ko"]
+    "softwareVersion": "2.0.3",
+    "inLanguage": ["en","es","fr","de","ja","zh","ko","pt-BR"]
   }
   </script>
 
@@ -98,7 +100,7 @@
       "name": "How does FocusFlow block apps?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "FocusFlow uses Win32 APIs to terminate blocked processes in real time. It kills the actual process — there is no soft timer and no way around it."
+        "text": "FocusFlow uses Win32 APIs to attempt to terminate blocked processes while rules are active. Results can depend on Windows permissions, system state, and other software."
       }
     },
     {
@@ -106,7 +108,7 @@
       "name": "Can I get my taskbar back if something goes wrong?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. FocusFlow has three independent recovery layers: a startup restore, a JVM shutdown hook, and a global crash handler — your taskbar is always restored."
+        "text": "FocusFlow has four recovery mechanisms: startup restore, a JVM shutdown hook, a global crash handler, and restoration at the next Windows sign-in. Severe Windows or system failures can still affect recovery."
       }
     },
     {
@@ -114,7 +116,7 @@
       "name": "Does FocusFlow block websites?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. FocusFlow blocks websites at the Windows hosts file level, which works in every browser simultaneously without requiring any extension."
+        "text": "FocusFlow can block domains through the Windows hosts file without a browser extension. Administrator access is required; VPNs, Secure DNS, cached DNS, and existing connections can affect blocking."
       }
     }
   ]
@@ -271,6 +273,7 @@
           <a href="https://focusflowpc.pages.dev/ja/">🇯🇵 日本語</a>
           <a href="https://focusflowpc.pages.dev/zh/">🇨🇳 中文</a>
           <a href="https://focusflowpc.pages.dev/ko/">🇰🇷 한국어</a>
+          <a href="https://focusflowpc.pages.dev/pt-br/">🇧🇷 Português (Brasil)</a>
         </div>
       </div>
       <a href="https://apps.microsoft.com/detail/9NJN9FPRQ7T1?cid=website" class="btn btn-store" target="_blank" rel="noopener">
@@ -339,7 +342,7 @@
         <ul class="feature-list">
           <li>5-minute PIN-gated breaks</li>
           <li>Hard Lock mode — no breaks at all</li>
-          <li>SHA-256 PIN — cannot be bypassed</li>
+          <li>PIN verification uses SHA-256 hashing</li>
         </ul>
       </div>
       <div class="card">
@@ -347,14 +350,14 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
         <h3>Crash-Safe Design</h3>
-        <p>Your taskbar is guaranteed to be restored even if FocusFlow crashes. Three independent safety layers fire on exit — a startup restore, a JVM shutdown hook, and a global crash handler.</p>
+        <p>Four recovery mechanisms can restore your taskbar: at startup, during JVM shutdown, through a crash handler, and at the next Windows sign-in. Severe Windows or system failures can still affect recovery.</p>
       </div>
       <div class="card">
         <div class="card-icon icon-grey">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 14.14 14.14"/></svg>
         </div>
         <h3>Safe Input Whitelist</h3>
-        <p>55+ system processes are always protected — keyboard drivers, OEM touchpad software, mouse peripherals, audio, UAC, and accessibility tools. FocusFlow never breaks your input devices.</p>
+        <p>A curated list of 55+ essential processes is protected, including keyboard drivers, touchpad software, audio, UAC, and accessibility tools. The list is intended to keep core input and system functions available.</p>
       </div>
     </div>
   </section>
@@ -378,14 +381,14 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         </div>
         <h3>Process Kill via Win32/JNA</h3>
-        <p><code style="font-family:monospace;font-size:0.8rem;background:rgba(124,77,255,0.1);padding:0.1rem 0.35rem;border-radius:3px;color:var(--purple-light)">ProcessHandle.destroyForcibly()</code> fires first. A <code style="font-family:monospace;font-size:0.8rem;background:rgba(124,77,255,0.1);padding:0.1rem 0.35rem;border-radius:3px;color:var(--purple-light)">taskkill /F /IM</code> fallback ensures the kill succeeds.</p>
+        <p><code style="font-family:monospace;font-size:0.8rem;background:rgba(124,77,255,0.1);padding:0.1rem 0.35rem;border-radius:3px;color:var(--purple-light)">ProcessHandle.destroyForcibly()</code> is attempted first, followed by a <code style="font-family:monospace;font-size:0.8rem;background:rgba(124,77,255,0.1);padding:0.1rem 0.35rem;border-radius:3px;color:var(--purple-light)">taskkill /F /IM</code> fallback. Windows permissions or protected processes may still prevent termination.</p>
       </div>
       <div class="card">
         <div class="card-icon icon-cyan">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
         <h3>Windows Firewall Rules</h3>
-        <p>Network blocking adds a live outbound <code style="font-family:monospace;font-size:0.8rem;background:rgba(79,195,247,0.1);padding:0.1rem 0.35rem;border-radius:3px;color:var(--cyan)">netsh advfirewall</code> rule for the blocked app — enforced at the Windows firewall layer.</p>
+        <p>Network blocking can add an outbound <code style="font-family:monospace;font-size:0.8rem;background:rgba(79,195,247,0.1);padding:0.1rem 0.35rem;border-radius:3px;color:var(--cyan)">netsh advfirewall</code> rule for the app. Administrator access is required to manage Windows Firewall rules.</p>
       </div>
       <div class="card">
         <div class="card-icon icon-cyan">
@@ -399,7 +402,7 @@
       <div class="card">
         <div class="card-icon icon-grey"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
         <h3>Website Blocker</h3>
-        <p>Blocks domains at the hosts-file level — works for every browser simultaneously. No extension needed.</p>
+        <p>Blocks configured domains through the Windows hosts file without a browser extension. Administrator access is required; VPNs, Secure DNS, cached DNS, and existing connections can affect blocking.</p>
       </div>
       <div class="card">
         <div class="card-icon icon-grey"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
@@ -517,19 +520,19 @@
         </div>
         <div class="faq-item">
           <div class="faq-q">What is Focus Launcher?</div>
-          <div class="faq-a">Focus Launcher is FocusFlow's kiosk mode. It locks your entire Windows desktop to only the apps you choose, hides the taskbar, and blocks all other processes until your session ends.</div>
+          <div class="faq-a">Focus Launcher is FocusFlow's kiosk mode. It limits access to the apps you choose and hides the taskbar during the session. Some Windows and accessibility processes remain protected.</div>
         </div>
         <div class="faq-item">
           <div class="faq-q">How does FocusFlow block apps?</div>
-          <div class="faq-a">FocusFlow uses Win32 APIs to terminate blocked processes in real time. It kills the actual process — there is no soft timer and no way around it.</div>
+          <div class="faq-a">FocusFlow uses Win32 APIs to attempt to terminate blocked processes while rules are active. Results can depend on Windows permissions, system state, and other software.</div>
         </div>
         <div class="faq-item">
           <div class="faq-q">Can I get my taskbar back if something goes wrong?</div>
-          <div class="faq-a">Yes. FocusFlow has three independent recovery layers: a startup restore, a JVM shutdown hook, and a global crash handler — your taskbar is always restored.</div>
+          <div class="faq-a">FocusFlow has four recovery mechanisms: startup restore, a JVM shutdown hook, a global crash handler, and restoration at the next Windows sign-in. Severe Windows or system failures can still affect recovery.</div>
         </div>
         <div class="faq-item">
           <div class="faq-q">Does FocusFlow block websites?</div>
-          <div class="faq-a">Yes. FocusFlow blocks websites at the Windows hosts file level, which works in every browser simultaneously without requiring any extension.</div>
+          <div class="faq-a">FocusFlow can block domains through the Windows hosts file without a browser extension. Administrator access is required; VPNs, Secure DNS, cached DNS, and existing connections can affect blocking.</div>
         </div>
     </div>
   </section>
