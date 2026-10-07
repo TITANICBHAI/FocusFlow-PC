@@ -23,13 +23,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 1. Read version from Gradle ───────────────────────────────────────────
-      - name: Read version from build.gradle.kts
+      # ── 1. Read version from Gradle properties ────────────────────────────────
+      - name: Read version from gradle.properties
         id: ver
         run: |
-          VERSION=$(grep -oP '(?<=^version = ")[^"]+' build.gradle.kts)
+          VERSION=$(sed -nE 's/^[[:space:]]*appVersion[[:space:]]*=[[:space:]]*([^[:space:]#]+)[[:space:]]*(#.*)?$/\1/p' gradle.properties | head -n 1)
           if [ -z "$VERSION" ]; then
-            echo "::error::Could not parse version from build.gradle.kts"
+            echo "::error::Could not parse appVersion from gradle.properties"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid appVersion '$VERSION' in gradle.properties; expected MAJOR.MINOR.PATCH"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

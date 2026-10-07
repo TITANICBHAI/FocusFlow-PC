@@ -140,9 +140,17 @@ jobs:
       - name: Package MSIX
         shell: pwsh
         run: |
-          # Read version dynamically from build.gradle.kts
-          $versionLine = Get-Content "build.gradle.kts" | Select-String 'version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          # Read the version from the Gradle properties file used by build.gradle.kts.
+          $versionLine = Get-Content "gradle.properties" |
+            Select-String '^\s*appVersion\s*=\s*([^\s#]+)(?:\s*#.*)?$' |
+            Select-Object -First 1
+          if (-not $versionLine) {
+            throw "Could not find appVersion in gradle.properties"
+          }
           $version = $versionLine.Matches[0].Groups[1].Value
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Invalid appVersion '$version' in gradle.properties; expected MAJOR.MINOR.PATCH for MSIX packaging"
+          }
           Write-Host "Detected app version: $version"
 
           $appDir    = "build\compose\binaries\main\app\FocusFlow"
