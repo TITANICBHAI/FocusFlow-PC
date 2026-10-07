@@ -17,8 +17,8 @@ Coverage here is measured by comparing each locale's displayed string with the E
 | Korean | `ko` | 650 / 652 | 2 | **99.7%** |
 | German | `de` | 644 / 652 | 8 | **98.8%** |
 | French | `fr` | 628 / 652 | 24 | **96.3%** |
-| Brazilian Portuguese | `pt-BR` | 641 / 652 | 11 | **98.3%** |
-| **All non-English locales** | — | **4,514 / 4,564** | **50** | **98.9%** |
+| Brazilian Portuguese | `pt-BR` | 640 / 652 | 12 | **98.2%** |
+| **All non-English locales** | — | **4,513 / 4,564** | **51** | **98.9%** |
 
 ## Strings identical to English
 
@@ -91,7 +91,7 @@ No exact English matches remain.
 | `tasksFieldDateShort` | Date |
 | `focusCycleLabel` | Cycle |
 
-### Brazilian Portuguese (`pt-BR`) — 11
+### Brazilian Portuguese (`pt-BR`) — 12
 
 | Key | English text |
 |---|---|
@@ -101,6 +101,7 @@ No exact English matches remain.
 | `settingsPinLabel` | PIN |
 | `launcherTitle` | Focus Launcher |
 | `launcherOverlayFocusLauncher` | FOCUS LAUNCHER |
+| `navFocusLauncher` | Focus Launcher |
 | `defPinLabel` | PIN |
 | `blockerHour` | HH |
 | `blockerMinute` | MM |
@@ -111,5 +112,6 @@ No exact English matches remain.
 
 - Each of the 652 string fields in a locale is compared with the English value for the same key.
 - Coverage is the number of values that differ from English divided by 652. The overall figure is weighted by the same 652 fields in each of seven locales.
-- This is a source-text comparison, not a human review. It does not detect partially English strings, assess translation accuracy or fluency, or decide whether identical terms should be localized.
+- This is a source-text comparison, not a translation-quality score. It does not detect partially English strings, assess translation accuracy or fluency, or decide whether identical terms should be localized.
+- Brazilian Portuguese received an AI-assisted editorial pass for fluency and terminology, but has not been verified by a native speaker.
 - Exact English matches can be valid in context. Review the unchanged-string lists before treating any entry as missing a translation.

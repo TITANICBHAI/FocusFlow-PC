@@ -15,7 +15,7 @@ This tracker records locale support in the app and the current Brazilian Portugu
 | Korean (`ko`) | Complete | 99.7% | Remaining exact matches are app and product names |
 | German (`de`) | Complete | 98.8% | Remaining exact matches are shared terms and abbreviations |
 | French (`fr`) | Complete | 96.3% | Remaining exact matches are shared terms, labels, and time placeholders |
-| Brazilian Portuguese (`pt-BR`) | Complete | 98.3% | All 652 source fields translated; 11 exact English matches remain for product names, abbreviations, or shared terms |
+| Brazilian Portuguese (`pt-BR`) | Complete | 98.2% | All 652 fields reviewed; 12 exact English matches are product names, abbreviations, or shared terms |
 
 Coverage is a comparison with English source text, not a human assessment of translation quality.
 
@@ -27,3 +27,4 @@ Coverage is a comparison with English source text, not a human assessment of tra
 - [x] Keep placeholders and formatting tokens intact
 - [x] Update the coverage report
 - [x] Record the addition in the v2.0.3 changelog
+- [x] Review Brazilian Portuguese fluency and terminology (editorial pass; native-speaker verification remains pending)
