@@ -31,6 +31,16 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "2.0.4",
+        date       = "October 2026",
+        badge      = "FIX",
+        badgeColor = Error,
+        changes    = listOf(
+            "FIX" to "Starting a Focus Launcher session with a custom duration no longer crashes while showing the one-time PIN",
+            "FIX" to "Daily Notes safely handles out-of-range saved mood values and rejects invalid mood values when saving"
+        )
+    ),
+    ChangelogEntry(
         version    = "2.0.3",
         date       = "October 2026",
         badge      = "IMP",

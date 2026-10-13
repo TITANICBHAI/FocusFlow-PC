@@ -1429,7 +1429,7 @@ object Database {
             ps.executeQuery().use { rs ->
                 if (rs.next()) DailyNote(
                     LocalDate.parse(rs.getString("date"), dateFmt),
-                    rs.getString("content"), rs.getInt("mood"),
+                    rs.getString("content"), rs.getInt("mood").coerceIn(1, 5),
                     LocalDateTime.parse(rs.getString("updated_at"), dtFmt)
                 ) else null
             }
@@ -1437,6 +1437,7 @@ object Database {
     }
 
     @Synchronized fun upsertNote(note: DailyNote) {
+        require(note.mood in 1..5) { "Daily note mood must be between 1 and 5" }
         connection.prepareStatement("""
             INSERT OR REPLACE INTO daily_notes (date, content, mood, updated_at) VALUES (?,?,?,?)
         """.trimIndent()).use { ps ->

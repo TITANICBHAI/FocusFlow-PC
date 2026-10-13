@@ -58,6 +58,14 @@ private fun formatDuration(totalMinutes: Int): String {
     }
 }
 
+private fun resolveDurationMinutes(durationIndex: Int, customDurationMinutes: Int?): Int? =
+    when {
+        durationIndex == CUSTOM_DURATION_INDEX ->
+            checkNotNull(customDurationMinutes) { "Custom duration selected without a duration value" }
+        durationIndex in DURATION_PRESETS.indices -> DURATION_PRESETS[durationIndex].second
+        else -> error("Invalid Focus Launcher duration index: $durationIndex")
+    }
+
 @Composable
 fun FocusLauncherScreen() {
     val strings = LocalizationManager.strings
@@ -80,6 +88,8 @@ fun FocusLauncherScreen() {
     var allowedAppsExpanded by remember { mutableStateOf(false) }
     var launcherPresets    by remember { mutableStateOf<List<FocusLauncherPreset>>(emptyList()) }
     var showPresetDialog   by remember { mutableStateOf(false) }
+
+    val durationMinutes = resolveDurationMinutes(durationIndex, customDurationMinutes)
 
     // Checked once on composition — running "net session" is a blocking call so we
     // do it inside remember{} rather than on every recomposition.
@@ -833,11 +843,6 @@ fun FocusLauncherScreen() {
     // ── Confirm dialog ────────────────────────────────────────────────────────
     if (confirmEnter) {
         val appsForSession = availableApps.filter { it.processName.lowercase() in selectedApps }
-        val duration       = if (durationIndex == CUSTOM_DURATION_INDEX) {
-            customDurationMinutes
-        } else {
-            DURATION_PRESETS[durationIndex].second
-        }
 
         AlertDialog(
             onDismissRequest = { confirmEnter = false },
@@ -851,7 +856,7 @@ fun FocusLauncherScreen() {
                     Text(
                         "This will hide the taskbar, disable system shortcuts, and restrict you " +
                         "to ${appsForSession.size} app${if (appsForSession.size == 1) "" else "s"}" +
-                        if (duration != null) " for $duration minutes." else ". No time limit.",
+                        if (durationMinutes != null) " for $durationMinutes minutes." else ". No time limit.",
                         color = OnSurface2, style = MaterialTheme.typography.bodySmall
                     )
                     Text(
@@ -891,7 +896,6 @@ fun FocusLauncherScreen() {
 
     // ── One-time session PIN ──────────────────────────────────────────────────
     if (showPinBeforeEnter) {
-        val duration = DURATION_PRESETS[durationIndex].second
         AlertDialog(
             onDismissRequest = { },
             containerColor = Surface2,
@@ -941,7 +945,7 @@ fun FocusLauncherScreen() {
                         scope.launch(Dispatchers.IO) {
                             FocusLauncherService.enter(
                                 apps = appsForSession,
-                                durationMinutes = duration,
+                                durationMinutes = durationMinutes,
                                 breaksAllowed = breaksAllowed,
                                 breakSeconds = breakDurationMins * 60
                             )

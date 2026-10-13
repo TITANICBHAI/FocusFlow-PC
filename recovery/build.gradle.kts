@@ -36,6 +36,7 @@ compose.desktop {
             "-Xms32m",
             "-Xmx128m",
             "-XX:+UseG1GC",
+            "-Dfocusflow.recovery.version=${project.version}",
             "-Dfile.encoding=UTF-8",
             "-Djava.awt.headless=false",
             "-Dskiko.renderApi=SOFTWARE"

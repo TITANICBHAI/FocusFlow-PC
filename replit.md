@@ -120,13 +120,13 @@ export PATH=$JAVA_HOME/bin:$PATH
 
 ## MSIX / Microsoft Store Identity (Partner Center values)
 
-These values MUST match Partner Center exactly. They are hardcoded in `.github/workflows/build-windows.yml`:
+These values MUST match Partner Center exactly. The identity name and publisher are configured in `.github/workflows/build-windows.yml`; the version is generated from `appVersion` in `gradle.properties` with the required four-part MSIX suffix:
 
 | Field | Value |
 |---|---|
 | `Identity/@Name` | `TBTechs.FocusFlowDeepFocusAppBlocker` |
 | `Identity/@Publisher` | `CN=E08824C8-6F22-4DC2-8025-DD8C707E2BE9` |
-| `Identity/@Version` | `1.0.6.0` (4th digit must be 0 for Store) |
+| `Identity/@Version` | `2.0.4.0` (generated from appVersion; 4th digit is 0 for Store) |
 | `Properties/DisplayName` | `FocusFlow - Deep Focus App Blocker` |
 | `Properties/PublisherDisplayName` | `TBTechs` |
 
