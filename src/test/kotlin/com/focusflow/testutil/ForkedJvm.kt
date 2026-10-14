@@ -19,6 +19,7 @@ object ForkedJvm {
         mainClass: String,
         jvmArgs: List<String> = emptyList(),
         args: List<String> = emptyList(),
+        appVersion: String? = "test",
         timeout: Duration = Duration.ofSeconds(60)
     ): Result {
         require(mainClass.isNotBlank()) { "mainClass must not be blank" }
@@ -44,7 +45,7 @@ object ForkedJvm {
                 add(javaExecutable.toString())
                 addAll(jvmArgs)
                 add("-Duser.home=${home}")
-                add("-Dfocusflow.app.version=test")
+                appVersion?.let { add("-Dfocusflow.app.version=$it") }
                 add("-Dfocusflow.telemetry=off")
                 add("-cp")
                 add(classpath)

@@ -102,8 +102,11 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 1 — P0 startup failure and blast radius
 
-- **Status:** Not started.
+- **Status:** In progress — 2026-10-14 (F28).
 - **Required order:** **F28 test configuration → F4.0 → F2 → F1 → F3 local diagnostics/UI → F4 consent/redaction → F3 remote-payload summary. F5 is deferred until after F11.**
+
+- **2026-10-14 start note:** Began Phase 1 after explicit owner authorization. Work follows the reconciled sequence above; D1–D3 and F1b remain approval gates. No database finding was implemented before this authorization.
+- **2026-10-14 F28 progress:** Gradle now supplies the project version to the test worker, with tests covering the worker property and the packaged-app missing-version fail-fast in a fresh JVM. Targeted root `:test` run passed 2/2 with zero failures/errors. The `focusflow.telemetry=off` test property remains pending until F4.0.
 
 - [ ] **F28 — Test JVM configuration (pulled forward):** Set `focusflow.app.version` from the Gradle project version for tests and set `focusflow.telemetry=off` for tests after F4.0. Keep the packaged-app fail-fast unless the owner approves a production fallback. Assert the test worker gets the version property; in an isolated JVM, verify the missing-property case remains an intentional fail-fast rather than masking a packaging error.
 - [ ] **F4.0 — Telemetry test seam (before failure tests):** Route automatic reports through `TelemetrySink`; support a no-op sink when telemetry is disabled and a recording fake in tests. No behavior change beyond the explicit kill switch; tests/scripts must never send network traffic.

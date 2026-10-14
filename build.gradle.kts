@@ -33,6 +33,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("focusflow.app.version", project.version.toString())
+    systemProperty("focusflow.test.expected-app-version", project.version.toString())
 }
 
 compose.desktop {
