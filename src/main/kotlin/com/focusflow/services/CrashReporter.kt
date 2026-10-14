@@ -591,23 +591,12 @@ object CrashReporter {
 
         Thread {
             try {
-                fun String.esc() = replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "")
-                    .replace("\t", "\\t")
-
-                val safeMsg    = message.esc()
-                val safeSource = source.esc()
-                val traceBlock = if (throwable != null) {
-                    val raw = throwable.stackTraceToString()
-                    val t   = if (raw.length > 1200) raw.substring(0, 1200) + "\n... [truncated]" else raw
-                    "**Stack Trace:**\\n```kotlin\\n${t.esc()}\\n```"
-                } else ""
-                val fingerprint = if (throwable != null) crashFingerprint(throwable).esc()
-                                  else source.take(40).replace("#", "_").esc()
-                val osName  = prop("os.name").esc()
-                val javaVer = prop("java.version").esc()
+                val summary = criticalDiagnosticSummary(message, throwable, maxChars = 1200).jsonEscaped()
+                val safeSource = source.jsonEscaped()
+                val fingerprint = if (throwable != null) crashFingerprint(throwable).jsonEscaped()
+                                  else source.take(40).replace("#", "_").jsonEscaped()
+                val osName  = prop("os.name").jsonEscaped()
+                val javaVer = prop("java.version").jsonEscaped()
 
                 val payload = """
                     {
@@ -621,7 +610,7 @@ object CrashReporter {
                           { "name": "Java",        "value": "$javaVer",       "inline": true  },
                           { "name": "Fingerprint", "value": "`$fingerprint`", "inline": false }
                         ],
-                        "description": "$safeMsg\n$traceBlock"
+                        "description": "$summary"
                       }]
                     }
                 """.trimIndent()
@@ -773,6 +762,76 @@ object CrashReporter {
     }
 
     /**
+     * Creates a bounded root-cause-first summary for remote telemetry.
+     * Full exception chains and stack traces remain in local crash reports only.
+     */
+    internal fun rootCauseSummary(t: Throwable, maxChars: Int): String {
+        if (maxChars <= 0) return ""
+
+        val seen = java.util.Collections.newSetFromMap(
+            java.util.IdentityHashMap<Throwable, Boolean>()
+        )
+        val causes = mutableListOf<Throwable>()
+        var current: Throwable? = t
+        var cycleFound = false
+        var chainTruncated = false
+        while (current != null) {
+            if (causes.size == 8) {
+                chainTruncated = true
+                break
+            }
+            if (!seen.add(current)) {
+                cycleFound = true
+                break
+            }
+            causes += current
+            current = current.cause
+        }
+
+        val lines = mutableListOf<String>()
+        causes.asReversed().forEachIndexed { index, cause ->
+            val label = if (index == 0) "Root cause" else "Caused by"
+            val message = cause.message
+                ?.replace(Regex("\\s+"), " ")
+                ?.take(160)
+                ?: "(no message)"
+            lines += "$label: ${cause.javaClass.name.take(160)}: $message"
+        }
+
+        causes.lastOrNull()?.stackTrace?.take(3)?.forEach { frame ->
+            lines += "  at ${frame.toString().take(200)}"
+        }
+
+        val suppressed = causes
+            .asReversed()
+            .flatMap { it.suppressed.asList() }
+            .take(3)
+            .joinToString("; ") { failure ->
+                "${failure.javaClass.name.take(100)}: " +
+                    (failure.message?.replace(Regex("\\s+"), " ")?.take(100) ?: "(no message)")
+            }
+        if (suppressed.isNotEmpty()) lines += "Suppressed: $suppressed"
+        if (cycleFound) lines += "[cause cycle omitted]"
+        if (chainTruncated) lines += "[cause chain truncated after 8 entries]"
+
+        return lines.joinToString("\n").take(maxChars)
+    }
+
+    private fun criticalDiagnosticSummary(
+        message: String,
+        throwable: Throwable?,
+        maxChars: Int,
+    ): String {
+        val context = "Context: ${message.replace(Regex("\\s+"), " ").take(240)}"
+        if (throwable == null) return context.take(maxChars)
+
+        val causeBudget = (maxChars - context.length - 1).coerceAtLeast(0)
+        val causes = rootCauseSummary(throwable, causeBudget)
+        return if (causes.isEmpty()) context.take(maxChars)
+        else "$causes\n$context".take(maxChars)
+    }
+
+    /**
      * Sends a compact crash embed to a Discord webhook before the fatal handler
      * returns. This is intentionally synchronous because the JVM may terminate
      * before a daemon worker gets a chance to deliver the report.
@@ -794,24 +853,17 @@ object CrashReporter {
         if (isKnownBenign(throwable)) return
 
         try {
-                val rawTrace = throwable.stackTraceToString()
-                val trace = if (rawTrace.length > 1500)
-                    rawTrace.substring(0, 1500) + "\n... [truncated]"
-                else rawTrace
-
-                fun String.esc() = replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "")
-                    .replace("\t", "\\t")
-
-                val safeMsg         = (throwable.message ?: "Unknown exception").esc()
-                val safeTrace       = trace.esc()
-                val safeClass       = throwable.javaClass.name.esc()
-                val osName          = prop("os.name").esc()
-                val osVer           = prop("os.version").esc()
-                val javaVer         = prop("java.version").esc()
-                val fingerprint     = crashFingerprint(throwable).esc()
+                val safeMsg = (throwable.message ?: "Unknown exception")
+                    .replace(Regex("\\s+"), " ")
+                    .take(240)
+                    .jsonEscaped()
+                val safeSummary = rootCauseSummary(throwable, maxChars = 1500).jsonEscaped()
+                val safeClass = throwable.javaClass.name.jsonEscaped()
+                val safeSource = source.jsonEscaped()
+                val osName = prop("os.name").jsonEscaped()
+                val osVer = prop("os.version").jsonEscaped()
+                val javaVer = prop("java.version").jsonEscaped()
+                val fingerprint = crashFingerprint(throwable).jsonEscaped()
 
                 val payload = """
                     {
@@ -822,12 +874,12 @@ object CrashReporter {
                         "fields": [
                           { "name": "Exception",    "value": "$safeClass",        "inline": false },
                           { "name": "Message",      "value": "$safeMsg",          "inline": false },
-                          { "name": "Source",       "value": "$source",            "inline": true  },
+                          { "name": "Source",       "value": "$safeSource",        "inline": true  },
                           { "name": "OS",           "value": "$osName $osVer",    "inline": true  },
                           { "name": "Java",         "value": "$javaVer",          "inline": true  },
                           { "name": "Fingerprint",  "value": "`$fingerprint`",    "inline": false }
                         ],
-                        "description": "**Stack Trace:**\n```kotlin\n$safeTrace\n```\n> Same fingerprint = same root cause. Search Discord for `$fingerprint` to count duplicates."
+                        "description": "**Root-cause summary:**\n$safeSummary"
                       }]
                     }
                 """.trimIndent()
@@ -846,6 +898,26 @@ object CrashReporter {
 
     private fun prop(key: String): String =
         try { System.getProperty(key) ?: "(not set)" } catch (_: Throwable) { "(error reading property)" }
+
+    private fun String.jsonEscaped(): String = buildString(length) {
+        for (character in this@jsonEscaped) {
+            when (character) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\b' -> append("\\b")
+                '\u000C' -> append("\\f")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (character.code < 0x20) {
+                    append("\\u")
+                    append(character.code.toString(16).padStart(4, '0'))
+                } else {
+                    append(character)
+                }
+            }
+        }
+    }
 
     private fun StringBuilder.ln(s: String = "") {
         append(s)
