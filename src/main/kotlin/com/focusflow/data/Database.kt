@@ -417,16 +417,18 @@ object Database {
 
             // quick_check is read-only. Run it before changing journal mode so a
             // corrupt file and its WAL/SHM companions remain untouched until copied.
-            val integrity = localConn.createStatement()
-                .executeQuery("PRAGMA quick_check")
-                .use { resultSet -> if (resultSet.next()) resultSet.getString(1) else "error" }
+            val integrity = localConn.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA quick_check")
+                    .use { resultSet -> if (resultSet.next()) resultSet.getString(1) else "error" }
+            }
             if (!integrity.equals("ok", ignoreCase = true)) {
                 throw SQLException("SQLite quick_check failed: $integrity", "SQLITE_CORRUPT", 11)
             }
 
-            val journalMode = localConn.createStatement()
-                .executeQuery("PRAGMA journal_mode=WAL")
-                .use { resultSet -> if (resultSet.next()) resultSet.getString(1) else "" }
+            val journalMode = localConn.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA journal_mode=WAL")
+                    .use { resultSet -> if (resultSet.next()) resultSet.getString(1) else "" }
+            }
             if (!journalMode.equals("wal", ignoreCase = true)) {
                 throw SQLException("Could not enable WAL mode (result: $journalMode)", "SQLITE_BUSY", 5)
             }
@@ -610,9 +612,10 @@ object Database {
     private val TARGET_VERSION = 9
 
     private fun migrate() {
-        val current = connection.createStatement()
-            .executeQuery("PRAGMA user_version")
-            .use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+        val current = connection.createStatement().use { statement ->
+            statement.executeQuery("PRAGMA user_version")
+                .use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+        }
 
         if (current >= TARGET_VERSION) return
 
@@ -620,9 +623,10 @@ object Database {
         // mid-way the schema is rolled back to the pre-migration state and
         // user_version is NOT bumped, so the next launch retries cleanly.
         inTransaction {
-            val lockedVersion = connection.createStatement()
-                .executeQuery("PRAGMA user_version")
-                .use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+            val lockedVersion = connection.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA user_version")
+                    .use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+            }
             if (lockedVersion >= TARGET_VERSION) return@inTransaction
 
             if (lockedVersion < 1) migrateV1()
@@ -636,8 +640,9 @@ object Database {
             if (lockedVersion < 9) migrateV9()
 
             // Bump stored version only after ALL steps succeed
-            connection.createStatement()
-                .executeUpdate("PRAGMA user_version = $TARGET_VERSION")
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("PRAGMA user_version = $TARGET_VERSION")
+            }
         }
     }
 
@@ -876,8 +881,8 @@ object Database {
 
     // v9 — canonicalize process keys and merge legacy case variants safely.
     private fun migrateV9() {
-        val allowances = connection.createStatement()
-            .executeQuery(
+        val allowances = connection.createStatement().use { statement ->
+            statement.executeQuery(
                 "SELECT process_name, display_name, allowance_minutes FROM daily_allowances"
             ).use { rs ->
                 buildList {
@@ -892,6 +897,7 @@ object Database {
                     }
                 }
             }
+        }
         val normalizedAllowances = allowances
             .groupBy { normalizeProcessKey(it.processName) }
             .map { (key, variants) ->
@@ -912,15 +918,16 @@ object Database {
         }
 
         data class UsageRow(val date: String, val processName: String, val seconds: Long)
-        val usage = connection.createStatement()
-            .executeQuery("SELECT date, process_name, seconds_used FROM daily_usage")
-            .use { rs ->
-                buildList {
-                    while (rs.next()) {
-                        add(UsageRow(rs.getString("date"), rs.getString("process_name"), rs.getLong("seconds_used")))
+        val usage = connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT date, process_name, seconds_used FROM daily_usage")
+                .use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            add(UsageRow(rs.getString("date"), rs.getString("process_name"), rs.getLong("seconds_used")))
+                        }
                     }
                 }
-            }
+        }
         val normalizedUsage = usage
             .groupBy { it.date to normalizeProcessKey(it.processName) }
             .map { (key, variants) -> UsageRow(key.first, key.second, variants.maxOf { it.seconds }) }
@@ -1096,7 +1103,9 @@ object Database {
     }
 
     @Synchronized fun clearAllTasks() {
-        connection.createStatement().executeUpdate("DELETE FROM tasks")
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("DELETE FROM tasks")
+        }
     }
 
     @Synchronized fun getRecurringTemplates(): List<Task> {
@@ -1178,15 +1187,19 @@ object Database {
     }
 
     @Synchronized fun getAllTimeFocusMinutes(): Int {
-        return connection.createStatement().executeQuery(
-            "SELECT COALESCE(SUM(actual_minutes), 0) FROM focus_sessions WHERE completed = 1"
-        ).use { if (it.next()) it.getInt(1) else 0 }
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT COALESCE(SUM(actual_minutes), 0) FROM focus_sessions WHERE completed = 1"
+            ).use { if (it.next()) it.getInt(1) else 0 }
+        }
     }
 
     @Synchronized fun getAllTimeFocusSessions(): Int {
-        return connection.createStatement().executeQuery(
-            "SELECT COUNT(*) FROM focus_sessions WHERE completed = 1"
-        ).use { if (it.next()) it.getInt(1) else 0 }
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT COUNT(*) FROM focus_sessions WHERE completed = 1"
+            ).use { if (it.next()) it.getInt(1) else 0 }
+        }
     }
 
     @Synchronized fun getFocusMinutesByDay(days: Int = 7): List<DayFocusStats> {
@@ -1227,28 +1240,36 @@ object Database {
     }
 
     @Synchronized fun clearAllSessions() {
-        connection.createStatement().executeUpdate("DELETE FROM focus_sessions")
-        connection.createStatement().executeUpdate("DELETE FROM daily_completions")
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("DELETE FROM focus_sessions")
+        }
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("DELETE FROM daily_completions")
+        }
     }
 
     // ── Block Rules ───────────────────────────────────────────────────────────
 
     @Synchronized fun getBlockRules(): List<BlockRule> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM block_rules ORDER BY display_name"
-        ).use { rs ->
-            val list = mutableListOf<BlockRule>(); while (rs.next()) list.add(rowToBlockRule(rs)); list
-        // Defensive dedup: legacy DBs may have rows with duplicate IDs or duplicate
-        // process_name values (pre-UNIQUE-constraint schema). distinctBy on both fields
-        // ensures the LazyColumn key is always unique even on corrupt/migrated data.
-        }.distinctBy { it.id }.distinctBy { it.processName }
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM block_rules ORDER BY display_name"
+            ).use { rs ->
+                val list = mutableListOf<BlockRule>(); while (rs.next()) list.add(rowToBlockRule(rs)); list
+            // Defensive dedup: legacy DBs may have rows with duplicate IDs or duplicate
+            // process_name values (pre-UNIQUE-constraint schema). distinctBy on both fields
+            // ensures the LazyColumn key is always unique even on corrupt/migrated data.
+            }.distinctBy { it.id }.distinctBy { it.processName }
+        }
     }
 
     @Synchronized fun getEnabledBlockProcesses(): Set<String> {
-        return connection.createStatement().executeQuery(
-            "SELECT process_name FROM block_rules WHERE enabled = 1"
-        ).use { rs ->
-            val set = mutableSetOf<String>(); while (rs.next()) set.add(rs.getString("process_name").lowercase()); set
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT process_name FROM block_rules WHERE enabled = 1"
+            ).use { rs ->
+                val set = mutableSetOf<String>(); while (rs.next()) set.add(rs.getString("process_name").lowercase()); set
+            }
         }
     }
 
@@ -1272,12 +1293,14 @@ object Database {
     // ── Block Schedules ───────────────────────────────────────────────────────
 
     @Synchronized fun getBlockSchedules(): List<BlockSchedule> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM block_schedules ORDER BY name"
-        ).use { rs ->
-            val list = mutableListOf<BlockSchedule>()
-            while (rs.next()) list.add(rowToSchedule(rs))
-            list
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM block_schedules ORDER BY name"
+            ).use { rs ->
+                val list = mutableListOf<BlockSchedule>()
+                while (rs.next()) list.add(rowToSchedule(rs))
+                list
+            }
         }
     }
 
@@ -1315,20 +1338,22 @@ object Database {
     // ── Daily Allowances ──────────────────────────────────────────────────────
 
     @Synchronized fun getDailyAllowances(): List<DailyAllowance> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM daily_allowances ORDER BY display_name"
-        ).use { rs ->
-            val list = mutableListOf<DailyAllowance>()
-            while (rs.next()) list.add(DailyAllowance(
-                normalizeProcessKey(rs.getString("process_name")),
-                rs.getString("display_name"),
-                rs.getInt("allowance_minutes")
-            ))
-            list
-        // Defensive dedup: legacy DBs may have process_name duplicates if the table
-        // was originally created without the PRIMARY KEY constraint. Dedup here
-        // prevents the Compose key("discord.exe") crash in DashboardScreen.
-        }.distinctBy { it.processName }
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM daily_allowances ORDER BY display_name"
+            ).use { rs ->
+                val list = mutableListOf<DailyAllowance>()
+                while (rs.next()) list.add(DailyAllowance(
+                    normalizeProcessKey(rs.getString("process_name")),
+                    rs.getString("display_name"),
+                    rs.getInt("allowance_minutes")
+                ))
+                list
+            // Defensive dedup: legacy DBs may have process_name duplicates if the table
+            // was originally created without the PRIMARY KEY constraint. Dedup here
+            // prevents the Compose key("discord.exe") crash in DashboardScreen.
+            }.distinctBy { it.processName }
+        }
     }
 
     @Synchronized fun upsertDailyAllowance(a: DailyAllowance) {
@@ -1575,9 +1600,15 @@ object Database {
     // ── Streak ────────────────────────────────────────────────────────────────
 
     @Synchronized fun getCurrentStreak(): Int {
-        val rows = connection.createStatement().executeQuery(
-            "SELECT date FROM daily_completions WHERE completed_count > 0 ORDER BY date DESC LIMIT 90"
-        ).use { rs -> val l = mutableListOf<LocalDate>(); while (rs.next()) l.add(LocalDate.parse(rs.getString("date"), dateFmt)); l }
+        val rows = connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT date FROM daily_completions WHERE completed_count > 0 ORDER BY date DESC LIMIT 90"
+            ).use { rs ->
+                val l = mutableListOf<LocalDate>()
+                while (rs.next()) l.add(LocalDate.parse(rs.getString("date"), dateFmt))
+                l
+            }
+        }
         if (rows.isEmpty()) return 0
         var streak = 0
         var expected = LocalDate.now()
@@ -1590,9 +1621,15 @@ object Database {
     }
 
     @Synchronized fun getBestStreak(): Int {
-        val rows = connection.createStatement().executeQuery(
-            "SELECT date FROM daily_completions WHERE completed_count > 0 ORDER BY date ASC"
-        ).use { rs -> val l = mutableListOf<LocalDate>(); while (rs.next()) l.add(LocalDate.parse(rs.getString("date"), dateFmt)); l }
+        val rows = connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT date FROM daily_completions WHERE completed_count > 0 ORDER BY date ASC"
+            ).use { rs ->
+                val l = mutableListOf<LocalDate>()
+                while (rs.next()) l.add(LocalDate.parse(rs.getString("date"), dateFmt))
+                l
+            }
+        }
         if (rows.isEmpty()) return 0
         var best = 0; var current = 0; var prev: LocalDate? = null
         for (date in rows) {
@@ -1612,9 +1649,11 @@ object Database {
             ps.setString(1, processName); ps.setString(2, displayName)
             ps.setString(3, LocalDateTime.now().format(dtFmt)); ps.executeUpdate()
         }
-        connection.createStatement().executeUpdate(
-            "DELETE FROM temptation_log WHERE id NOT IN (SELECT id FROM temptation_log ORDER BY id DESC LIMIT 1000)"
-        )
+        connection.createStatement().use { statement ->
+            statement.executeUpdate(
+                "DELETE FROM temptation_log WHERE id NOT IN (SELECT id FROM temptation_log ORDER BY id DESC LIMIT 1000)"
+            )
+        }
     }
 
     @Synchronized fun getTemptationLog(sinceDays: Int = 7): List<TemptationEntry> {
@@ -1635,7 +1674,9 @@ object Database {
     }
 
     @Synchronized fun clearTemptationLog() {
-        connection.createStatement().executeUpdate("DELETE FROM temptation_log")
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("DELETE FROM temptation_log")
+        }
     }
 
     // ── Daily Notes ───────────────────────────────────────────────────────────
@@ -1665,7 +1706,9 @@ object Database {
     }
 
     @Synchronized fun clearNotes() {
-        connection.createStatement().executeUpdate("DELETE FROM daily_notes")
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("DELETE FROM daily_notes")
+        }
     }
 
     // ── Weekly Report ─────────────────────────────────────────────────────────
@@ -1728,17 +1771,19 @@ object Database {
     // ── Habits ────────────────────────────────────────────────────────────────
 
     @Synchronized fun getHabits(): List<Habit> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM habits ORDER BY created_at ASC"
-        ).use { rs ->
-            val list = mutableListOf<Habit>()
-            while (rs.next()) list.add(Habit(
-                id        = rs.getString("id"),
-                name      = rs.getString("name"),
-                emoji     = rs.getString("emoji") ?: "✅",
-                createdAt = LocalDate.parse(rs.getString("created_at"), dateFmt)
-            ))
-            list
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM habits ORDER BY created_at ASC"
+            ).use { rs ->
+                val list = mutableListOf<Habit>()
+                while (rs.next()) list.add(Habit(
+                    id        = rs.getString("id"),
+                    name      = rs.getString("name"),
+                    emoji     = rs.getString("emoji") ?: "✅",
+                    createdAt = LocalDate.parse(rs.getString("created_at"), dateFmt)
+                ))
+                list
+            }
         }
     }
 
@@ -1827,22 +1872,26 @@ object Database {
     // ── Network Cutoff Rules ──────────────────────────────────────────────────
 
     @Synchronized fun getNetworkCutoffRules(): List<NetworkCutoffRule> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM network_cutoff_rules ORDER BY pattern"
-        ).use { rs ->
-            val list = mutableListOf<NetworkCutoffRule>()
-            while (rs.next()) list.add(rowToNetworkCutoffRule(rs))
-            list
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM network_cutoff_rules ORDER BY pattern"
+            ).use { rs ->
+                val list = mutableListOf<NetworkCutoffRule>()
+                while (rs.next()) list.add(rowToNetworkCutoffRule(rs))
+                list
+            }
         }
     }
 
     @Synchronized fun getEnabledNetworkCutoffRules(): List<NetworkCutoffRule> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM network_cutoff_rules WHERE enabled = 1"
-        ).use { rs ->
-            val list = mutableListOf<NetworkCutoffRule>()
-            while (rs.next()) list.add(rowToNetworkCutoffRule(rs))
-            list
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM network_cutoff_rules WHERE enabled = 1"
+            ).use { rs ->
+                val list = mutableListOf<NetworkCutoffRule>()
+                while (rs.next()) list.add(rowToNetworkCutoffRule(rs))
+                list
+            }
         }
     }
 
@@ -1877,12 +1926,14 @@ object Database {
     // ── Custom Block Presets ──────────────────────────────────────────────────
 
     @Synchronized fun getCustomBlockPresets(): List<CustomBlockPreset> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM custom_block_presets ORDER BY created_at DESC"
-        ).use { rs ->
-            val list = mutableListOf<CustomBlockPreset>()
-            while (rs.next()) list.add(rowToCustomBlockPreset(rs))
-            list
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM custom_block_presets ORDER BY created_at DESC"
+            ).use { rs ->
+                val list = mutableListOf<CustomBlockPreset>()
+                while (rs.next()) list.add(rowToCustomBlockPreset(rs))
+                list
+            }
         }
     }
 
@@ -1910,12 +1961,14 @@ object Database {
     // ── Focus Launcher Presets ─────────────────────────────────────────────────
 
     @Synchronized fun getFocusLauncherPresets(): List<FocusLauncherPreset> {
-        return connection.createStatement().executeQuery(
-            "SELECT * FROM focus_launcher_presets ORDER BY created_at DESC"
-        ).use { rs ->
-            val list = mutableListOf<FocusLauncherPreset>()
-            while (rs.next()) list.add(rowToFocusLauncherPreset(rs))
-            list
+        return connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT * FROM focus_launcher_presets ORDER BY created_at DESC"
+            ).use { rs ->
+                val list = mutableListOf<FocusLauncherPreset>()
+                while (rs.next()) list.add(rowToFocusLauncherPreset(rs))
+                list
+            }
         }
     }
 

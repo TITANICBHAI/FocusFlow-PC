@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10 and F12 complete; F7 next).
+- **Status:** In progress — 2026-10-15 (F10, F12, and F7 complete; F8 next).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -160,7 +160,9 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F12 test attempt:** The first focused Weekly Report run lacked an initialized database and failed with `DatabaseUnavailableException`; changed those tests to use an isolated scratch database. The focused consumer suite then passed, and the final full suite passed without touching the user database.
 - **2026-10-15 F12 verification:** `gradle :test --no-daemon --console=plain` passed 162 tests, 0 failures/errors/skips across 41 JUnit XML reports.
 - [x] **F12 — Distinguish absent from unreadable settings:** Typed read/write results and all listed consumer groups are implemented in plan order. Unreadable security reads fail closed; restore-state reads retain last-known-good values; failed writes are surfaced. Injected-store tests cover each consumer group.
-- [ ] **F7 — Close JDBC statements:** Recount current sites, then close every confirmed unclosed `executeQuery`/`executeUpdate` statement; the plan’s 18/seven counts are estimates, not acceptance criteria. Add leak and source-hygiene tests F7-a…c; scanner must find no unwrapped `createStatement()`.
+- **2026-10-15 F7 start:** Recounted the current source: 43 `createStatement()` calls, 17 already `.use`-scoped, 26 unscoped (19 query and 7 update sites). Recorded the extra migration `lockedVersion` query against the plan estimate in `AUDIT-ADDENDUM.md`.
+- **2026-10-15 F7 verification:** The new F7-a…c tests passed, including 1,000 repetitions of each of the five cache-refresh reads and the Dashboard/Stats read set. The balanced source scanner finds all 43 calls scoped with `.use`; the pre-fix run failed the three expected leak/hygiene checks. Full root suite: 166 tests, 0 failures/errors/skips across 42 JUnit XML reports.
+- [x] **F7 — Close JDBC statements:** Closed all 26 live unscoped sites (19 queries, 7 updates); preserved SQL and query behavior. Leak and balanced source-hygiene tests F7-a…c pass.
 - [ ] **F8 — PIN checks fail closed:** Build on F12; distinguish `NOT_SET`, `SET`, and `UNKNOWN`, deny on unknown storage, and report write failures. Verify PIN read-back before returning an auto-generated PIN. Do not change hash strength or add recovery design without owner approval D12. Tests F8-a…e.
 - [ ] **F14a — New-migration guard (before F6):** Add and test a column/schema guard for new migrations without editing v1–v9. This is an explicit F6 prerequisite.
 - [ ] **F6 — Recurring task duplication:** After the F14 new-migration guard, add the numbered migration and recurring-template parent relation; make generation idempotent. Add a dry-run repair; do not run it on a real DB until F15 has verified backup support. Mark, never delete, unless the owner explicitly approves deletion (D7). Tests F6-a…d.

@@ -33,3 +33,8 @@ The current test task does not set `focusflow.app.version` or `focusflow.telemet
 - **Runtime observation:** With the workflow's GraalVM `JAVA_HOME`, `java -version` reports GraalVM CE 19.0.2. `gradle --version` reports Gradle 8.14.2 with launcher JVM 21.0.7 and daemon JVM 21.0.7+6; `build.gradle.kts` configures Kotlin's toolchain as Java 19. No test-worker JVM was observed because tests were not run.
 - **P0-3 owner facts:** The owner says the reports were produced by a Claude agent running in Claude's app; the underlying execution host/OS is unknown. The owner does not know the `%TEMP%`/security-software context. No crash-log excerpt or raw user path was requested or inspected.
 
+## F7 live-source recount — 2026-10-15
+
+- The current `Database.kt` has 43 `createStatement()` calls: 17 are immediately scoped with `.use`, and 26 are not. Of the unscoped calls, 19 execute queries and 7 execute updates.
+- This differs from the plan's 18 query / 7 update estimate. The extra query is the second `PRAGMA user_version` read inside the migration transaction (`lockedVersion`); it is included in F7's closure and scanner acceptance checks.
+
