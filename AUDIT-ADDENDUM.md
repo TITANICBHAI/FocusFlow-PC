@@ -23,3 +23,11 @@
 
 The current test task does not set `focusflow.app.version` or `focusflow.telemetry=off`. The source scan found existing `Database.init` calls in `DatabaseTest` use explicit temporary DB files, and no direct telemetry/network client references in `src/test`. Recheck before the untouched-tree baseline; no new default-path failure-injection test may run until F4.0 provides an effective no-op/fake sink.
 
+## Phase 0 safety recheck — 2026-10-14
+
+- **Verified:** `DatabaseTest` uses JUnit `@TempDir` and passes explicit temporary DB files to every `Database.init` call; `SqliteJdbcNativeSmokeTest` also uses `@TempDir`. No direct external HTTP or telemetry-client references were found in `src/test`.
+- **Safety discrepancy:** `SingleInstanceGuardTest` calls `SingleInstanceGuard.acquire()`. That implementation starts a `ServerSocket` bound to `InetAddress.getLoopbackAddress()` and exercises a `Socket` handoff to the same loopback address. This is local-only IPC, not an external endpoint, but it is still a TCP network call under the literal test rule.
+- **Decision/effect:** The full `gradle :test --no-daemon` baseline was not run. No helpers, helper tests, or production changes were made. Keep Phase 0 blocked until the owner decides whether loopback-only IPC is permitted for the baseline; do not silently exclude or change the existing test.
+- **Runtime observation:** With the workflow's GraalVM `JAVA_HOME`, `java -version` reports GraalVM CE 19.0.2. `gradle --version` reports Gradle 8.14.2 with launcher JVM 21.0.7 and daemon JVM 21.0.7+6; `build.gradle.kts` configures Kotlin's toolchain as Java 19. No test-worker JVM was observed because tests were not run.
+- **P0-3 owner facts:** The report-producing machine and its `%TEMP%`/security-software context are pending. No crash-log excerpt or raw user path was requested or inspected.
+

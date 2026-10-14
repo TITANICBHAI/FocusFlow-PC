@@ -88,7 +88,11 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 0 — Baseline and tooling
 
-**Status:** Not started — no production-code changes allowed in this phase.
+**Status:** Blocked — 2026-10-14. The required pre-run review found a loopback TCP test path; no production-code changes are allowed in this phase.
+
+- **2026-10-14 pre-run review:** All `Database.init` calls in `DatabaseTest` pass explicit `@TempDir` files, and the native smoke test uses `@TempDir`. No direct external HTTP/telemetry client references were found in test sources. However, `SingleInstanceGuardTest` invokes the production handoff implementation, which binds a TCP server to loopback and connects to it. The no-network test rule therefore prevents running the full suite until the owner resolves whether this local-only IPC is allowed.
+- **Execution stop:** `gradle :test --no-daemon` was not run; no helpers or smoke tests were added. P0-1 remains incomplete and P0-2 is deferred. The observed Java/Gradle runtime discrepancy is recorded in `AUDIT-ADDENDUM.md` and the phase report.
+- **P0-3:** The report-producing machine and Windows `%TEMP%`/security-software context have not yet been provided.
 
 - [ ] **P0-1 — Baseline:** Before running, confirm the existing suite cannot reach the real/default DB path or any network call; the current test-source scan found explicit temp DB paths and no direct telemetry client references. Run `gradle :test --no-daemon` with the workflow’s JDK environment and record pass/fail counts, duration, and JDK. Do not modify existing `DatabaseTest`; if unsafe or unable to run, report and stop rather than forcing the toolchain. `./gradlew` is currently missing its wrapper jar.
 - [ ] **P0-2 — Test helpers:** Add and smoke-test `TempHome`, `ForkedJvm`, and `StatementLeakAssert` under `src/test/kotlin/com/focusflow/testutil/`. Use scratch `user.home`; set app-version and telemetry-off properties; reset/restore JVM state. The off property becomes effective only after F4.0. Add the clock seam with F6 and `FakeTelemetrySink` only after F4.0.
