@@ -79,7 +79,8 @@ object SingleInstanceGuard {
 
     fun acquire(
         lockFile: File = defaultLockFile(),
-        onShow: () -> Unit = {}
+        onShow: () -> Unit = {},
+        requestShowIfHeld: Boolean = true
     ): InstanceAcquireResult {
         val parent = lockFile.absoluteFile.parentFile
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
@@ -103,6 +104,7 @@ object SingleInstanceGuard {
 
             if (lock == null) {
                 channel.close()
+                if (!requestShowIfHeld) return InstanceAcquireResult.HolderUnresponsive
                 return if (requestShow(portFileFor(lockFile))) {
                     InstanceAcquireResult.AlreadyRunning
                 } else {

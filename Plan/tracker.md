@@ -2,7 +2,7 @@
 
 **Source plan:** [plan.md](plan.md)  
 **Companion instructions:** [preagent-prompt.md](preagent-prompt.md)  
-**Overall status:** In progress — Batch C implementation and automated checks pass; interactive and Windows acceptance checks remain unverified.
+**Overall status:** In progress — Batches C and D implementation and automated checks pass; interactive and Windows acceptance checks remain unverified. Batches A+B are next.
 
 ## Tracking rules
 
@@ -83,19 +83,19 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ## Batch D — Launcher app launch flow
 
-**Status:** In progress
+**Status:** Implementation complete — source review and automated tests pass; Windows runtime acceptance remains unverified.
 **Start note:** 2026-10-14 — source inspection underway; no Batch D application-code changes made yet.
 
-- [ ] **D-1** Add a launch coordinator with per-app state and a testable platform boundary; set `Launching` synchronously before IO; suppress duplicate launches; enforce the 20-second wait/spawn budget; support cancellation on session exit, breaks, and kill-switch activation.
-- [ ] **D-2** Add deterministic window discovery/raising above all launcher windows, using ordered native fallbacks and verification; reconcile Compose `alwaysOnTop` state as described in the plan.
-- [ ] **D-3** Remove the fixed-delay foreground/timer workaround; update overlay state only after the app has been raised.
-- [ ] **D-4** Show immediate per-tile progress, delayed top-bar progress, retryable visible failures, and detailed diagnostic logging.
-- [ ] **D-5** Use a single process snapshot/enumeration per lookup and cache command information by PID and process start time; do not change `launcherSweep()` enforcement behavior.
-- [ ] **D-6** Make process startup robust, set its working directory, discard output, and surface launch errors.
-- [ ] **D-7** Show a clear unsupported-app error for `WindowsApps` Store apps; do not add AUMID launching in this scope.
-- [ ] **D-8** Add the specified launcher diagnostics, including slow `launcherSweep()` duration only when it exceeds 150 ms.
-- [ ] Run and record fake-platform tests for duplicate clicks, spawn error, delayed window, timeout and retry, existing-window raise, old instance, spawn budget, and cancellation.
-- [ ] Verify the plan's launcher acceptance criteria; record Windows-only behavior that could not be tested.
+- [x] **D-1** Add a launch coordinator with per-app state and a testable platform boundary; set `Launching` synchronously before IO; suppress duplicate launches; enforce the 20-second wait/spawn budget; support cancellation on session exit, breaks, and kill-switch activation.
+- [x] **D-2** Add deterministic window discovery/raising above all launcher windows, using ordered native fallbacks and verification; reconcile Compose `alwaysOnTop` state as described in the plan. Source and compile verified; native behavior remains a Windows manual check.
+- [x] **D-3** Remove the fixed-delay foreground/timer workaround; update overlay state only after the app has been raised.
+- [x] **D-4** Show immediate per-tile progress, delayed top-bar progress, retryable visible failures, and detailed diagnostic logging.
+- [x] **D-5** Use a single process snapshot/enumeration per lookup and cache command information by PID and process start time; do not change `launcherSweep()` enforcement behavior.
+- [x] **D-6** Make process startup robust, set its working directory, discard output, and surface launch errors.
+- [x] **D-7** Show a clear unsupported-app error for `WindowsApps` Store apps; do not add AUMID launching in this scope.
+- [x] **D-8** Add the specified launcher diagnostics, including slow `launcherSweep()` duration only when it exceeds 150 ms.
+- [x] Run and record fake-platform tests for duplicate clicks, spawn error, delayed window, timeout and retry, existing-window raise, old instance, spawn budget, and cancellation.
+- [x] Review the plan's launcher acceptance criteria and record Windows-only behavior that could not be tested; direct runtime acceptance remains unverified.
 
 ### Batch D notes
 Add dated entries here as work progresses. Keep previous entries.
@@ -134,6 +134,20 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Static check:** The paired `git diff --check` stopped on trailing whitespace in the Batch D status line; the subsequent grep in that command did not run.
 - **Fix underway:** Corrected the Compose imports to match an existing project use and removed trailing whitespace. Rerun verification is pending; this failure is retained.
 
+### 2026-10-14 — Batch D — Verification and source review complete
+
+- **Files changed this update:** `Plan/tracker.md` only. The Batch D implementation was already present in the checkout; no application source changes were needed.
+- **Verification command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon`
+- **Result:** `BUILD SUCCESSFUL`; main and recovery modules compiled and the full test task passed. `LauncherLaunchCoordinatorTest`: 8 tests, 0 failures/errors/skips. `ProcessCommandCacheTest`: 3 tests, 0 failures/errors/skips. `SessionPinInputTest`: 4 tests, 0 failures/errors/skips. Compiler reported pre-existing deprecation and coroutine opt-in warnings.
+- **Source review:** Confirmed synchronous per-app Launching state, allowed-app gating, 20-second spawn budget/window wait, wait-only retry, lifecycle cancellation hooks, visible tile/top-bar feedback, Store-app refusal, robust process startup, delayed overlay update after a verified raise, process snapshot caching, and >150 ms sweep logging. `git diff --check` passed.
+- **Windows-only checks not run:** Foreground/Z-order fallback behavior, slow/browser app launch timing, taskbar behavior, duplicate instance visibility, Store-app feedback on Windows, and elevated vs non-elevated launch consistency. Keep all applicable manual matrix items unchecked.
+- **Failed attempt retained:** The earlier import/trailing-whitespace failure above was resolved before this successful full test run.
+
+## Batch A — Relaunch as administrator
+
+**Status:** In progress
+**Start note:** 2026-10-14 — current elevation detection, relaunch callers, package detection, instance guard, and shutdown paths inspected; no A/B source changes yet.
+
 ## Batch A — Relaunch as administrator
 
 **Status:** Not started; begins with Batch B only after Batch D is complete and verified.  
@@ -153,10 +167,17 @@ Add dated entries here as work progresses. Keep previous entries.
 ### Batch A notes
 Add dated entries here as work progresses. Keep previous entries.
 
+### 2026-10-14 — Batch A — In progress
+
+- **Scope:** A-1 through A-7, package/target/handoff tests, and relaunch acceptance review.
+- **Current checkout findings:** The current repository has Windows EXE/MSI/MSIX workflows but no checked-in AppxManifest.xml. Elevation and relaunch are duplicated across the main admin button, orphan-registry dialog, OS banner, Windows Setup, Focus Launcher, and Onboarding. SingleInstanceGuard uses a per-user file lock and SHOW socket; shutdown currently always applies uninstall quit authorization.
+- **Files changed:** `Plan/tracker.md` only; implementation inspection is complete.
+- **Verification:** Pending.
+
 ## Batch B — Admin button state and pulse
 
-**Status:** Not started; implement alongside Batch A because it shares `ElevationManager`.  
-**Start note:** Add a dated “In progress” entry to the batch notes before starting.
+**Status:** In progress — implement alongside Batch A because it shares `ElevationManager`.
+**Start note:** 2026-10-14 — admin state is currently initialized false and populated after a PowerShell check; the floating admin button uses an unbounded animation. No B source changes yet.
 
 - [ ] **B-1** Initialize admin state from the elevation manager without a false default or a separate startup process check.
 - [ ] **B-2** Preserve the existing visibility rule; disable relaunch during active sessions with the plan's tooltip and show pending state.
@@ -167,6 +188,13 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ### Batch B notes
 Add dated entries here as work progresses. Keep previous entries.
+
+### 2026-10-14 — Batch B — In progress
+
+- **Scope:** B-1 through B-5, shared elevation-state adoption, bounded button pulse, and admin-state acceptance review.
+- **Current checkout findings:** `App.kt` has an asynchronous PowerShell-backed admin check, polls admin-required features every three seconds, and constructs an infinite pulse animation regardless of urgency. Windows Setup, Focus Launcher, and Onboarding each perform another synchronous check.
+- **Files changed:** `Plan/tracker.md` only; implementation inspection is complete.
+- **Verification:** Pending.
 
 ## Cross-cutting and final checks
 

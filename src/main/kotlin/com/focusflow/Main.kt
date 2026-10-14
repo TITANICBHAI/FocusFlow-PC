@@ -8,12 +8,15 @@ import com.focusflow.data.Database
 import com.focusflow.data.DbInitResult
 import com.focusflow.data.DbStartupState
 import com.focusflow.enforcement.AppBlocker
+import com.focusflow.enforcement.ElevationManager
 import com.focusflow.enforcement.KillSwitchService
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.RegistryLockdown
 import com.focusflow.services.CrashReporter
 import com.focusflow.services.FocusSessionService
+import com.focusflow.services.AppLifecycle
 import com.focusflow.services.InstanceAcquireResult
+import com.focusflow.services.RelaunchHandoff
 import com.focusflow.services.SingleInstanceGuard
 import com.focusflow.services.StartOnceResult
 import com.focusflow.services.StartupBootstrap
@@ -37,13 +40,14 @@ import kotlinx.coroutines.withContext
 
 private sealed interface StartupView {
     data object WaitingForInstance : StartupView
+    data object SwitchingToAdministrator : StartupView
     data object Starting : StartupView
     data class DatabaseUnavailable(val result: DbInitResult) : StartupView
     data class ServiceFailure(val cause: Throwable) : StartupView
     data object Ready : StartupView
 }
 
-private class DesktopLaunch {
+private class DesktopLaunch(val isHandoffChild: Boolean = false) {
     private val handle = AtomicReference<SingleInstanceGuard.Handle?>(null)
     private val preDatabaseStarted = AtomicBoolean(false)
     val showPending = AtomicBoolean(false)
@@ -54,13 +58,17 @@ private class DesktopLaunch {
     fun acquire(): InstanceAcquireResult {
         handle.get()?.let { return InstanceAcquireResult.Acquired(it) }
 
-        val result = SingleInstanceGuard.acquire {
-            showPending.set(true)
-            showRequests.tryEmit(Unit)
-        }
+        val result = SingleInstanceGuard.acquire(
+            onShow = {
+                showPending.set(true)
+                showRequests.tryEmit(Unit)
+            },
+            requestShowIfHeld = !isHandoffChild || !RelaunchHandoff.shouldSuppressShowRequest()
+        )
         if (result !is InstanceAcquireResult.Acquired) return result
 
         if (handle.compareAndSet(null, result.handle)) {
+            if (isHandoffChild) RelaunchHandoff.completeIncomingHandoff()
             runPreDatabaseStartup()
         } else {
             result.handle.close()
@@ -95,7 +103,19 @@ fun main(args: Array<String>) {
         return
     }
 
-    val launch = DesktopLaunch()
+    ElevationManager.logStartupDiagnostics()
+    val handoffNonce = args.firstOrNull { it.startsWith("--focusflow-elevation-handoff=") }
+        ?.substringAfter('=')
+    val isHandoffChild = handoffNonce != null
+    if (handoffNonce != null && !RelaunchHandoff.acceptIncoming(handoffNonce)) {
+        com.focusflow.enforcement.EnforcementLog.warn(
+            "Elevation",
+            "incoming elevation handoff rejected pid=${ProcessHandle.current().pid()}"
+        )
+        return
+    }
+
+    val launch = DesktopLaunch(isHandoffChild)
     if (launch.acquire() is InstanceAcquireResult.AlreadyRunning) return
 
     application {
@@ -106,7 +126,14 @@ fun main(args: Array<String>) {
 @Composable
 private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit) {
     var startup by remember {
-        mutableStateOf(if (launch.hasInstance) StartupView.Starting else StartupView.WaitingForInstance)
+        mutableStateOf(
+            when {
+                launch.hasInstance -> StartupView.Starting
+                launch.isHandoffChild && RelaunchHandoff.isWaitingForIncomingInstance() ->
+                    StartupView.SwitchingToAdministrator
+                else -> StartupView.WaitingForInstance
+            }
+        )
     }
     var retryToken by remember { mutableIntStateOf(0) }
     var startupAttemptInProgress by remember { mutableStateOf(false) }
@@ -154,30 +181,37 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
     }
 
     // Shared shutdown action keeps service teardown off the AWT event thread.
-    val doShutdown: () -> Unit = {
-        Thread({
-            if (!UninstallProtectionService.authorizeQuit()) return@Thread
-            com.focusflow.services.FocusLauncherService.exit()
-            KillSwitchService.deactivate()
-            FocusSessionService.end(completed = false)
-            FocusSessionService.dispose()
-            com.focusflow.services.WeeklyReportService.stopScheduler()
-            com.focusflow.services.TaskAlarmService.stop()
-            com.focusflow.services.RecurringTaskService.stop()
-            com.focusflow.services.BlockScheduleService.stop()
-            com.focusflow.services.DailyAllowanceTracker.stop()
-            com.focusflow.services.AutoBackupService.stop()
-            com.focusflow.enforcement.NuclearMode.disable()
-            com.focusflow.enforcement.NuclearMode.awaitCleanup()
-            ProcessMonitor.dispose()
-            com.focusflow.enforcement.WindowsSessionStateMonitor.stop()
-            AppBlocker.dispose()
-            SystemTrayManager.remove()
-            Database.close()
-            launch.release()
-            exitApplication()
-        }, "FocusFlow-Shutdown").also { it.isDaemon = true }.start()
+    val shutdownStarted = remember { AtomicBoolean(false) }
+    val doShutdown: (Boolean) -> Unit = { skipQuitAuthorization ->
+        if (shutdownStarted.compareAndSet(false, true)) {
+            Thread({
+                if (!skipQuitAuthorization && !UninstallProtectionService.authorizeQuit()) {
+                    shutdownStarted.set(false)
+                    return@Thread
+                }
+                com.focusflow.services.FocusLauncherService.exit()
+                KillSwitchService.deactivate()
+                FocusSessionService.end(completed = false)
+                FocusSessionService.dispose()
+                com.focusflow.services.WeeklyReportService.stopScheduler()
+                com.focusflow.services.TaskAlarmService.stop()
+                com.focusflow.services.RecurringTaskService.stop()
+                com.focusflow.services.BlockScheduleService.stop()
+                com.focusflow.services.DailyAllowanceTracker.stop()
+                com.focusflow.services.AutoBackupService.stop()
+                com.focusflow.enforcement.NuclearMode.disable()
+                com.focusflow.enforcement.NuclearMode.awaitCleanup()
+                ProcessMonitor.dispose()
+                com.focusflow.enforcement.WindowsSessionStateMonitor.stop()
+                AppBlocker.dispose()
+                SystemTrayManager.remove()
+                Database.close()
+                launch.release()
+                exitApplication()
+            }, "FocusFlow-Shutdown").also { it.isDaemon = true }.start()
+        }
     }
+    SideEffect { AppLifecycle.shutdown = doShutdown }
 
     LaunchedEffect(Unit) {
         if (launch.showPending.getAndSet(false)) windowVisible = true
@@ -194,6 +228,12 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                     return@LaunchedEffect
                 }
                 InstanceAcquireResult.HolderUnresponsive -> {
+                    if (launch.isHandoffChild && RelaunchHandoff.shouldSuppressShowRequest()) {
+                        startupAttemptInProgress = false
+                        startup = StartupView.SwitchingToAdministrator
+                        delay(300L)
+                        continue
+                    }
                     startupAttemptInProgress = false
                     startup = StartupView.WaitingForInstance
                     reportStartupIssueOnce(
@@ -232,7 +272,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                     when (val bootstrap = withContext(Dispatchers.IO) {
                         StartupBootstrap.startServices(
                             onRestore = { windowVisible = true },
-                            onQuit = doShutdown
+                            onQuit = { doShutdown(false) }
                         )
                     }) {
                         StartOnceResult.Started, StartOnceResult.AlreadyStarted -> {
@@ -329,7 +369,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                         "Blocking stays active. Right-click the tray icon to quit."
                     )
                 } else {
-                    doShutdown()
+                    doShutdown(false)
                 }
             },
             state = windowState,
@@ -344,6 +384,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                 val failed = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Failed
                 val isStarting = startup is StartupView.Starting || startupAttemptInProgress
                 val title = when {
+                    startup is StartupView.SwitchingToAdministrator -> "Switching to administrator mode"
                     startup is StartupView.WaitingForInstance -> "Waiting for another instance"
                     busy != null -> "Waiting for the database"
                     failed != null -> "Database unavailable"
@@ -351,6 +392,8 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                     else -> "Starting safely"
                 }
                 val message = when {
+                    startup is StartupView.SwitchingToAdministrator ->
+                        "FocusFlow is waiting for the current instance to finish switching to administrator mode."
                     startup is StartupView.WaitingForInstance ->
                         "Another FocusFlow process holds the startup lock but did not respond to the local show request. This window will retry automatically."
                     busy != null ->
@@ -366,6 +409,8 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                     }
                 }
                 val details = when {
+                    startup is StartupView.SwitchingToAdministrator ->
+                        "The elevated process confirmed startup. FocusFlow is waiting for the previous instance to release its lock."
                     startup is StartupView.WaitingForInstance ->
                         "The instance lock is held, but the current holder did not acknowledge SHOW. Close the other FocusFlow process or retry after it exits."
                     busy != null ->

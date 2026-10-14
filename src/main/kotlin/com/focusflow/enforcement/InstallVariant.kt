@@ -20,11 +20,12 @@ object InstallVariant {
     val isMsix: Boolean by lazy {
         if (!windows) return@lazy false
 
-        val packageIdentityPresent = listOf(
+        val packageIdentityPresent = CurrentPackageIdentity.value?.packageFullName != null ||
+            listOf(
             "PACKAGE_FAMILY_NAME",
             "APPX_PACKAGE_FAMILY_NAME",
             "APPX_PACKAGE_NAME"
-        ).any { !System.getenv(it).isNullOrBlank() }
+            ).any { !System.getenv(it).isNullOrBlank() }
 
         val executablePath = runCatching {
             ProcessHandle.current().info().command().orElse("")

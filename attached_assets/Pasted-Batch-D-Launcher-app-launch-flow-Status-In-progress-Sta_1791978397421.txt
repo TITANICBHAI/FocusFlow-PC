@@ -1,0 +1,40 @@
+Batch D — Launcher app launch flow
+Status: In progress Start note: 2026-10-14 — source inspection underway; no Batch D application-code changes made yet.
+
+ D-1 Add a launch coordinator with per-app state and a testable platform boundary; set Launching synchronously before IO; suppress duplicate launches; enforce the 20-second wait/spawn budget; support cancellation on session exit, breaks, and kill-switch activation.
+ D-2 Add deterministic window discovery/raising above all launcher windows, using ordered native fallbacks and verification; reconcile Compose alwaysOnTop state as described in the plan.
+ D-3 Remove the fixed-delay foreground/timer workaround; update overlay state only after the app has been raised.
+ D-4 Show immediate per-tile progress, delayed top-bar progress, retryable visible failures, and detailed diagnostic logging.
+ D-5 Use a single process snapshot/enumeration per lookup and cache command information by PID and process start time; do not change launcherSweep() enforcement behavior.
+ D-6 Make process startup robust, set its working directory, discard output, and surface launch errors.
+ D-7 Show a clear unsupported-app error for WindowsApps Store apps; do not add AUMID launching in this scope.
+ D-8 Add the specified launcher diagnostics, including slow launcherSweep() duration only when it exceeds 150 ms.
+ Run and record fake-platform tests for duplicate clicks, spawn error, delayed window, timeout and retry, existing-window raise, old instance, spawn budget, and cancellation.
+ Verify the plan's launcher acceptance criteria; record Windows-only behavior that could not be tested.
+Batch D notes
+Add dated entries here as work progresses. Keep previous entries.
+
+2026-10-14 — Batch D — In progress
+Scope: D-1 through D-8, fake-platform tests, and launcher acceptance review.
+Current code and working-tree findings: The tile click currently performs process enumeration in LauncherContent.kt, attempts direct process launch, and uses a delayed foreground callback; FocusLauncherService owns session and cancellation lifecycle hooks. There is no launch coordinator. JNA and jna-platform are already dependencies. ProcessMonitor.launcherSweep() is out of scope for behavior changes.
+Files changed: Plan/tracker.md only; implementation inspection is underway.
+Verification: Pending.
+2026-10-14 — Batch D — Core launch boundary update
+Meaningful changes: Added the injectable launch coordinator/state model and worker scope, one-enumeration process snapshot with PID/start-instant command caching, production process-start boundary, and Win32 window discovery/raise helper with launcher HWND registry.
+Files changed: src/main/kotlin/com/focusflow/services/LauncherLaunchCoordinator.kt, ProcessSnapshot.kt, JvmLauncherLaunchPlatform.kt, src/main/kotlin/com/focusflow/enforcement/WindowRaiser.kt, and Plan/tracker.md.
+Verification: Pending; service lifecycle hooks, launcher UI integration, fake-platform tests, and compile checks remain.
+Behavioral boundaries: Store app paths return an explicit unsupported result; process enumeration only searches the launch target and launcherSweep() enforcement behavior remains unchanged.
+2026-10-14 — Batch D — UI and lifecycle integration update
+Meaningful changes: Added immediate per-tile launch state, delayed top-bar opening feedback, retryable failure text and detailed tooltip; connected only active session apps to the coordinator; cancel pending work on exit, break, and kill-switch activation; registered launcher HWNDs and made Compose alwaysOnTop follow overlay state; instrumented launcherSweep() duration only above 150 ms.
+Files changed: src/main/kotlin/com/focusflow/services/FocusLauncherService.kt, src/main/kotlin/com/focusflow/ui/launcher/LauncherContent.kt, LauncherWindow.kt, src/main/kotlin/com/focusflow/enforcement/ProcessMonitor.kt, and Plan/tracker.md.
+Failed edit retained: The first combined service/window/sweep patch did not match the current service context; the window and sweep portions applied, then the service hooks were reapplied against the current code. No source change was lost.
+Verification: Pending; fake-platform tests and compile checks remain.
+2026-10-14 — Batch D — Test coverage update
+Meaningful changes: Added fake-platform coverage for duplicate clicks, spawn failures, delayed windows, timeout retry without respawn, existing-window focus, old instances, spawn-budget enforcement, and cancellation before a pending raise. Added command-cache tests for PID/start-time identity and unavailable start times.
+Files changed: src/test/kotlin/com/focusflow/services/LauncherLaunchCoordinatorTest.kt, ProcessCommandCacheTest.kt, and Plan/tracker.md.
+Verification: Pending; tests have not yet been executed.
+2026-10-14 — Batch D — Initial verification failure
+Command: export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon
+Result: Failed during compileKotlin: incorrect DpOffset and onDispose imports.
+Static check: The paired git diff --check stopped on trailing whitespace in the Batch D status line; the subsequent grep in that command did not run.
+Fix underway: Corrected the Compose imports to match an existing project use and removed trailing whitespace. Rerun verification is pending; this failure is retained.

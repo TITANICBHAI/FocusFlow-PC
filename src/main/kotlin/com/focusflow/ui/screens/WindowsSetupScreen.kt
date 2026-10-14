@@ -27,7 +27,7 @@ import com.focusflow.ui.theme.*
 @Composable
 fun WindowsSetupScreen() {
     val scrollState = rememberScrollState()
-    val isAdmin = remember { isRunningAsAdmin() }
+    val isAdmin = remember { com.focusflow.enforcement.ElevationManager.isElevated }
 
     Box(modifier = Modifier.fillMaxSize().background(Surface)) {
         Column(
@@ -104,14 +104,7 @@ fun WindowsSetupScreen() {
                 required = true,
                 actionLabel = if (!isAdmin && isWindows) "Relaunch as Admin →" else null,
                 onAction = if (!isAdmin && isWindows) ({
-                    try {
-                        val exePath = WindowsStartupManager.resolveExePath()
-                        ProcessBuilder(
-                            "powershell", "-WindowStyle", "Hidden", "-Command",
-                            "Start-Process -FilePath '$exePath' -Verb RunAs"
-                        ).start()
-                        kotlin.system.exitProcess(0)
-                    } catch (_: Exception) {}
+                    com.focusflow.services.ElevationRelaunchService.request()
                 }) else null
             )
 

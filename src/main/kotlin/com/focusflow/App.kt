@@ -32,6 +32,7 @@ import com.focusflow.data.Database
 import com.focusflow.data.models.Screen
 import com.focusflow.data.models.Task
 import com.focusflow.enforcement.AppBlocker
+import com.focusflow.enforcement.ElevationManager
 import com.focusflow.enforcement.NetworkBlocker
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
@@ -39,11 +40,9 @@ import com.focusflow.enforcement.RegistryLockdown
 import com.focusflow.enforcement.WindowsStartupManager
 import com.focusflow.enforcement.isWindows
 import com.focusflow.enforcement.VpnBlocker
-import com.focusflow.enforcement.isRunningAsAdmin
 import com.focusflow.services.HostsBlocker
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.FocusSessionService
-import kotlin.system.exitProcess
 import com.focusflow.ui.components.AndroidPromoDialog
 import com.focusflow.ui.components.BlockOverlay
 import com.focusflow.ui.components.EdgeExtensionPromoDialog
@@ -61,6 +60,8 @@ import com.focusflow.ui.components.WindowsStartupPromptDialog
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.CrashReporter
+import com.focusflow.services.ElevationRelaunchService
+import com.focusflow.services.ElevationRelaunchStatus
 import com.focusflow.ui.screens.*
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -118,8 +119,7 @@ fun App() {
     var showTelemetryConsent     by remember { mutableStateOf(false) }
     var showRegistryOrphanDialog by remember { mutableStateOf(false) }
     var sidebarCollapsed    by remember { mutableStateOf(false) }
-    // Default false = show button until confirmed elevated (safe default per user requirement).
-    var isAdmin             by remember { mutableStateOf(false) }
+    val isAdmin = remember { ElevationManager.isElevated }
     // Admin-requiring features that are currently active — drives urgent button styling.
     var activeAdminFeatures by remember { mutableStateOf<List<String>>(emptyList()) }
     val scope               = rememberCoroutineScope()
@@ -133,8 +133,6 @@ fun App() {
             }
             // Restore sidebar collapsed state from last session
             sidebarCollapsed = Database.getSetting("sidebar_collapsed") == "true"
-            // Check elevation — default is false (show button); only hide if confirmed elevated
-            isAdmin = isRunningAsAdmin()
         }
         AppBlocker.onOverlayShow = { appName ->
             overlayAppName = appName
@@ -282,7 +280,7 @@ fun App() {
         if (orphaned) showRegistryOrphanDialog = true
     }
 
-    // ── Poll admin-requiring services every 3 s ───────────────────────────────
+    // ── Poll admin-requiring services every 5 s ───────────────────────────────
     // Drives the urgent/subtle styling of the Restart-as-Admin button.
     // Only runs when the process is NOT already elevated.
     LaunchedEffect(isAdmin) {
@@ -297,7 +295,7 @@ fun App() {
                 }
             }
             activeAdminFeatures = features
-            delay(3_000L)
+            delay(5_000L)
         }
     }
 
@@ -549,20 +547,7 @@ fun App() {
                     Button(
                         onClick = {
                             showRegistryOrphanDialog = false
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val exe = ProcessHandle.current().info().command().orElse(null)
-                                    if (exe != null) {
-                                        val escaped = exe.replace("'", "''")
-                                        ProcessBuilder(
-                                            "powershell", "-WindowStyle", "Hidden",
-                                            "-Command",
-                                            "Start-Process -FilePath '$escaped' -Verb RunAs"
-                                        ).start()
-                                        exitProcess(0)
-                                    }
-                                } catch (_: Throwable) {}
-                            }
+                            ElevationRelaunchService.request()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                     ) {
@@ -576,6 +561,7 @@ fun App() {
                 }
             )
         }
+        ElevationRelaunchStatusDialog()
         } // CompositionLocalProvider
     }
 }
@@ -594,8 +580,11 @@ private fun RestartAsAdminButton(
     activeAdminFeatures: List<String>,
     modifier: Modifier = Modifier
 ) {
-    val scope  = rememberCoroutineScope()
     val urgent = activeAdminFeatures.isNotEmpty()
+    val relaunchStatus by ElevationRelaunchService.status.collectAsState()
+    val pending = relaunchStatus is ElevationRelaunchStatus.Pending
+    val sessionActive = ElevationRelaunchService.isSessionActive()
+    val canRelaunch = ElevationRelaunchService.canRelaunch() && !pending
 
     // Smooth colour transition between subtle ↔ urgent
     val bgColor by animateColorAsState(
@@ -609,34 +598,7 @@ private fun RestartAsAdminButton(
         label         = "adminBtnContent"
     )
 
-    // Continuous pulse when urgent — always composed, applied conditionally
-    val pulse = rememberInfiniteTransition(label = "adminBtnPulse")
-    val pulseAlpha by pulse.animateFloat(
-        initialValue  = 0.65f,
-        targetValue   = 1.00f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(700, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "adminBtnAlpha"
-    )
-
-    val relaunch: () -> Unit = {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val exe = ProcessHandle.current().info().command().orElse(null)
-                if (exe != null) {
-                    val escaped = exe.replace("'", "''")
-                    ProcessBuilder(
-                        "powershell", "-WindowStyle", "Hidden",
-                        "-Command",
-                        "Start-Process -FilePath '$escaped' -Verb RunAs"
-                    ).start()
-                    exitProcess(0)
-                }
-            } catch (_: Throwable) {}
-        }
-    }
+    val pulseAlpha = if (urgent) UrgentAdminPulseAlpha() else 1f
 
     TooltipArea(
         tooltip = {
@@ -660,7 +622,11 @@ private fun RestartAsAdminButton(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Click to restart with Administrator privileges.",
+                        when {
+                            pending -> "Waiting for the Windows permission prompt…"
+                            sessionActive -> "End your current session first."
+                            else -> "Click to restart with Administrator privileges."
+                        },
                         color    = OnSurface2,
                         fontSize = 10.sp
                     )
@@ -686,7 +652,7 @@ private fun RestartAsAdminButton(
                 .alpha(if (urgent) pulseAlpha else 1f)
                 .clip(RoundedCornerShape(20.dp))
                 .background(bgColor)
-                .clickable { relaunch() }
+                .clickable(enabled = canRelaunch) { ElevationRelaunchService.request() }
                 .padding(horizontal = 12.dp, vertical = 7.dp)
         ) {
             Icon(
@@ -698,7 +664,11 @@ private fun RestartAsAdminButton(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                if (urgent) "Run as Admin!" else "Run as Admin",
+                when {
+                    pending -> "Waiting…"
+                    urgent -> "Run as Admin!"
+                    else -> "Run as Admin"
+                },
                 style      = MaterialTheme.typography.bodySmall,
                 color      = contentColor,
                 fontSize   = 11.sp,
@@ -706,6 +676,53 @@ private fun RestartAsAdminButton(
             )
         }
     }
+}
+
+@Composable
+private fun UrgentAdminPulseAlpha(): Float {
+    val alpha = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        repeat(3) {
+            alpha.animateTo(0.65f, tween(350, easing = FastOutSlowInEasing))
+            alpha.animateTo(1f, tween(350, easing = FastOutSlowInEasing))
+        }
+    }
+    return alpha.value
+}
+
+@Composable
+private fun ElevationRelaunchStatusDialog() {
+    val status by ElevationRelaunchService.status.collectAsState()
+    val (title, message) = when (val current = status) {
+        ElevationRelaunchStatus.Idle,
+        ElevationRelaunchStatus.HandedOff -> return
+        ElevationRelaunchStatus.Pending -> "Waiting for Windows" to
+            "Waiting for the Windows permission prompt. FocusFlow will stay open until the elevated instance confirms startup."
+        ElevationRelaunchStatus.UserDeclined -> "Permission declined" to
+            "Windows permission was declined. FocusFlow is still running with its current permissions."
+        is ElevationRelaunchStatus.Blocked -> "Restart unavailable" to current.reason
+        is ElevationRelaunchStatus.Failed -> "Could not restart as Administrator" to current.reason
+        is ElevationRelaunchStatus.NotSupported -> "Start FocusFlow as Administrator" to current.reason
+    }
+    val pending = status is ElevationRelaunchStatus.Pending
+
+    AlertDialog(
+        onDismissRequest = {
+            if (!pending) ElevationRelaunchService.dismissStatus()
+        },
+        containerColor = Surface2,
+        titleContentColor = OnSurface,
+        textContentColor = OnSurface2,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            if (!pending) {
+                TextButton(onClick = { ElevationRelaunchService.dismissStatus() }) {
+                    Text("Close")
+                }
+            }
+        }
+    )
 }
 
 @Composable
