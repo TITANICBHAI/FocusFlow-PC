@@ -86,6 +86,21 @@ class NativeSqliteBootstrapTest {
     }
 
     @Test
+    fun capturesSqliteJulOutputAndAddsItToLocalFailureDiagnostics() {
+        val unavailableDefaultTemp = tempDir.resolve("sqlite-temp-does-not-exist")
+        assertFalse(Files.exists(unavailableDefaultTemp))
+
+        val result = ForkedJvm.run(
+            mainClass = NativeSqliteForkedProbe::class.java.name,
+            jvmArgs = listOf("-Dorg.sqlite.tmpdir=$unavailableDefaultTemp"),
+            args = listOf("jul-capture"),
+            timeout = Duration.ofSeconds(90)
+        )
+
+        assertForkedSuccess(result, "F3D_OK")
+    }
+
+    @Test
     fun failedCandidatesAndDefaultFallbackLeaveDatabaseAndNativeLatchUntouched() {
         val unavailableDefaultTemp = tempDir.resolve("sqlite-temp-does-not-exist")
         assertFalse(Files.exists(unavailableDefaultTemp))
@@ -186,6 +201,7 @@ internal object NativeSqliteForkedProbe {
             "candidate-ready" -> candidateReady()
             "default-fallback" -> defaultFallback()
             "all-fail" -> allFail()
+            "jul-capture" -> julCapture()
             "noexec" -> noExec(args.getOrNull(1) ?: error("noexec candidate directory is missing"))
             else -> error("Unknown native SQLite probe mode")
         }
@@ -287,6 +303,39 @@ internal object NativeSqliteForkedProbe {
         check(walFile.readBytes().contentEquals(walBytes)) { "WAL bytes changed on native-load failure" }
         check(shmFile.readBytes().contentEquals(shmBytes)) { "SHM bytes changed on native-load failure" }
         println("F1C_OK")
+    }
+
+    private fun julCapture() {
+        val home = File(System.getProperty("user.home"))
+        val blocker = File(home, "native-candidate-blocker")
+        blocker.writeText("not a directory")
+        NativeSqlite.testHooksForTest = NativeSqliteTestHooks(
+            candidates = listOf(
+                NativeSqliteCandidate("blocked-1", File(blocker, "first")),
+                NativeSqliteCandidate("blocked-2", File(blocker, "second"))
+            ),
+            defaultInitialize = { SQLiteJDBCLoader.initialize() }
+        )
+
+        val result = assertIs<DbInitResult.Failed>(Database.init())
+        val failure = assertIs<NativeSqliteUnavailableException>(result.cause)
+        val logPath = File(home, ".focusflow/sqlite-jdbc-0.log")
+        check(logPath.isFile) { "sqlite-jdbc JUL log was not created: ${logPath.absolutePath}" }
+        val fileOutput = Files.readString(logPath.toPath())
+        check(fileOutput.contains("SEVERE")) {
+            "sqlite-jdbc JUL file did not contain the loader failure: $fileOutput"
+        }
+        check(failure.diagnostics.contains("sqlite-jdbc JUL output:")) {
+            "Failure diagnostics omitted captured sqlite-jdbc JUL output"
+        }
+        check(failure.diagnostics.contains("SEVERE")) {
+            "Captured sqlite-jdbc JUL output omitted the loader failure"
+        }
+        check(failure.diagnostics.contains("sqlite-jdbc-%g.log")) {
+            "Failure diagnostics omitted the local JUL log path"
+        }
+        Database.close()
+        println("F3D_OK")
     }
 
     private fun noExec(directory: String) {

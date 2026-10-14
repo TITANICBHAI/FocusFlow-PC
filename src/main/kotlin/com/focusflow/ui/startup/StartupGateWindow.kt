@@ -168,12 +168,6 @@ fun StartupGateWindow(
                                     "Log: $logPath",
                                     style = MaterialTheme.typography.bodySmall
                                 )
-                                if (!reportPath.isNullOrBlank()) {
-                                    Text(
-                                        "Startup report: $reportPath",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
                             }
                         }
                     }

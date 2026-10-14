@@ -56,6 +56,28 @@ internal suspend fun initDatabaseSafely(
     }
 }
 
+internal fun formatStartupFailureDetails(
+    failure: DbInitResult.Failed,
+    reportPath: String?,
+    additionalDiagnostics: String? = null
+): String = buildString {
+    append(failure.cause.stackTraceToString())
+    appendLine()
+    append("File retained at: ${failure.untouchedPath.absolutePath}")
+    reportPath
+        ?.takeIf(String::isNotBlank)
+        ?.let {
+            appendLine()
+            append("Local startup report: $it")
+        }
+    additionalDiagnostics
+        ?.takeIf(String::isNotBlank)
+        ?.let {
+            appendLine()
+            append(it)
+        }
+}
+
 private fun currentProcessRestartCommand(): List<String>? {
     val processInfo = ProcessHandle.current().info()
     val executable = processInfo.command().orElse(null)?.takeIf(String::isNotBlank) ?: return null
@@ -523,10 +545,8 @@ private fun FocusFlowDesktop(
                         "The instance lock is held, but the current holder did not acknowledge SHOW. Close the other FocusFlow process or retry after it exits."
                     busy != null ->
                         "SQLite busy after ${busy.attempts} attempt(s), ${busy.waitedMs}ms elapsed. ${busy.cause.message.orEmpty()}"
-                    nativeFailure != null ->
-                        "${nativeFailure.diagnostics}\nFile retained at: ${failed.untouchedPath.absolutePath}"
                     failed != null ->
-                        "${failed.cause::class.java.name}: ${failed.cause.message.orEmpty()}\nFile retained at: ${failed.untouchedPath.absolutePath}"
+                        formatStartupFailureDetails(failed, startupReportPath, nativeFailure?.diagnostics)
                     startup is StartupView.ServiceFailure -> {
                         val cause = (startup as StartupView.ServiceFailure).cause
                         "${cause::class.java.name}: ${cause.message.orEmpty()}\n${cause.stackTraceToString()}"

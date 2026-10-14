@@ -78,9 +78,11 @@ internal object NativeSqlite {
 
     @Synchronized
     fun ensureLoaded(): NativeSqliteStatus {
+        SqliteJdbcLogCapture.install()
         val hooks = testHooksForTest
         val canReuseLoadedStatus = hooks == null || hooks.cacheSuccessfulLoad
         if (canReuseLoadedStatus) loadedStatus?.let { return it }
+        SqliteJdbcLogCapture.clearCapturedOutput()
 
         val attempts = mutableListOf<NativeSqliteLoadAttempt>()
         var resource: NativeSqliteResource? = null
@@ -351,6 +353,7 @@ internal object NativeSqlite {
         val message = singleLine(
             redactSensitive("SQLite native library could not be loaded ($environment): $summary")
         )
+        val sqliteJulOutput = SqliteJdbcLogCapture.snapshot()
         val diagnostics = redactSensitive(buildString {
             appendLine("SQLite native loader diagnostics")
             appendLine(environment)
@@ -358,6 +361,7 @@ internal object NativeSqlite {
             appendLine("java.io.tmpdir=${System.getProperty("java.io.tmpdir", "unknown")}")
             appendLine("user.home=~")
             appendLine("native resource=${resourcePath ?: "unavailable"}")
+            SqliteJdbcLogCapture.filePattern()?.let { appendLine("sqlite-jdbc JUL log file=$it") }
             safeAttempts.forEachIndexed { index, attempt ->
                 appendLine(
                     "[${index + 1}] ${attempt.candidate}: directory=${attempt.directory}; " +
@@ -365,6 +369,10 @@ internal object NativeSqlite {
                         "writable=${attempt.writable}; extraction=${attempt.extraction}; " +
                         "failure=${attempt.failureClass ?: "none"}: ${attempt.failureMessage.orEmpty()}"
                 )
+            }
+            if (sqliteJulOutput.isNotBlank()) {
+                appendLine("sqlite-jdbc JUL output:")
+                append(sqliteJulOutput)
             }
         })
         return NativeSqliteUnavailableException(
