@@ -136,6 +136,16 @@ object Database {
                 return finishFailed(IOException("Could not create database directory: $dbDir"), dbFile)
             }
 
+            // Load SQLite before taking sidecar snapshots or opening the user's
+            // database. Test data sources bypass the native driver entirely.
+            if (dataSourceFactoryForTest == null) {
+                when (val nativeStatus = NativeSqlite.ensureLoaded()) {
+                    is NativeSqliteStatus.Loaded -> Unit
+                    is NativeSqliteStatus.Unavailable ->
+                        return finishFailed(nativeStatus.failure, dbFile)
+                }
+            }
+
             val (sidecarSnapshots, snapshotFailure) = captureSidecarSnapshots(dbFile)
             if (snapshotFailure != null) return finishFailed(snapshotFailure, dbFile)
 
@@ -198,6 +208,7 @@ object Database {
         _startupState.value = DbStartupState.NotStarted
         recoveryFileOpsForTest = null
         dataSourceFactoryForTest = null
+        NativeSqlite.resetForTest()
         runCatching { previous?.close() }
     }
 
@@ -489,6 +500,9 @@ object Database {
         lastInitResult = result
         _startupState.value = DbStartupState.Failed(cause, untouchedPath)
         logDatabaseMessage(untouchedPath, "Database initialization failed; the file was left untouched: ${cause.message}")
+        (cause as? NativeSqliteUnavailableException)?.let { nativeFailure ->
+            logDatabaseMessage(untouchedPath, nativeFailure.diagnostics)
+        }
         if (untouchedPath.absoluteFile == defaultDbFile().absoluteFile) {
             try {
                 com.focusflow.services.CrashReporter.reportCritical(

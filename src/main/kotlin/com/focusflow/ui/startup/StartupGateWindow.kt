@@ -47,7 +47,9 @@ fun StartupGateWindow(
     isStarting: Boolean,
     isBusy: Boolean,
     retryEnabled: Boolean = true,
+    requiresRestart: Boolean,
     onRetry: () -> Unit,
+    onRestart: () -> Unit,
     onOpenFolder: () -> Unit,
     onQuit: () -> Unit,
     modifier: Modifier = Modifier
@@ -194,14 +196,20 @@ fun StartupGateWindow(
                         Text("Quit")
                     }
                     Spacer(Modifier.width(2.dp))
-                    Button(onClick = onRetry, enabled = retryEnabled && !isStarting) {
-                        Text(
-                            when {
-                                isStarting -> "Retrying…"
-                                isBusy -> "Retry now"
-                                else -> "Retry"
-                            }
-                        )
+                    if (requiresRestart) {
+                        Button(onClick = onRestart, enabled = !isStarting) {
+                            Text("Restart FocusFlow")
+                        }
+                    } else {
+                        Button(onClick = onRetry, enabled = retryEnabled && !isStarting) {
+                            Text(
+                                when {
+                                    isStarting -> "Retrying…"
+                                    isBusy -> "Retry now"
+                                    else -> "Retry"
+                                }
+                            )
+                        }
                     }
                 }
             }

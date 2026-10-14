@@ -15,12 +15,40 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.io.TempDir
 
 class DatabaseTest {
 
     @TempDir
     lateinit var tempDir: Path
+
+    private var previousUserHome: String? = null
+    private var previousTelemetry: String? = null
+
+    @BeforeEach
+    fun isolateProfileAndNativeBootstrap() {
+        Database.resetForTest()
+        previousUserHome = System.getProperty("user.home")
+        previousTelemetry = System.getProperty("focusflow.telemetry")
+        val profileHome = tempDir.resolve("profile-home")
+        Files.createDirectories(profileHome)
+        System.setProperty("user.home", profileHome.toString())
+        System.setProperty("focusflow.telemetry", "off")
+        NativeSqlite.testHooksForTest = NativeSqliteTestHooks(
+            candidates = emptyList(),
+            defaultInitialize = { org.sqlite.SQLiteJDBCLoader.initialize() },
+            cacheSuccessfulLoad = true
+        )
+    }
+
+    @AfterEach
+    fun restoreProfileProperties() {
+        Database.resetForTest()
+        restoreProperty("user.home", previousUserHome)
+        restoreProperty("focusflow.telemetry", previousTelemetry)
+    }
 
     @Test
     fun initUsesProvidedFileIsIdempotentAndCanResetForTest() {
@@ -382,4 +410,8 @@ class DatabaseTest {
     private fun sha256(path: Path): String =
         MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))
             .joinToString("") { byte -> "%02x".format(byte) }
+
+    private fun restoreProperty(name: String, value: String?) {
+        if (value == null) System.clearProperty(name) else System.setProperty(name, value)
+    }
 }

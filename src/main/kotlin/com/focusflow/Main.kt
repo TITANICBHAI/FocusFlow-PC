@@ -7,6 +7,7 @@ import androidx.compose.ui.window.*
 import com.focusflow.data.Database
 import com.focusflow.data.DbInitResult
 import com.focusflow.data.DbStartupState
+import com.focusflow.data.NativeSqliteUnavailableException
 import com.focusflow.enforcement.AppBlocker
 import com.focusflow.enforcement.ElevationManager
 import com.focusflow.enforcement.KillSwitchService
@@ -28,9 +29,11 @@ import com.focusflow.services.WindowsUninstallRegistration
 import com.focusflow.ui.launcher.LauncherWindowHost
 import com.focusflow.ui.startup.StartupGateWindow
 import java.awt.Desktop
+import java.awt.EventQueue
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import javax.swing.JOptionPane
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -51,6 +54,17 @@ internal suspend fun initDatabaseSafely(
     } catch (failure: Throwable) {
         DbInitResult.Failed(failure, dbFile) to true
     }
+}
+
+private fun currentProcessRestartCommand(): List<String>? {
+    val processInfo = ProcessHandle.current().info()
+    val executable = processInfo.command().orElse(null)?.takeIf(String::isNotBlank) ?: return null
+    val arguments = processInfo.arguments().orElse(emptyArray())
+        .filterNot { it.startsWith("--focusflow-elevation-handoff=") }
+    if (arguments.isEmpty() && File(executable).name.startsWith("java", ignoreCase = true)) {
+        return null
+    }
+    return listOf(executable) + arguments
 }
 
 private sealed interface StartupView {
@@ -204,6 +218,49 @@ private fun FocusFlowDesktop(
             launch.release()
             exitApplication()
         }, "FocusFlow-Gate-Quit").also { it.isDaemon = true }.start()
+    }
+
+    val restartGate: () -> Unit = {
+        Thread({
+            try {
+                val command = currentProcessRestartCommand()
+                    ?: throw IllegalStateException("The current application command is unavailable")
+                Database.close()
+                launch.release()
+                ProcessBuilder(command).start()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
+            } catch (failure: Throwable) {
+                com.focusflow.enforcement.EnforcementLog.warn(
+                    "Startup",
+                    "Could not automatically restart after a native SQLite load failure (${failure.javaClass.simpleName})"
+                )
+                try {
+                    EventQueue.invokeAndWait {
+                        JOptionPane.showMessageDialog(
+                            null,
+                            "FocusFlow could not start a replacement process automatically. " +
+                                "This window will close; start FocusFlow again from its usual shortcut.",
+                            "Restart FocusFlow",
+                            JOptionPane.WARNING_MESSAGE
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (fatal: VirtualMachineError) {
+                    throw fatal
+                } catch (displayFailure: Throwable) {
+                    com.focusflow.enforcement.EnforcementLog.warn(
+                        "Startup",
+                        "Could not show the restart message (${displayFailure.javaClass.simpleName})"
+                    )
+                }
+            } finally {
+                exitApplication()
+            }
+        }, "FocusFlow-Gate-Restart").also { it.isDaemon = true }.start()
     }
 
     // Shared shutdown action keeps service teardown off the AWT event thread.
@@ -428,11 +485,13 @@ private fun FocusFlowDesktop(
             } else {
                 val busy = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Busy
                 val failed = (startup as? StartupView.DatabaseUnavailable)?.result as? DbInitResult.Failed
+                val nativeFailure = failed?.cause as? NativeSqliteUnavailableException
                 val isStarting = startup is StartupView.Starting || startupAttemptInProgress
                 val title = when {
                     startup is StartupView.SwitchingToAdministrator -> "Switching to administrator mode"
                     startup is StartupView.WaitingForInstance -> "Waiting for another instance"
                     busy != null -> "Waiting for the database"
+                    nativeFailure != null -> "FocusFlow could not load its database engine"
                     failed != null -> "Database unavailable"
                     startup is StartupView.ServiceFailure -> "Background services could not start"
                     else -> "Starting safely"
@@ -444,6 +503,9 @@ private fun FocusFlowDesktop(
                         "Another FocusFlow process holds the startup lock but did not respond to the local show request. This window will retry automatically."
                     busy != null ->
                         "The database is locked. No recovery was attempted and FocusFlow has not started its background services. It will retry automatically."
+                    nativeFailure != null ->
+                        "${nativeFailure.message.orEmpty()} " +
+                            "Restart FocusFlow to try loading the database engine again."
                     failed != null ->
                         "FocusFlow could not safely open the database. It did not automatically reset or replace the database file. Fix the reported issue and retry."
                     startup is StartupView.ServiceFailure ->
@@ -461,6 +523,8 @@ private fun FocusFlowDesktop(
                         "The instance lock is held, but the current holder did not acknowledge SHOW. Close the other FocusFlow process or retry after it exits."
                     busy != null ->
                         "SQLite busy after ${busy.attempts} attempt(s), ${busy.waitedMs}ms elapsed. ${busy.cause.message.orEmpty()}"
+                    nativeFailure != null ->
+                        "${nativeFailure.diagnostics}\nFile retained at: ${failed.untouchedPath.absolutePath}"
                     failed != null ->
                         "${failed.cause::class.java.name}: ${failed.cause.message.orEmpty()}\nFile retained at: ${failed.untouchedPath.absolutePath}"
                     startup is StartupView.ServiceFailure -> {
@@ -480,8 +544,11 @@ private fun FocusFlowDesktop(
                         reportPath = startupReportPath,
                         isStarting = isStarting,
                         isBusy = busy != null,
-                        retryEnabled = startup !is StartupView.ServiceFailure,
+                        retryEnabled = startup !is StartupView.ServiceFailure &&
+                            nativeFailure?.requiresRestart != true,
+                        requiresRestart = nativeFailure?.requiresRestart == true,
                         onRetry = { retryToken++ },
+                        onRestart = restartGate,
                         onOpenFolder = {
                             runCatching {
                                 if (Desktop.isDesktopSupported()) {

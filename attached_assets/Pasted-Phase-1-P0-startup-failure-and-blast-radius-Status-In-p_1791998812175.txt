@@ -1,0 +1,28 @@
+Phase 1 — P0 startup failure and blast radius
+Status: In progress — 2026-10-14 (F28).
+
+Required order: F28 test configuration → F4.0 → F2 → F1 → F3 local diagnostics/UI → F4 consent/redaction → F3 remote-payload summary. F5 is deferred until after F11.
+
+2026-10-14 start note: Began Phase 1 after explicit owner authorization. Work follows the reconciled sequence above; D1–D3 and F1b remain approval gates. No database finding was implemented before this authorization.
+
+2026-10-14 F28: Gradle supplies the project version to test workers and sets focusflow.telemetry=off. Tests cover the worker property and the packaged-app missing-version fail-fast in a fresh JVM; targeted root :test passed 2/2 with zero failures/errors.
+
+2026-10-14 F4.0: Automatic critical and fatal reports now route through TelemetrySink; tests select a no-op sink when telemetry is off, while an injected recording fake captures both paths without network I/O. Targeted root :test passed 5/5 with zero failures/errors.
+
+2026-10-14 F2: Database.init and tryOpenAndMigrate now distinguish recoverable throwables from cancellation/fatal VM errors, preserve a terminal failed state, and expose an injected DataSource seam. The Main startup caller converts unexpected throwables to DbInitResult.Failed; the audit added fatal-safe reporting/retry boundaries to DB-backed background loops (ProcessMonitor, allowance tracking, backups, recurring tasks, schedules, alarms, weekly reports, Nuclear Mode) and the one-shot service bootstrap. F2 tests cover native-loader LinkageError, repeated init, OutOfMemoryError, startup caller mapping, and allowance/bootstrap fatal propagation. Targeted root :test passed 25/25; definitive full root gradle :test --no-daemon --console=plain --rerun-tasks passed 111/111, 0 failures/errors/skips across 25 XML files. Two earlier synchronous full-suite invocations produced no final task summary; this rerun’s persisted log showed BUILD SUCCESSFUL (1m26s). No network or telemetry calls were made.
+
+ F28 — Test JVM configuration (pulled forward): Set focusflow.app.version from the Gradle project version for tests and set focusflow.telemetry=off for tests after F4.0. Keep the packaged-app fail-fast unless the owner approves a production fallback. Assert the test worker gets the version property; in an isolated JVM, verify the missing-property case remains an intentional fail-fast rather than masking a packaging error.
+
+ F4.0 — Telemetry test seam (before failure tests): Route automatic reports through TelemetrySink; support a no-op sink when telemetry is disabled and a recording fake in tests. No behavior change beyond the explicit kill switch; tests/scripts must never send network traffic.
+
+ F2 — Throwable-safe database startup: Convert non-fatal Throwable failures to typed failed startup results, rethrow VirtualMachineError and CancellationException as specified, and ensure startup cannot remain Opening. Add the injected data-source and background-loop audit. Targeted F2 tests and the full Linux root suite pass; Windows behavior remains unverified.
+
+ F1 — Controlled SQLite native bootstrap: Implement the planned candidate ladder, diagnostic attempts, content-addressed extraction, and safe retry/restart behavior without touching the DB on load failure. Tests F1-a…d; Windows items W1–W3 and W5 remain human checks. F1b (shipping the DLL in the install) is owner-gated and must wait for W1–W3.
+
+ F3 — Root-cause reporting: First capture sqlite-jdbc JUL output and show the full cause/local report path in the startup gate. Only after F4’s fail-closed consent and redaction are active, add the bounded summary to remote payloads. Reuse the existing full local cause-chain report. Tests F3-a…d.
+
+ F4 — Consent, privacy, and secrets: Use a DB-independent consent store, fail closed unless explicitly granted, migrate the old setting once, redact payloads, and preserve the no-network test seam. Resolve owner decisions D1–D3 before touching secret/consent wording or endpoint behavior. Tests F4-a…d.
+
+ F5 decision intake — D4: Ask/record the owner’s uninstall policy if they answer in Phase 1. Do not implement F5 until F11’s read-only path exists in Phase 2.
+
+ Phase 1 exit: F1–F4 acceptance is met except outstanding WIN-VERIFY checks; F5 is explicitly deferred to Phase 2 after F11. Record D1–D5 and the deferral in fixes/PHASE-1-REPORT.md.
