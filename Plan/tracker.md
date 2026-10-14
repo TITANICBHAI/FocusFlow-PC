@@ -145,7 +145,7 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ## Batch A — Relaunch as administrator
 
-**Status:** In progress — reopening Batch A for checklist/source/test reconciliation; Windows UAC/MSIX runtime checks remain unverified.
+**Status:** In progress — Batch A source reconciliation and targeted automated tests are complete; Windows UAC/MSIX runtime acceptance remains unverified.
 **Start note:** 2026-10-14 — inspected existing elevation detection, relaunch callers, package detection, instance guard, and shutdown paths before implementation.
 
 - [x] **A-1** Detect MSIX package identity with the documented package APIs; retain the existing path heuristic as fallback.
@@ -155,9 +155,10 @@ Add dated entries here as work progresses. Keep previous entries.
 - [x] **A-5** Replace all duplicated relaunch paths with the shared helper and pending, declined, failed, and unsupported UI states.
 - [x] **A-6** Remove duplicate administrator checks and route all listed callers through the elevation manager; remove the unused banner implementation.
 - [x] **A-7** Record startup and relaunch diagnostics without logging secrets.
-- [x] Run and record `RelaunchTargetTest`, `RelaunchHandoffTest`, and package-identity parsing/buffer-handling tests.
+- [x] Run and record `RelaunchTargetTest`, `RelaunchHandoffTest`, and package-identity parsing/buffer-handling tests, including the non-elevated same-user fallback regression.
 - [x] Verify the plan's EXE acceptance criteria by source review; record UAC and MSIX runtime scenarios that require Windows.
-- [ ] Do not edit or invent user-owned manifest/packaging files as a workaround. If MSIX AppsFolder elevation fails, record the evidence and request the missing manifest/build inputs described in the plan.
+- [x] Keep user-owned manifest/packaging files unchanged; none were edited in this batch.
+- [ ] If Windows verification shows AppsFolder + `runas` fails, record the evidence and request the missing manifest/build inputs described in the plan.
 
 ### Batch A notes
 Add dated entries here as work progresses. Keep previous entries.
@@ -185,6 +186,21 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Implemented:** A handoff child may use the ordinary single-instance `SHOW` path only when it is non-elevated and its nonce matches a fresh marker for the same user and a different PID. Invalid/stale nonces and another user's marker remain rejected.
 - **Files changed:** `Main.kt`, `RelaunchHandoff.kt`, `RelaunchHandoffTest.kt`, and `Plan/tracker.md`.
 - **Regression test:** Added coverage for valid same-user markers and rejection of wrong nonce, wrong user, same PID, invalid PID, and stale markers. Verification after this change is pending.
+
+### 2026-10-14 — Batch A — Verification update
+
+- **Final targeted command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon --rerun-tasks --tests 'com.focusflow.enforcement.RelaunchTargetTest' --tests 'com.focusflow.enforcement.PackageIdentityResolverTest' --tests 'com.focusflow.services.RelaunchHandoffTest' --tests 'com.focusflow.services.SingleInstanceGuardTest'`
+- **Result:** `BUILD SUCCESSFUL`; 18 tests across the four Batch A classes, 0 skipped, 0 failures, 0 errors. Main and test compilation completed; existing deprecation and coroutine opt-in warnings remain.
+- **Additional checks:** `git diff --check` passed before the final tracker reconciliation. Static search found no duplicate administrator checks or relaunch helpers; `Start-Process` remains only in unrelated watchdog code.
+- **Full-suite limitation:** An unfiltered `gradle test --no-daemon` timed out before a final test result. Later unfiltered/clean test invocations returned after `testClasses` without a `:test` result or test XML, so they are not counted as full-suite passes.
+- **Windows not verified:** UAC accept/cancel, built-in-admin timing, native package-identity API behavior, MSIX AppsFolder + `runas`, and fallback behavior remain Windows manual checks. No manifest or packaging script was changed; no GitHub workflow was intentionally invoked by this implementation pass.
+
+### 2026-10-14 — Unexpected Git workflow / local commit observation
+
+- **Observed:** After restarting only `Start application`, Replit reported `Push to GitHub` as finished. Read-only local Git status showed `main` ahead of `origin/main` by one commit; the latest local commit includes the Batch A source/test/tracker edits and all three attached prompt files.
+- **Action taken:** I did not start, inspect, or poll the push workflow, and did not attempt to push, amend, revert, or otherwise change the commit. Local ahead/behind status alone does not establish whether the remote received the commit.
+- **Application workflow:** `Start application` restarted successfully and was still resolving runtime dependencies at the last status check; final startup completion is pending.
+- **Application workflow update:** A later status check reported `Start application` as `running` at `:run` with no error text. This confirms the workflow process is active; no desktop screenshot or Windows behavior was verified.
 
 ### 2026-10-14 — Batch A — In progress
 

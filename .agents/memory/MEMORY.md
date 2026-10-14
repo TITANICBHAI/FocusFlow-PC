@@ -16,3 +16,4 @@
 - [Nix process names in tracker tests](nix-process-names.md) — `ProcessHandle` may report `coreutils` for shell aliases such as `sleep`; inspect the command or inject process data.
 - [Silent startup recovery gate](silent-startup-gate.md) — Keep routine JVM/database startup invisible; show recovery UI only when startup needs user action.
 - [Language market prioritization](language-market-prioritization.md) — For India, don't infer Hindi preference from install location; most users prefer reading in English.
+- [Gradle test completion evidence](gradle-test-completion.md) — Require a final `:test` result and XML reports; partial `testClasses` output is not test evidence.
