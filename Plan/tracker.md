@@ -17,8 +17,8 @@
 
 ## Batch C — Session PIN visibility (do first)
 
-**Status:** Not started  
-**Start note:** Add a dated “In progress” entry to the batch notes before starting.
+**Status:** In progress  
+**Start note:** 2026-10-14 — source inspection underway; no implementation change has been made yet.
 
 - [ ] **C-1** Add a dark launcher theme and named launcher color values.
 - [ ] **C-2** Wrap both primary and secondary launcher windows in that theme.
@@ -31,6 +31,13 @@
 
 ### Batch C notes
 Add dated entries here as work progresses. Keep previous entries.
+
+### 2026-10-14 — Batch C — In progress
+
+- **Scope:** C-1 through C-6 and the named PIN normalization/matching tests.
+- **Current findings:** The current checkout contains the PIN dialog, multi-monitor launcher host, and one-time reveal UI from the plan. `verifyPin()` still compares the raw PIN hash exactly, and launcher text colors still come from theme globals; the service's current implementation differs from the archive snapshot.
+- **Files changed:** `Plan/tracker.md`, `src/main/kotlin/com/focusflow/ui/launcher/LauncherTheme.kt`, `LauncherWindow.kt`, `LauncherContent.kt`, `src/main/kotlin/com/focusflow/services/SessionPinInput.kt`, `FocusLauncherService.kt`, `src/main/kotlin/com/focusflow/ui/screens/FocusLauncherScreen.kt`, and `src/test/kotlin/com/focusflow/services/SessionPinInputTest.kt`.
+- **Verification:** Source references checked with `rg` and targeted reads. Implementation edits are in place; build/tests and acceptance checks are pending.
 
 ## Batch D — Launcher app launch flow
 

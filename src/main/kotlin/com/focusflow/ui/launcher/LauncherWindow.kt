@@ -104,6 +104,8 @@ private fun LauncherWindowForScreen(bounds: Rectangle, isPrimary: Boolean) {
             }
         }
 
-        if (isPrimary) LauncherContent() else SecondaryScreenLock()
+        LauncherTheme {
+            if (isPrimary) LauncherContent() else SecondaryScreenLock()
+        }
     }
 }

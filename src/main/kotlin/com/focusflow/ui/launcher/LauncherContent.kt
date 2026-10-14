@@ -41,6 +41,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,10 +54,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -69,10 +75,7 @@ import com.focusflow.services.FocusLauncherApp
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.theme.Error
-import com.focusflow.ui.theme.OnSurface
-import com.focusflow.ui.theme.OnSurface2
 import com.focusflow.ui.theme.Purple80
-import com.focusflow.ui.theme.Surface2
 import com.focusflow.ui.theme.Warning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -86,7 +89,7 @@ import java.time.format.DateTimeFormatter
 fun LauncherContent() {
     val breakActive by FocusLauncherService.breakActive.collectAsState()
     Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF0C0B14))
+        modifier = Modifier.fillMaxSize().background(LauncherColors.Background)
     ) {
         if (breakActive) BreakScreen() else MainLauncherScreen()
     }
@@ -126,7 +129,7 @@ private fun MainLauncherScreen() {
         }
         Row(
             modifier = Modifier.fillMaxWidth()
-                .background(Color(0xFF13121F))
+                .background(LauncherColors.Bar)
                 .padding(horizontal = 28.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -139,7 +142,7 @@ private fun MainLauncherScreen() {
                     else FocusLauncherService.toggleHardLock()
                 },
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (hardLocked) Error else OnSurface2
+                    contentColor = if (hardLocked) Error else LauncherColors.TextDim
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -231,7 +234,7 @@ private fun LauncherTopBar(hardLocked: Boolean) {
         }
     }
     Row(
-        modifier = Modifier.fillMaxWidth().background(Color(0xFF13121F))
+        modifier = Modifier.fillMaxWidth().background(LauncherColors.Bar)
             .padding(horizontal = 28.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -241,7 +244,7 @@ private fun LauncherTopBar(hardLocked: Boolean) {
             Spacer(Modifier.width(10.dp))
             Text(
                 "FOCUS LAUNCHER",
-                color = OnSurface,
+                color = LauncherColors.Text,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp
@@ -261,7 +264,7 @@ private fun LauncherTopBar(hardLocked: Boolean) {
                 )
                 Spacer(Modifier.width(16.dp))
             }
-            Text(clock, color = OnSurface2, fontSize = 14.sp)
+            Text(clock, color = LauncherColors.TextDim, fontSize = 14.sp)
         }
     }
 }
@@ -281,7 +284,7 @@ private fun AppTile(app: FocusLauncherApp) {
 
     Box(
         modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF1C1A2E))
+            .background(LauncherColors.Tile)
             .clickable {
                 scope.launch(Dispatchers.IO) {
                     try {
@@ -346,7 +349,7 @@ private fun AppTile(app: FocusLauncherApp) {
             }
             Text(
                 app.displayName,
-                color = OnSurface,
+                color = LauncherColors.Text,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
@@ -370,9 +373,9 @@ private fun BreakScreen() {
                 "%02d:%02d".format(remaining / 60, remaining % 60),
                 fontSize = 80.sp,
                 fontWeight = FontWeight.Bold,
-                color = OnSurface
+                color = LauncherColors.Text
             )
-            Text("Focus Launcher resumes automatically", color = OnSurface2, fontSize = 13.sp)
+            Text("Focus Launcher resumes automatically", color = LauncherColors.TextDim, fontSize = 13.sp)
             OutlinedButton(
                 onClick = { FocusLauncherService.endBreak() },
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Warning),
@@ -393,13 +396,13 @@ fun SecondaryScreenLock() {
         }
     }
     Box(
-        Modifier.fillMaxSize().background(Color(0xFF0C0B14)),
+        Modifier.fillMaxSize().background(LauncherColors.Background),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Default.Lock, null, tint = Purple80.copy(alpha = .4f), modifier = Modifier.size(36.dp))
             Spacer(Modifier.height(12.dp))
-            Text("Focus session in progress", color = OnSurface2, fontSize = 14.sp)
+            Text("Focus session in progress", color = LauncherColors.TextDim, fontSize = 14.sp)
             if (timer.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text(timer, color = Purple80, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
@@ -420,23 +423,55 @@ private fun SessionPinDialog(
     var visible by remember { mutableStateOf(false) }
     var verifying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
+
+    fun submitPin() {
+        if (verifying || pin.isBlank()) return
+        val candidate = pin
+        verifying = true
+        scope.launch(Dispatchers.IO) {
+            val valid = FocusLauncherService.verifyPin(candidate)
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                verifying = false
+                if (valid) onSuccess()
+                else {
+                    pin = ""
+                    error = true
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1828),
+        containerColor = LauncherColors.Dialog,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Lock, null, tint = Purple80, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
-                Text(title, color = OnSurface, fontWeight = FontWeight.Bold)
+                Text(title, color = LauncherColors.Text, fontWeight = FontWeight.Bold)
             }
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(subtitle, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+                Text(subtitle, color = LauncherColors.TextDim, style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = pin,
                     onValueChange = { pin = it; error = false },
+                    modifier = Modifier.focusRequester(focusRequester),
                     singleLine = true,
+                    textStyle = TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 16.sp,
+                        letterSpacing = 0.5.sp
+                    ),
+                    placeholder = { Text("Session PIN") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submitPin() }),
                     visualTransformation = if (visible) VisualTransformation.None
                     else PasswordVisualTransformation(),
                     isError = error,
@@ -445,39 +480,34 @@ private fun SessionPinDialog(
                             Icon(
                                 if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                 null,
-                                tint = OnSurface2
+                                tint = LauncherColors.TextDim
                             )
                         }
                     },
                     colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = LauncherColors.Text,
+                        unfocusedTextColor = LauncherColors.Text,
+                        errorTextColor = LauncherColors.Text,
+                        cursorColor = Purple80,
+                        focusedPlaceholderColor = LauncherColors.TextDim,
+                        unfocusedPlaceholderColor = LauncherColors.TextDim,
                         focusedBorderColor = if (error) Error else Purple80,
-                        unfocusedBorderColor = if (error) Error else OnSurface2
+                        unfocusedBorderColor = if (error) Error else LauncherColors.TextDim
                     )
                 )
+                Text("${pin.length} characters", color = LauncherColors.TextDim, fontSize = 12.sp)
                 if (error) Text("Incorrect PIN", color = Error)
             }
         },
         confirmButton = {
             Button(
-                onClick = {
-                    if (verifying || pin.isBlank()) return@Button
-                    val candidate = pin
-                    verifying = true
-                    scope.launch(Dispatchers.IO) {
-                        val valid = FocusLauncherService.verifyPin(candidate)
-                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            verifying = false
-                            if (valid) onSuccess()
-                            else { pin = ""; error = true }
-                        }
-                    }
-                },
+                onClick = { submitPin() },
                 enabled = pin.isNotBlank() && !verifying,
                 colors = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text("Confirm") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = OnSurface2) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = LauncherColors.TextDim) }
         }
     )
 }

@@ -126,9 +126,7 @@ object FocusLauncherService {
      */
     fun verifyPin(raw: String): Boolean {
         val stored = Database.getSetting(LAUNCHER_PIN_KEY)
-            ?.takeIf { it.isNotBlank() }
-            ?: return false
-        return raw.isNotBlank() && sha256(raw) == stored
+        return SessionPinInput.matches(raw, stored)
     }
 
     /**
