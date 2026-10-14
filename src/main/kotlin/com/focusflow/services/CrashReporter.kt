@@ -98,6 +98,21 @@ object CrashReporter {
      */
     private val crashHandled = AtomicBoolean(false)
 
+    private val productionTelemetrySink = TelemetrySink { payloadJson ->
+        DiscordWebhookClient.post(DISCORD_WEBHOOK_URL, payloadJson)
+    }
+
+    @Volatile
+    internal var telemetrySinkOverrideForTest: TelemetrySink? = null
+
+    internal fun selectedTelemetrySink(): TelemetrySink =
+        telemetrySinkOverrideForTest
+            ?: if (System.getProperty("focusflow.telemetry")?.equals("off", ignoreCase = true) == true) {
+                NoopTelemetrySink
+            } else {
+                productionTelemetrySink
+            }
+
     // ── AWT EDT exception handler ─────────────────────────────────────────────
 
     /**
@@ -563,7 +578,8 @@ object CrashReporter {
      * Fires on a daemon background thread; never throws.
      */
     fun reportCritical(source: String, message: String, throwable: Throwable? = null) {
-        val webhookUrl = DISCORD_WEBHOOK_URL.takeIf { it.isNotBlank() } ?: return
+        val sink = selectedTelemetrySink()
+        if (sink === NoopTelemetrySink) return
         val optedIn = try { Database.getSetting("crash_reports_enabled") != "false" } catch (_: Throwable) { true }
         if (!optedIn) return
 
@@ -604,7 +620,7 @@ object CrashReporter {
                     }
                 """.trimIndent()
 
-                DiscordWebhookClient.post(webhookUrl, payload)
+                sink.post(payload)
             } catch (_: Throwable) {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }
@@ -759,8 +775,9 @@ object CrashReporter {
      * • All exceptions are swallowed — telemetry must never interfere with local
      *   crash handling or JVM exit.
      */
-    private fun sendToDiscord(throwable: Throwable, source: String) {
-        val webhookUrl = DISCORD_WEBHOOK_URL.takeIf { it.isNotBlank() } ?: return
+    internal fun sendToDiscord(throwable: Throwable, source: String) {
+        val sink = selectedTelemetrySink()
+        if (sink === NoopTelemetrySink) return
 
         // ── Benign filter — drop well-known harmless Compose/coroutine noise ──
         if (isKnownBenign(throwable)) return
@@ -809,7 +826,7 @@ object CrashReporter {
                     }
                 """.trimIndent()
 
-                DiscordWebhookClient.post(webhookUrl, payload)
+                sink.post(payload)
             } catch (_: Throwable) {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }
