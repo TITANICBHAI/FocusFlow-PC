@@ -301,6 +301,8 @@ fun App() {
 
     FocusFlowTheme {
         val sessionState by FocusSessionService.state.collectAsState()
+        val launcherSessionActive by FocusLauncherService.isActive.collectAsState()
+        val nuclearModeActive by NuclearMode.activeState.collectAsState()
         val navigate: (Screen) -> Unit = { dest ->
             if (dest == Screen.DASHBOARD) dashboardRefreshKey++
             blockerInitialTab = AppBlockerTabs.ALWAYS_BLOCK
@@ -421,7 +423,8 @@ fun App() {
             ) {
                 if (!isAdmin && currentScreen in ADMIN_BUTTON_SCREENS) {
                     RestartAsAdminButton(
-                        activeAdminFeatures = activeAdminFeatures
+                        activeAdminFeatures = activeAdminFeatures,
+                        sessionActive = sessionState.isActive || launcherSessionActive || nuclearModeActive
                     )
                 }
                 ThemeToggleButton()
@@ -578,12 +581,12 @@ fun App() {
 @Composable
 private fun RestartAsAdminButton(
     activeAdminFeatures: List<String>,
+    sessionActive: Boolean,
     modifier: Modifier = Modifier
 ) {
     val urgent = activeAdminFeatures.isNotEmpty()
     val relaunchStatus by ElevationRelaunchService.status.collectAsState()
     val pending = relaunchStatus is ElevationRelaunchStatus.Pending
-    val sessionActive = ElevationRelaunchService.isSessionActive()
     val canRelaunch = ElevationRelaunchService.canRelaunch() && !pending
 
     // Smooth colour transition between subtle ↔ urgent

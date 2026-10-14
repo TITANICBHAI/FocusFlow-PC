@@ -145,7 +145,7 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ## Batch A — Relaunch as administrator
 
-**Status:** In progress — Batch A source reconciliation and targeted automated tests are complete; Windows UAC/MSIX runtime acceptance remains unverified.
+**Status:** Implementation and Linux-verifiable checks complete; Windows UAC/MSIX runtime acceptance remains unverified.
 **Start note:** 2026-10-14 — inspected existing elevation detection, relaunch callers, package detection, instance guard, and shutdown paths before implementation.
 
 - [x] **A-1** Detect MSIX package identity with the documented package APIs; retain the existing path heuristic as fallback.
@@ -223,9 +223,25 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Windows not verified:** UAC consent/cancel behavior, direct EXE handoff, MSIX AppsFolder `runas`, execution alias behavior, and native package API output. No manifest or workflow packaging changes were made.
 - **Build attempts:** An early compile found the wrong JNA memory-size type and a malformed `File` constructor; both were corrected. The next compile found an existing trailing-lambda call affected by the new guard parameter; parameter order was corrected. `compileTestKotlin` and the final full suite then passed. The app workflow also once reported a Kotlin compiler internal error with a missing generated class during concurrent Gradle compilations; its subsequent restart is running.
 
+### 2026-10-14 — Batch A — Verification pass in progress
+
+- **Scope:** Reconcile the current A implementation and named tests; identify and fix any remaining Linux-verifiable gaps without changing the Windows-only acceptance claims.
+- **Current findings:** Central package/elevation logic, shared relaunch entry points, and nonce-based graceful handoff are present; targeted A tests will be rerun. UAC and MSIX runtime acceptance still require Windows.
+- **Files changed:** `Plan/tracker.md` only.
+- **Verification:** Pending.
+
+### 2026-10-14 — Batch A — Verification pass result
+
+- **Source review:** Confirmed the planned EXE/MSIX/manual target selection, native package identity and manifest AUMID fallback, in-process elevation query, one shared relaunch service at the listed callers, same-user non-elevated fallback validation, handoff timeout with old-process retention, and graceful shutdown. No Linux-verifiable implementation gap was found.
+- **Failed attempts retained:** `gradle test --no-daemon --rerun-tasks --tests ...` returned a shell execution error without output; `gradle test --no-daemon --tests 'com.focusflow.enforcement.RelaunchTargetTest'` was terminated before the root `:test` task reported a result, stopping after `:recovery:test NO-SOURCE`. Neither attempt produced test XML.
+- **Successful command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --rerun-tasks --tests 'com.focusflow.enforcement.RelaunchTargetTest' --tests 'com.focusflow.enforcement.PackageIdentityResolverTest' --tests 'com.focusflow.services.RelaunchHandoffTest' --tests 'com.focusflow.services.SingleInstanceGuardTest'`
+- **Result:** `BUILD SUCCESSFUL` in 2m 17s. XML reports show 18 tests total (6 target-selection, 3 package-identity, 5 handoff, 4 single-instance), 0 skipped, 0 failures, 0 errors; main and test compilation passed with existing deprecation and coroutine opt-in warnings.
+- **Files changed:** `Plan/tracker.md` only; no application source changes were needed.
+- **Windows not verified:** UAC accept/cancel, built-in-admin timing, package API output, AppsFolder `runas`, and execution-alias behavior remain manual Windows checks. The conditional AppsFolder fallback item remains unchecked because no Windows result is available.
+
 ## Batch B — Admin button state and pulse
 
-**Status:** Implementation complete — source acceptance review and automated tests pass; interactive UI checks remain unverified.
+**Status:** Implementation and automated checks complete — Windows interactive UI checks remain unverified.
 **Start note:** 2026-10-14 — admin state was initially false pending a PowerShell check; the floating admin button used an unbounded animation.
 
 - [x] **B-1** Initialize admin state from the elevation manager without a false default or a separate startup process check.
@@ -250,6 +266,30 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Implemented:** Admin state now comes from the shared cached token query; the existing screen visibility rule remains, relaunch disables during focus/launcher/Nuclear sessions, button feedback reflects pending and blocked states, and the urgent pulse is limited to three cycles. Admin-feature polling is non-elevated only and runs every five seconds.
 - **Automated verification:** `gradle test --no-daemon` passed. Interactive elevated/non-elevated button rendering and CPU behavior were not exercised on Windows.
 - **Suite result:** 93 tests, 0 failures, 0 errors. `git diff --check` passed, and a source search found no remaining duplicate admin-check/relaunch/banner helpers.
+
+### 2026-10-14 — Batch B — Verification pass in progress
+
+- **Scope:** Reconcile B-1 through B-5 and verify the admin-button visibility, bounded pulse, active-session gate, and polling behavior against current source.
+- **Current findings:** Admin state is read from the shared elevation manager; feature polling is limited to non-elevated instances at five seconds; the urgent pulse runs three cycles only while the urgent button is composed. Windows elevated/non-elevated rendering and CPU behavior cannot be exercised in this Linux environment.
+- **Files changed:** `Plan/tracker.md` only.
+- **Verification:** Source check and diff check pending.
+
+### 2026-10-14 — Batch B — Reactive session-state gap found
+
+- **Finding:** The button read launcher-session and Nuclear Mode booleans without collecting observable state; only the regular focus-session flow forced recomposition. The central request guard still blocked relaunch, but the button could remain visually enabled or show stale tooltip text for the other session types.
+- **Additional cleanup:** `FocusLauncherScreen.kt` still had a comment claiming its admin check ran `net session`, although the shared in-process token check had replaced that implementation.
+- **Fix planned:** Expose Nuclear Mode's existing active state as a read-only `StateFlow`, collect launcher/Nuclear state in `App`, pass the combined state to the button, and correct the stale comment. This does not change enforcement decisions.
+- **Files changed:** `Plan/tracker.md` only so far.
+- **Verification:** Pending.
+
+### 2026-10-14 — Batch B — Verification pass result
+
+- **Gap corrected:** Admin-button session disable/tooltip state now observes regular focus, Focus Launcher, and Nuclear Mode state changes. Nuclear Mode exposes a read-only `StateFlow` backed by its atomic active-state operations; the enforcement guard and decisions are unchanged. Corrected the obsolete `net session` comment.
+- **Files changed:** `src/main/kotlin/com/focusflow/App.kt`, `src/main/kotlin/com/focusflow/enforcement/NuclearMode.kt`, `src/main/kotlin/com/focusflow/ui/screens/FocusLauncherScreen.kt`, and `Plan/tracker.md`.
+- **Automated verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain` — `BUILD SUCCESSFUL` in 31 seconds; 94 tests, 0 skipped, 0 failures, 0 errors. Main and test compilation passed; existing Gradle deprecation warnings remain.
+- **Static verification:** Source assertions confirmed shared admin state, five-second non-elevated polling, bounded three-cycle pulse, reactive session collection, and enabled-state guard. Search found no duplicate admin check, `net session` implementation/comment, or unbounded pulse. `git diff --check` passed.
+- **Workflow check:** Restarted only `Start application`; workflow status is `RUNNING` at `:run`, with no reported error. `Push to GitHub` was not started.
+- **Not verified:** Windows elevated/non-elevated Dashboard rendering, actual CPU behavior, UAC, and MSIX scenarios still require Windows. The associated manual matrix items remain unchecked.
 
 ## Cross-cutting and final checks
 

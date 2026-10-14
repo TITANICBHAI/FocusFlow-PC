@@ -92,8 +92,7 @@ fun FocusLauncherScreen() {
 
     val durationMinutes = resolveDurationMinutes(durationIndex, customDurationMinutes)
 
-    // Checked once on composition — running "net session" is a blocking call so we
-    // do it inside remember{} rather than on every recomposition.
+    // The shared elevation manager caches the in-process token query.
     val isAdmin = remember { com.focusflow.enforcement.ElevationManager.isElevated }
 
     val isActive  by FocusLauncherService.isActive.collectAsState()

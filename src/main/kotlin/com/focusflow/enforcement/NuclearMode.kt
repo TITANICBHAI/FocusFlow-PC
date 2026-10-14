@@ -5,9 +5,11 @@ import com.focusflow.services.SoundAversion
 import com.focusflow.services.SystemTrayManager
 import com.focusflow.services.UninstallProtectionService
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.awt.TrayIcon
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import com.focusflow.enforcement.killProcessesByName
 
 /**
@@ -102,10 +104,11 @@ object NuclearMode {
     /** Per-process escape attempt counter — flushed to DB every 5 hits. */
     private val escapeCounts = ConcurrentHashMap<String, Int>()
 
-    // AtomicBoolean so enable()/disable() are race-free: two simultaneous enable()
-    // calls cannot both pass the guard and launch two monitorJobs.
-    private val _isActiveAtomic = AtomicBoolean(false)
-    val isActive: Boolean get() = _isActiveAtomic.get()
+    // StateFlow's compareAndSet keeps the enable guard atomic and also lets UI
+    // consumers react immediately when Nuclear Mode changes.
+    private val _isActiveState = MutableStateFlow(false)
+    val activeState: StateFlow<Boolean> = _isActiveState.asStateFlow()
+    val isActive: Boolean get() = _isActiveState.value
 
     /** Number of processes in the escape-route list (shown on the Nuclear Mode screen). */
     val escapeProcessCount: Int get() = escapeProcesses.size
@@ -282,7 +285,7 @@ object NuclearMode {
     fun enable(silent: Boolean = false) {
         // CAS prevents two simultaneous enable() calls from both passing the guard
         // and launching two monitorJobs (each firing enforceTick() every 500 ms).
-        if (!_isActiveAtomic.compareAndSet(false, true)) return
+        if (!_isActiveState.compareAndSet(false, true)) return
 
         Database.setSetting("nuclear_mode", "true")
         escapeCounts.clear()
@@ -303,7 +306,7 @@ object NuclearMode {
             synchronized(firewallLock) {
                 // disable() may have won the race while the previous cleanup was
                 // finishing. Never apply rules for a mode that is no longer active.
-                if (_isActiveAtomic.get()) applyFirewallLock()
+                if (_isActiveState.value) applyFirewallLock()
             }
         }
 
@@ -338,7 +341,7 @@ object NuclearMode {
      */
     fun disable(silent: Boolean = false) {
         synchronized(lifecycleLock) {
-            _isActiveAtomic.set(false)
+            _isActiveState.value = false
             monitorJob?.cancel()
             monitorJob = null
 
