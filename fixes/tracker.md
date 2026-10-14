@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Current-code review recorded; implementation has not started. Await owner authorization and any additional owner rules before Phase 0.
+- **Overall status:** Database reliability implementation has not started. The owner authorized v2.0.6 planned-changelog/version-metadata prep only; audit findings remain unimplemented and require separate authorization.
 
 ## Tracking rules
 
@@ -16,12 +16,18 @@
 
 ## Current findings and preparation record
 
+### 2026-10-14 — v2.0.6 planned release metadata
+
+- Set the app/recovery package version source to `2.0.6` and added an explicitly **PLANNED** in-app changelog entry summarizing the database reliability plan.
+- The Windows build derives EXE/MSI package versions and the four-part MSIX version from `appVersion`; no packaging workflow logic was changed.
+- This is release preparation only. No database finding, test, audit script, telemetry path, live profile, or Windows behavior has been implemented or exercised. Owner decisions and the Windows checklist remain open.
+
 ### 2026-10-14 — Planning package prepared
 
 - **Files added:** `fixes/plan.md`, this tracker, `fixes/preagent-prompt.md`, the supplied evidence ZIP, and its 29 extracted files.
 - **Plan integrity:** `fixes/plan.md` matches the supplied Markdown byte-for-byte; SHA-256: `92abc004b1e807dfc04e4c4a70841e1c9f243dab8b40460966674b94036119b2`.
 - **Evidence handling:** ZIP listing was inspected and files were extracted to a temporary directory before copying. The reproduction scripts were not run.
-- **Source snapshot caveat:** The plan audits an app snapshot labeled `2.0.3`; the current project was updated to `2.0.5`. Treat current source, build configuration, and working tree as authoritative; re-check all paths, line references, versions, and assumptions.
+- **Source snapshot caveat:** The plan audits an app snapshot labeled `2.0.3`; the database findings were reviewed against the `2.0.5` source. Release metadata was later staged at `2.0.6` for the planned scope only. Treat current source, build configuration, and working tree as authoritative; re-check all paths, line references, versions, and assumptions.
 - **Initial discrepancy — F26 (superseded below):** The audit archive reportedly omitted `recovery/`; current-source review and Gradle configuration verification now confirm it is present and included. See the F26 closure and root `AUDIT-ADDENDUM.md`.
 - **Verification state:** No app code, tests, audit harness, or Windows procedure has been run as part of preparing these documents.
 

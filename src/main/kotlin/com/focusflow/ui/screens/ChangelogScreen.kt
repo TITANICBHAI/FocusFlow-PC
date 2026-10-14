@@ -31,6 +31,19 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "2.0.6",
+        date       = "Planned for 2.0.6",
+        badge      = "PLANNED",
+        badgeColor = OnSurface2,
+        changes    = listOf(
+            "IMP" to "Planned: Improve SQLite startup recovery, native-library diagnostics, and safe retry handling",
+            "SEC" to "Planned: Make unreadable settings and PIN checks fail safely; improve consent and diagnostic redaction after owner decisions",
+            "FIX" to "Planned: Prevent recurring-task duplication and stale-session lockouts; strengthen transaction and session-write reliability",
+            "IMP" to "Planned: Verify backups, close JDBC statement leaks, and improve CSV exports and date-query performance",
+            "UPD" to "Scope remains subject to owner decisions; Windows-specific behavior will remain unverified until human testing"
+        )
+    ),
+    ChangelogEntry(
         version    = "2.0.5",
         date       = "October 2026",
         badge      = "IMP",

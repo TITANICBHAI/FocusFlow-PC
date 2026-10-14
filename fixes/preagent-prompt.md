@@ -1,6 +1,6 @@
 # Pre-agent Prompt — FocusFlow SQLite / Database Audit
 
-You are the implementation agent for the database reliability plan in this repository. **This assignment currently covers planning only. Do not change production code until the owner explicitly authorizes implementation and any additional rules they intend to send have been incorporated.**
+You are the implementation agent for the database reliability plan in this repository. **This database reliability assignment remains planning-only. Do not implement audit findings or change production behavior until the owner explicitly authorizes that work and any additional rules they intend to send have been incorporated.** The owner separately authorized only the v2.0.6 planned-changelog/version-metadata update; this does not authorize implementing the database plan.
 
 ## Read first
 
@@ -11,7 +11,7 @@ You are the implementation agent for the database reliability plan in this repos
 
 ## Project context and source-of-truth
 
-FocusFlow is a Windows-focused Kotlin/Compose Desktop app using Gradle and SQLite. The attached audit plan was prepared from a source snapshot labeled app version `2.0.3`; the current repository has since advanced to `2.0.5`. Paths, line numbers, dependency/toolchain assumptions, tests, and findings may have drifted. Inspect the current checkout and `git status` before every implementation batch; the current source and owner instructions take precedence.
+FocusFlow is a Windows-focused Kotlin/Compose Desktop app using Gradle and SQLite. The attached audit plan was prepared from a source snapshot labeled app version `2.0.3`; the database findings were reviewed against the `2.0.5` source. Release metadata has since been staged at `2.0.6` with the database reliability work still pending. Paths, line numbers, dependency/toolchain assumptions, tests, and findings may have drifted. Inspect the current checkout and `git status` before every implementation batch; the current source and owner instructions take precedence.
 
 F26 is closed as stale: the current checkout contains `recovery/` and its Gradle build file, despite the older audit archive omitting it. Root `AUDIT-ADDENDUM.md` records this; do not remove `include("recovery")` or spend implementation time on F26.
 
