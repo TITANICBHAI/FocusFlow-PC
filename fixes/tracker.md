@@ -3,13 +3,13 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Planning package created; implementation has not started. Await owner authorization and any additional owner rules before Phase 0.
+- **Overall status:** Current-code review recorded; implementation has not started. Await owner authorization and any additional owner rules before Phase 0.
 
 ## Tracking rules
 
-- Follow `plan.md` in order: **Phase 0 → Phase 1 → Phase 2 → Phase 3**. Within each phase, use its explicit finding order and dependencies.
+- Follow **Reconciled execution sequence** below where it corrects stale assumptions or dependencies in `plan.md`; the original plan remains the scope/evidence reference.
 - Before starting a phase, add a dated **In progress** note. Update this tracker after meaningful changes; append history rather than erasing failures.
-- Tick an item only when its required tests and acceptance criteria pass. A source review, compile, or Linux test does not verify Windows behavior.
+- Tick an implementation item only when its required tests and acceptance criteria pass. A source review, compile, or Linux test does not verify Windows behavior. A finding may be checked as **Closed—not applicable** only with source evidence recorded below.
 - Keep owner decisions and Windows checks open until the owner/tester supplies the required decision or evidence. The agent must not tick W1–W15.
 - For every phase, record changed/read files, exact commands and results, failures and reruns, discrepancies, owner gates, and outstanding Windows checks in `fixes/PHASE-<n>-REPORT.md`.
 - Follow R1–R16 in [plan.md](plan.md) and the operating instructions in [preagent-prompt.md](preagent-prompt.md).
@@ -22,52 +22,109 @@
 - **Plan integrity:** `fixes/plan.md` matches the supplied Markdown byte-for-byte; SHA-256: `92abc004b1e807dfc04e4c4a70841e1c9f243dab8b40460966674b94036119b2`.
 - **Evidence handling:** ZIP listing was inspected and files were extracted to a temporary directory before copying. The reproduction scripts were not run.
 - **Source snapshot caveat:** The plan audits an app snapshot labeled `2.0.3`; the current project was updated to `2.0.5`. Treat current source, build configuration, and working tree as authoritative; re-check all paths, line references, versions, and assumptions.
-- **Known discrepancy — F26:** The current checkout contains a `recovery/` directory and module files, whereas the audited archive reportedly did not. Do not remove `include("recovery")`; verify current Gradle behavior and document the discrepancy in root `AUDIT-ADDENDUM.md` before addressing F26.
+- **Initial discrepancy — F26 (superseded below):** The audit archive reportedly omitted `recovery/`; current-source review and Gradle configuration verification now confirm it is present and included. See the F26 closure and root `AUDIT-ADDENDUM.md`.
 - **Verification state:** No app code, tests, audit harness, or Windows procedure has been run as part of preparing these documents.
+
+### 2026-10-14 — Current-code review
+
+- Reviewed the relevant v2.0.5 startup, database, telemetry, PIN, recurring-task, session, backup, export, and test sources. These are source-confirmed findings, not runtime reproductions.
+- Existing protection already present: bounded SQLite busy retries, `PRAGMA quick_check` on DB open, preservation of corrupt DB/WAL/SHM files, a visible startup-unavailable screen, and an existing SQLite smoke test that checks the Windows x64 DLL is in the jar.
+- **F26 closed as stale:** `settings.gradle.kts` includes `recovery`, and the current checkout contains `recovery/build.gradle.kts`. The audit archive omitted a current module; no source change is needed. See root `AUDIT-ADDENDUM.md`.
+- **Gradle verification:** `gradle help --no-daemon` succeeds with the configured JDK 19 and Gradle 8.14.2. The checked-in `gradlew` script cannot launch because `gradle/wrapper/gradle-wrapper.jar` is absent; use the configured system `gradle` command for Phase 0 and later verification. Do not generate a wrapper as unrelated work.
+- **Test inventory correction:** `SqliteJdbcNativeSmokeTest` exists, but it does not test restricted Windows temp paths or native-loader fallback. Targeted tests for settings failure, PINs, recurrence, sessions, backups, consent, CSV, uninstall, VPN cache failures, and date queries are still absent.
+- No application source was changed and no Gradle suite, evidence script, telemetry path, or Windows scenario was executed. `tasks.test` currently has neither the version property nor an effective telemetry-off sink; do not add failure-injection tests until F4.0 is in place.
+
+## Current-code disposition by finding
+
+| Finding | Priority | Current-code assessment |
+|---|---|---|
+| F1 — Native SQLite loading | P0 | **Open.** `Database` uses the driver loader with no app-owned fallback. The current smoke test checks a normal runtime and DLL packaging, not a blocked Windows temp directory. |
+| F2 — Throwable-safe startup | P0 | **Open.** DB and caller paths catch `Exception`; a `LinkageError` can escape and leave startup at `Opening`. |
+| F3 — Root cause | P0 | **Partial.** Local reports already include a full cause chain; the startup gate shows only the immediate cause, while telemetry truncates raw stack text. Narrow the work to missing local/JUL/UI details and defer remote-payload changes until F4 redaction is active. |
+| F4 — Consent, PII, endpoints | P0 | **Open; urgent.** Missing/unreadable DB consent currently permits reports, including a DB-open failure before the dialog can be shown. Stack text is not path-redacted. Keep owner decisions D1–D3. |
+| F5 — Uninstall on DB failure | P0 | **Open; owner-gated.** Current code blocks uninstall when protection state cannot be read. Decide D4; implement only after F11’s read-only path. |
+| F6 — Recurring task multiplication | P1 | **Open; confirmed by current logic.** Generated copies remain recurring templates and the existing-key set is not updated in the loop. `@Synchronized` does not prevent this growth. |
+| F7 — JDBC statement closure | P1 | **Open.** Many query sites close the result set but not the owning statement; the enabled-block-process query is reached from the two-second cache refresh. Recount exact sites against current code. |
+| F8 — PIN fail-open | P1 | **Open; high security impact.** Global, Session, and Nuclear PIN lookups treat unavailable/null as “not set” or successful verification. |
+| F9 — Orphan focus sessions | P1 | **Open.** The unfinished-session query has no age bound; asynchronous end writes can be lost. Live repair needs F15 backup verification and D8. |
+| F10 — Transactions | P1 | **Open.** Transaction sites catch only `Exception`, suppress rollback errors, and restore auto-commit in `finally`; keep changes narrowly tested. |
+| F11 — Wizard DB access | P1 | **Open.** The wizard calls full `Database.init()`, which snapshots/restores sidecars and runs DB pragmas/migrations. Separate from F5’s policy decision. |
+| F12 — Missing vs. unreadable settings | P1 | **Open.** Reads collapse absent, unavailable, and failed into `null`; writes silently ignore errors. |
+| F13 — Session write ordering | P1 | **Open.** Start/end writes are independent IO jobs with swallowed errors; `dispose()` cancels their scope. |
+| F14 — Migration schema verification | P2 | **Open, partly inferred.** Existing `ALTER TABLE` catches may hide non-duplicate failures. Add a tested guard for new migrations before F6; do not edit v1–v9. |
+| F15 — Backup verification/restore | P1/P2 | **Partial.** `VACUUM INTO` and SHA-256 sidecars already exist. Hashing does not prove SQLite validity; hashless files are treated as verified, failures can be ignored, and the unsafe restore method has no callers. Keep the targeted validation/reporting/deprecation work. |
+| F16 — DB contention | P2 | **Measure only.** DB methods are synchronized, but reviewed UI paths already use IO dispatchers. No contention measurement justifies a threading rewrite yet. |
+| F17 — VPN cache after read failure | P1 | **Open.** Failed reads become cached defaults indefinitely. Current `ProcessMonitor.refreshCaches()` does not refresh `VpnBlocker`; revise the plan’s proposed refresh hook. |
+| F18 — Enforcement while DB unavailable | P1 / owner decision | **Policy, not a stand-alone code fix.** Startup deliberately leaves DB-dependent services stopped and tells the user. Decide the product behavior before changing it. |
+| F19 — Mid-run DB loss | P2 / owner decision | **Design note only.** No specific mid-run recovery behavior has been approved or reproduced. |
+| F20 — Date queries/N+1 | P3 | **Open, low urgency.** Indexed timestamps are wrapped in `DATE(...)`; daily views also make repeated queries. Optimize after correctness work. |
+| F21 — Task completion idempotence | P3 | **Open.** Repeated calls and unknown IDs still increment the daily counter. |
+| F22 — Clear activity | P3 / destructive scope | **Open.** UI promises to clear settings, but clears four activity areas in separate operations without a verified backup. Clarify wording and atomicity; do not broaden to PINs/settings without D13. |
+| F23 — CSV output | P3 | **Open.** Current paths alter quotes/newlines rather than RFC-4180 escaping and have different row limits. |
+| F24 — Crash-log retention | P3 | **Open.** Reports are written Desktop-first and have no current cap/deduplication. Keep Desktop deletion out of scope; resolve D15 first. |
+| F25 — AppPaths | P3 | **Optional/defer.** No `AppPaths` exists, but no actual path mismatch was found; this is primarily consistency/testability work. |
+| F26 — Recovery module missing | P3 | **Closed—not applicable.** Current `recovery/` directory and Gradle project exist. Do not remove the include or spend implementation time on this finding. |
+| F27 — SelectorProvider | P3 / WIN-VERIFY | **Unverified.** Current build targets JDK 19 and EXE/MSI; no MSIX target is configured. The plan’s JDK 21/MSIX claim does not establish behavior here. Test the actual shipped runtime before any change. |
+| F28 — App version property | Test setup | **Narrow.** Normal app launch gets the version from Gradle; `tasks.test` does not. Add test JVM properties, including telemetry-off after F4.0. Do not silently weaken the production fail-fast without approval. |
+| F29 — Test gaps | Cross-cutting | **Open.** Coverage gaps are real, but the plan understated the existing `SqliteJdbcNativeSmokeTest`; add finding-specific tests with fixes. |
+| F30 — 90-day streak cap | P3 / owner decision | **Open.** Current streak is capped at 90 while best streak is not. Ask D18 before changing product behavior. |
+
+## Reconciled execution sequence
+
+The following dependencies take precedence over conflicting ordering in the attached plan:
+
+1. **Phase 0:** inspect the untouched test suite for default-path DB failures/network calls, then run `gradle :test --no-daemon` with the workflow’s JDK environment and add isolated test helpers. Current source scan found DB initialization tests pass explicit temp files and no direct telemetry/network test references, but recheck before running. No new DB-failure injection before F4.0.
+2. **Phase 1:** **F28 test configuration → F4.0 → F2 → F1 → F3 local diagnostics/UI → F4 consent and redaction → F3 remote-payload summary.** Keep the production app-version property fail-fast unless the owner approves a fallback. Do not expand remote diagnostic content before F4 redaction.
+3. Ask D4 during Phase 1 if possible, but **defer F5 implementation/sign-off until after F11** in Phase 2; F5 depends on the read-only wizard path and is not a Phase 1 exit criterion.
+4. **Phase 2:** F10 → F12 → F7 → F8 → F14a new-migration guard → F6 generator/schema fix → F9 age-gate/dry-run implementation → F13 → F11 → F5 (if D4 is resolved) → F17 → F15 → approved F6/F9 live-data repairs → F14b legacy-migration audit → F16/F18/F19.
+5. F6/F9 code and dry-run tests may be prepared earlier, but **do not run a live repair until F15 can produce and verify a backup**. The F6 v10 migration must have a tested column guard before it is added; do not edit migrations v1–v9.
+6. **Phase 3:** proceed only after Phase 2. F22 is already ordered after F15; keep F20–F25/F30 low priority and owner-gated items deferred. F26 is closed.
 
 ## Phase 0 — Baseline and tooling
 
 **Status:** Not started — no production-code changes allowed in this phase.
 
-- [ ] **P0-1 — Baseline:** Run the existing Gradle test suite on the untouched tree; record pass/fail counts, duration, and actual JDK. Do not modify existing `DatabaseTest` tests. If the build cannot run, report why in `fixes/PHASE-0-REPORT.md` and stop; do not change the toolchain to force a pass.
-- [ ] **P0-2 — Test helpers:** Add and smoke-test `TempHome`, `ForkedJvm`, and `StatementLeakAssert` under `src/test/kotlin/com/focusflow/testutil/`. `TempHome` must redirect `user.home` to a scratch directory, disable telemetry, set a test app version, reset the database before/after, and restore JVM properties. `ForkedJvm` must always disable telemetry and use a fresh JVM. Add the clock seam when beginning F6. Add `FakeTelemetrySink` only after F4.0 in Phase 1.
-- [ ] **P0-3 — Owner facts:** Ask which machine produced the reports, request the local crash report, and ask about `%TEMP%`/security software; record answers in root `AUDIT-ADDENDUM.md`. These facts do not block Phase 1.
+- [ ] **P0-1 — Baseline:** Before running, confirm the existing suite cannot reach the real/default DB path or any network call; the current test-source scan found explicit temp DB paths and no direct telemetry client references. Run `gradle :test --no-daemon` with the workflow’s JDK environment and record pass/fail counts, duration, and JDK. Do not modify existing `DatabaseTest`; if unsafe or unable to run, report and stop rather than forcing the toolchain. `./gradlew` is currently missing its wrapper jar.
+- [ ] **P0-2 — Test helpers:** Add and smoke-test `TempHome`, `ForkedJvm`, and `StatementLeakAssert` under `src/test/kotlin/com/focusflow/testutil/`. Use scratch `user.home`; set app-version and telemetry-off properties; reset/restore JVM state. The off property becomes effective only after F4.0. Add the clock seam with F6 and `FakeTelemetrySink` only after F4.0.
+- [ ] **P0-3 — Owner facts:** Ask which machine produced the reports and about `%TEMP%`/security software. If a crash-log excerpt is needed, request only a reviewed/redacted excerpt; do not collect raw user paths or secret values. Record answers in root `AUDIT-ADDENDUM.md`. These facts do not block Phase 1.
 - [ ] **Phase 0 exit:** Baseline recorded; helper smoke tests pass; `fixes/PHASE-0-REPORT.md` is complete.
 
 ## Phase 1 — P0 startup failure and blast radius
 
 - **Status:** Not started.
-- **Required order:** **F28 → F4.0 → F2 → F1 → F3 → F4 remaining work → F5.**
+- **Required order:** **F28 test configuration → F4.0 → F2 → F1 → F3 local diagnostics/UI → F4 consent/redaction → F3 remote-payload summary. F5 is deferred until after F11.**
 
-- [ ] **F28 — CrashReporter startup safety (pulled forward):** Provide a safe `"unknown"` app-version fallback and set app-version/telemetry-off test properties. Test a fresh JVM without the property and verify reporting does not throw.
+- [ ] **F28 — Test JVM configuration (pulled forward):** Set `focusflow.app.version` from the Gradle project version for tests and set `focusflow.telemetry=off` for tests after F4.0. Keep the packaged-app fail-fast unless the owner approves a production fallback. Test the missing-property behavior in an isolated JVM; do not make it mask a packaging error.
 - [ ] **F4.0 — Telemetry test seam (before failure tests):** Route automatic reports through `TelemetrySink`; support a no-op sink when telemetry is disabled and a recording fake in tests. No behavior change beyond the explicit kill switch; tests/scripts must never send network traffic.
 - [ ] **F2 — Throwable-safe database startup:** Convert non-fatal `Throwable` failures to typed failed startup results, rethrow `VirtualMachineError` and `CancellationException` as specified, and ensure startup cannot remain `Opening`. Add the injected data-source and background-loop audit. Tests F2-a…c.
 - [ ] **F1 — Controlled SQLite native bootstrap:** Implement the planned candidate ladder, diagnostic attempts, content-addressed extraction, and safe retry/restart behavior without touching the DB on load failure. Tests F1-a…d; Windows items W1–W3 and W5 remain human checks. **F1b (shipping the DLL in the install) is owner-gated and must wait for W1–W3.**
-- [ ] **F3 — Root-cause reporting:** Capture sqlite-jdbc JUL output; produce bounded, cycle-safe root-cause summaries; redact identifying values from telemetry; show the full cause and local report path in the startup gate. Tests F3-a…d.
+- [ ] **F3 — Root-cause reporting:** First capture sqlite-jdbc JUL output and show the full cause/local report path in the startup gate. Only after F4’s fail-closed consent and redaction are active, add the bounded summary to remote payloads. Reuse the existing full local cause-chain report. Tests F3-a…d.
 - [ ] **F4 — Consent, privacy, and secrets:** Use a DB-independent consent store, fail closed unless explicitly granted, migrate the old setting once, redact payloads, and preserve the no-network test seam. Resolve owner decisions D1–D3 before touching secret/consent wording or endpoint behavior. Tests F4-a…d.
-- [ ] **F5 — Safe uninstall when DB is unavailable:** Stop until owner decision D4. Implement only the selected policy; BUSY/LOCKED must continue to block. Depends on the read-only wizard path in F11; resolve this cross-phase dependency before claiming F5 complete. Tests F5-a…c; W6 remains human-only.
-- [ ] **Phase 1 exit:** F1–F5 acceptance is met except explicitly outstanding WIN-VERIFY checks; tests pass; `fixes/PHASE-1-REPORT.md` records open owner decisions D1–D5, including F1b approval.
+- [ ] **F5 decision intake — D4:** Ask/record the owner’s uninstall policy if they answer in Phase 1. Do not implement F5 until F11’s read-only path exists in Phase 2.
+- [ ] **Phase 1 exit:** F1–F4 acceptance is met except outstanding WIN-VERIFY checks; F5 is explicitly deferred to Phase 2 after F11. Record D1–D5 and the deferral in `fixes/PHASE-1-REPORT.md`.
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
 - **Status:** Not started.
-- **Required order:** **F10 → F12 → F7 → F8 → F6 → F9 → F13 → F11 → F17 → F15 → F14 → F16/F18/F19.**
+- **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - [ ] **F10 — Correct transaction helper:** Use `BEGIN IMMEDIATE` / `COMMIT` / rollback on any `Throwable`; migrate the six listed call sites without changing their SQL or nesting transactions. Tests F10-a…d; preserve the v9 migration fixture requirement after checking the current schema version.
 - [ ] **F12 — Distinguish absent from unreadable settings:** Add typed read/write results and migrate consumers in the exact order in the plan: PINs, VPN blocker, Standalone Block, Nuclear Mode/Kill Switch, uninstall requirements, then remaining listed services/UI. Unreadable security reads fail closed; restore-state reads retain last-known-good values; failed writes are surfaced. One injected-unavailable-store test per migrated consumer.
-- [ ] **F7 — Close JDBC statements:** Close all 18 leaking `executeQuery` statements, then the seven `executeUpdate` statements; add leak and source-hygiene tests. Tests F7-a…c; scanner must find no unwrapped `createStatement()`.
+- [ ] **F7 — Close JDBC statements:** Recount current sites, then close every confirmed unclosed `executeQuery`/`executeUpdate` statement; the plan’s 18/seven counts are estimates, not acceptance criteria. Add leak and source-hygiene tests F7-a…c; scanner must find no unwrapped `createStatement()`.
 - [ ] **F8 — PIN checks fail closed:** Build on F12; distinguish `NOT_SET`, `SET`, and `UNKNOWN`, deny on unknown storage, and report write failures. Verify PIN read-back before returning an auto-generated PIN. Do not change hash strength or add recovery design without owner approval D12. Tests F8-a…e.
-- [ ] **F6 — Recurring task duplication:** Add the new numbered migration and recurring-template parent relation; make generation idempotent. Repair existing rows only after verified backup and a dry run; mark, never delete, unless owner explicitly approves a separate deletion policy (D7). Tests F6-a…d.
-- [ ] **F9 — Reconcile orphan sessions:** Back up first; add dry-run/idempotent reconciliation and the planned 12-hour active-session bound. Ask owner to approve the end-time policy (D8). Tests F9-a…d.
+- [ ] **F14a — New-migration guard (before F6):** Add and test a column/schema guard for new migrations without editing v1–v9. This is an explicit F6 prerequisite.
+- [ ] **F6 — Recurring task duplication:** After the F14 new-migration guard, add the numbered migration and recurring-template parent relation; make generation idempotent. Add a dry-run repair; do not run it on a real DB until F15 has verified backup support. Mark, never delete, unless the owner explicitly approves deletion (D7). Tests F6-a…d.
+- [ ] **F9 — Reconcile orphan sessions:** Add the 12-hour gate and dry-run/idempotent reconciliation. Do not apply the repair to a real DB until F15 has verified backup support and the owner approves the end-time policy (D8). Tests F9-a…d.
 - [ ] **F13 — Order focus-session writes:** Ensure end waits for start, log failed writes, and allow bounded completion on dispose. Tests F13-a…c; note whether the dispose race already passes before changes.
-- [ ] **F11 — Read-only uninstall wizard:** Add an open that does not snapshot, mutate, checkpoint, migrate, or recover the DB. Tests F11-a…d; W6 remains human-only.
+- [ ] **F11 — Read-only uninstall wizard:** Add an open that does not snapshot, mutate, checkpoint, migrate, or recover the DB. This is a prerequisite for F5. Tests F11-a…d; W6 remains human-only.
+- [ ] **F5 — Safe uninstall when DB is unavailable:** After F11 and owner decision D4, implement only the selected policy; BUSY/LOCKED must continue to block. Tests F5-a…c; W6 remains human-only.
 - [ ] **F17 — Recover VPN settings after read failures:** Keep last-known-good volatile state, refresh outside the enforcement hot path, and report failed writes. Tests F17-a…c.
-- [ ] **F15 — Verifiable backups:** Run SQLite `quick_check`, distinguish unverified backups, report failures, correct sidecar naming, and make unsafe `restoreBackup` uncallable. Real restore, second destination, and post-recovery UI require owner approval (D9). Tests F15-a…d.
-- [ ] **F14 — Verify schema instead of swallowing migration errors:** Leave migrations v1–v9 untouched; verify required columns and use a guarded helper for new migrations. Tests F14-a…b.
+- [ ] **F15 — Verifiable backups:** Keep the existing `VACUUM INTO` snapshot and hash checks; add SQLite `quick_check`, distinguish unverified backups, report failures, correct sidecar naming, and make the unused unsafe `restoreBackup` uncallable. Complete this before any F6/F9 live repair. Real restore, second destination, and post-recovery UI require owner approval (D9). Tests F15-a…d.
+- [ ] **F14b — Legacy schema audit (after F15):** Verify required schema state and audit swallowed legacy migration errors without editing v1–v9. Tests F14-a…b.
 - [ ] **F16 — Measure database monitor contention:** Add the planned debug-only measurement, run a 10-minute session, and report the top 10 offenders. Do not restructure threading without D19 approval.
 - [ ] **F18 — Database unavailable behavior:** No degraded blocker without a separate approved design. The plan permits the small visible “Blocking is OFF” message as option A; confirm task authorization before applying it. Ask the owner before choosing another behavior.
 - [ ] **F19 — Mid-run DB loss:** Write only the one-page health/reopen/banner design note; do not implement it without owner approval D11.
-- [ ] **Phase 2 exit:** All non-owner-gated findings have passing tests; report open gates D7–D11 and other F6/F9/F15 decisions in `fixes/PHASE-2-REPORT.md`.
+- [ ] **Phase 2 exit:** All non-owner-gated findings have passing tests; report open gates D4 and D7–D11 plus other F6/F9/F15 decisions in `fixes/PHASE-2-REPORT.md`.
 
 ## Phase 3 — P3 hardening and cleanup
 
@@ -79,14 +136,14 @@
 - [ ] **F23 — Consistent CSV exports:** Use RFC-4180 quoting, correct row counts, and distinct saved/cancelled/failed results across export paths. Ask owner about formula-prefix protection and UTF-8 BOM (D14). Tests F23-a…c.
 - [ ] **F24 — Bounded crash reports:** De-duplicate matching reports and cap only the specified app-owned locations; do not delete Desktop reports. Ask owner before changing the Desktop-first policy (D15). Tests F24-a…b.
 - [ ] **F25 — Central application paths:** Add getter-based `AppPaths` that honors changing `user.home`, replace the four DB path computations, and keep other replacements limited to trivial cases. Tests F25-a…b.
-- [ ] **F26 — Recovery Gradle module discrepancy:** Current checkout contains `recovery/`, unlike the audited archive. Follow the current source; verify `gradle help`, record the discrepancy in root `AUDIT-ADDENDUM.md`, and ask the owner whether any change is needed (D16). Do not remove the include blindly.
-- [ ] **F27 — SelectorProvider flag:** No code change until human W9 is complete on the same major JDK and the MSIX case. Then ask/record the owner’s decision (D17); do not remove the flag based on the audit alone.
+- [x] **F26 — Closed as stale:** Current checkout includes `recovery/` and its Gradle build file; no code change or removal is warranted. Evidence is recorded in root `AUDIT-ADDENDUM.md`.
+- [ ] **F27 — SelectorProvider flag:** No code change until human W9 is complete on the actual shipped JDK (current toolchain JDK 19) and current EXE/MSI formats. Include MSIX only if another active distribution path actually ships it; do not remove the flag based on the audit alone.
 - [ ] **F28 — Test-configuration regression:** Completed earlier in Phase 1; retain its test/configuration coverage in the final audit.
 - [ ] **F29 — Test-gap closure:** Reconcile all required test classes and finding-specific cases against the current tree; do not claim coverage from compilation alone.
 - [ ] **F30 — Current streak cap:** Ask whether 90 days is intentional (D18); change only after approval. If approved as a defect, pass F30-a…c.
 - [ ] **Phase 3 exit:** All non-owner-gated acceptance/tests pass; `fixes/PHASE-3-REPORT.md` lists remaining owner choices and Windows checks W9/W15 as applicable.
 
-## Owner decisions — pending unless the owner explicitly answers
+## Owner decisions — unresolved unless answered or explicitly closed
 
 Recommendations in the source plan are not approvals. Record the owner’s answer and date before implementing a gated item.
 
@@ -107,7 +164,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D13 | “Clear all data” scope and Global PIN requirement | F22. |
 | D14 | CSV formula-injection guard and UTF-8 BOM | F23; BOM recommendation requires Excel verification. |
 | D15 | Crash-log placement: Desktop-first or app log directory | F24. |
-| D16 | Whether the recovery Gradle module is still needed | F26; current checkout already has `recovery/`. |
+| D16 | Whether the recovery Gradle module is still needed | **Closed—not required for this audit:** F26 is stale; revisit only if the owner proposes removing the existing module. |
 | D17 | Keep/replace/remove SelectorProvider flag | F27; only after W9. |
 | D18 | Whether the 90-day current-streak cap is intentional | F30. |
 | D19 | Threading restructure | F16; only after measurement. |
@@ -120,11 +177,11 @@ All items stay unchecked until a human runs the named scenario on Windows and re
 - [ ] **W2:** Broken `%TEMP%`/`%TMP%`: compare released and fixed builds; establish whether the reported failure reproduces.
 - [ ] **W3:** DLL blocked from temp by audit-mode policy; verify fallback and safe failure UI.
 - [ ] **W4:** Space/non-ASCII profile path; verify DB, library, reports, and backups.
-- [ ] **W5:** EXE, MSI, and MSIX install/start/uninstall matrix; record native-library location.
+- [ ] **W5:** Install/start/uninstall matrix for current EXE/MSI packages; include MSIX only if a separate active distribution path exists.
 - [ ] **W6:** Uninstall wizard against active writer, unavailable native library, and active protection.
 - [ ] **W7:** 30-minute watchdog failure soak using a test endpoint only; verify bounded reports/telemetry.
 - [ ] **W8:** Backup/WAL/SHM behavior while app is open; record actual Windows sharing errors.
-- [ ] **W9:** SelectorProvider with/without flag on the bundled JDK major, including MSIX.
+- [ ] **W9:** SelectorProvider with/without flag on the actual shipped JDK; include MSIX only if currently distributed.
 - [ ] **W10:** Fresh-profile telemetry consent and network behavior; no send before explicit consent if opt-in is selected.
 - [ ] **W11:** 24-hour memory soak before/after F7.
 - [ ] **W12:** Recurring-task behavior and dry-run repair on a copy of a polluted DB.
@@ -135,7 +192,7 @@ All items stay unchecked until a human runs the named scenario on Windows and re
 ## Cross-cutting completion checks
 
 - [ ] Each finding has tests that fail before and pass after, with fresh-JVM isolation for sqlite-jdbc static state.
-- [ ] No tests/scripts make network requests; no production webhook is contacted.
+- [ ] No tests/scripts make network requests; no production webhook is contacted. The telemetry-off property is not a safety control until F4.0’s sink honors it.
 - [ ] No test or script touches a real profile/database; all use a scratch `user.home`.
 - [ ] No new `catch (_: Exception) {}`; no UI-thread database I/O or `runBlocking`.
 - [ ] Existing migration methods and user data remain intact; new schema uses a numbered migration.
