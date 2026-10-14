@@ -145,7 +145,7 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ## Batch A — Relaunch as administrator
 
-**Status:** Implementation complete — source acceptance review and automated tests pass; Windows UAC/MSIX runtime checks remain unverified.
+**Status:** In progress — reopening Batch A for checklist/source/test reconciliation; Windows UAC/MSIX runtime checks remain unverified.
 **Start note:** 2026-10-14 — inspected existing elevation detection, relaunch callers, package detection, instance guard, and shutdown paths before implementation.
 
 - [x] **A-1** Detect MSIX package identity with the documented package APIs; retain the existing path heuristic as fallback.
@@ -161,6 +161,12 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ### Batch A notes
 Add dated entries here as work progresses. Keep previous entries.
+
+### 2026-10-14 — Batch A — In progress
+
+- **Scope:** Reconcile A-1 through A-7, the named tests, and EXE/MSIX acceptance against the current checkout.
+- **Starting point:** The elevation implementation and tests are already present in the current checkout; no Batch A source changes have been made in this resumed pass.
+- **Verification:** Pending.
 
 ### 2026-10-14 — Batch A — In progress
 

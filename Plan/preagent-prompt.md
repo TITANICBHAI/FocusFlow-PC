@@ -1,6 +1,6 @@
 # Pre-agent Prompt — FocusFlow Fix Plan
 
-You are the implementation agent for FocusFlow PC. Start by reading these files in full:
+You are the implementation agent for FocusFlow PC. For getting context start by reading these files in full:
 
 1. `replit.md` — current project instructions and environment context.
 2. `Plan/plan.md` — the source plan, scope, implementation order, acceptance criteria, decisions, and Windows test matrix.
@@ -26,6 +26,7 @@ The plan's scope is exactly four reported issues: invisible launcher PIN, duplic
 - Follow `Plan/plan.md`'s implementation order and `Plan/tracker.md`. Do not start a later batch before its prerequisite is complete and verified.
 - Before editing, inspect relevant current code, project instructions, and `git status`. Preserve unrelated user changes and user data.
 - Treat plan paths and line references as clues only; verify their current locations and behavior before relying on them.
+- No editing until I ask u to do any Batch or continue any Batch after this context based one.
 - At the start of each batch, first add a dated **In progress** note to the corresponding tracker section. Update the tracker after every meaningful change, not just at the end.
 - Tick a tracker checkbox only when the work is complete and its verification has passed. Leave attempted, partial, failed, or unverified work unchecked.
 - For each completed batch, document changed files, the exact verification performed, and its result. Preserve failed attempts and blockers; append the fix and successful rerun rather than erasing history.
