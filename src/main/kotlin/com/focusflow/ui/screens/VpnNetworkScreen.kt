@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.data.SettingReadException
+import com.focusflow.data.SettingWriteException
 import com.focusflow.data.models.NetworkCutoffRule
 import com.focusflow.data.models.NetworkRuleMode
 import com.focusflow.i18n.LocalizationManager
@@ -83,6 +85,15 @@ fun VpnNetworkScreen() {
         scope.launch {
             snackbarHostState.showSnackbar(
                 message = "$context requires administrator privileges. Re-launch FocusFlow as Administrator.",
+                duration = SnackbarDuration.Long
+            )
+        }
+    }
+
+    fun showSettingsError() {
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                message = "VPN settings could not be read or saved. Check that the database is available, then try again.",
                 duration = SnackbarDuration.Long
             )
         }
@@ -162,15 +173,23 @@ fun VpnNetworkScreen() {
                             if (!v) {
                                 withPin {
                                     scope.launch {
-                                        withContext(Dispatchers.IO) { VpnBlocker.isEnabled = false }
-                                        vpnEnabled = false
+                                            try {
+                                                withContext(Dispatchers.IO) { VpnBlocker.isEnabled = false }
+                                                vpnEnabled = false
+                                            } catch (failure: SettingWriteException) {
+                                                showSettingsError()
+                                            }
                                     }
                                 }
                             } else {
                                 withPin {
                                     scope.launch {
-                                        withContext(Dispatchers.IO) { VpnBlocker.isEnabled = true }
-                                        vpnEnabled = true
+                                            try {
+                                                withContext(Dispatchers.IO) { VpnBlocker.isEnabled = true }
+                                                vpnEnabled = true
+                                            } catch (failure: SettingWriteException) {
+                                                showSettingsError()
+                                            }
                                     }
                                 }
                             }
@@ -260,7 +279,15 @@ fun VpnNetworkScreen() {
                                 if (name.isNotBlank()) {
                                     withPin {
                                         scope.launch {
-                                            withContext(Dispatchers.IO) { VpnBlocker.addCustomProcess(name) }
+                                            try {
+                                                withContext(Dispatchers.IO) { VpnBlocker.addCustomProcess(name) }
+                                            } catch (failure: SettingReadException) {
+                                                showSettingsError()
+                                                return@launch
+                                            } catch (failure: SettingWriteException) {
+                                                showSettingsError()
+                                                return@launch
+                                            }
                                             ProcessMonitor.invalidateCaches()
                                             newCustomVpn = ""
                                             reload()
@@ -294,7 +321,17 @@ fun VpnNetworkScreen() {
                                             onClick = {
                                                 withPin {
                                                     scope.launch {
-                                                        withContext(Dispatchers.IO) { VpnBlocker.removeCustomProcess(proc) }
+                                                        try {
+                                                            withContext(Dispatchers.IO) {
+                                                                VpnBlocker.removeCustomProcess(proc)
+                                                            }
+                                                        } catch (failure: SettingReadException) {
+                                                            showSettingsError()
+                                                            return@launch
+                                                        } catch (failure: SettingWriteException) {
+                                                            showSettingsError()
+                                                            return@launch
+                                                        }
                                                         reload()
                                                     }
                                                 }

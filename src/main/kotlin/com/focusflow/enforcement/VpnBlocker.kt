@@ -1,6 +1,10 @@
 package com.focusflow.enforcement
 
 import com.focusflow.data.Database
+import com.focusflow.data.SettingReadException
+import com.focusflow.data.requireSuccess
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /**
  * VpnBlocker
@@ -12,6 +16,9 @@ import com.focusflow.data.Database
  * custom process names via addCustomProcess().
  */
 object VpnBlocker {
+    private val logger = Logger.getLogger(VpnBlocker::class.java.name)
+    private const val ENABLED_KEY = "vpn_block_enabled"
+    private const val CUSTOM_PROCESSES_KEY = "vpn_custom_processes"
 
     val KNOWN_VPN_PROCESSES: Set<String> = setOf(
         // NordVPN
@@ -97,21 +104,39 @@ object VpnBlocker {
     @Volatile private var _cachedCustomProcesses: List<String>? = null
 
     var isEnabled: Boolean
-        get() = _cachedEnabled ?: (Database.getSetting("vpn_block_enabled") == "true").also { _cachedEnabled = it }
+        get() = _cachedEnabled ?: when (val stored = Database.readSetting(ENABLED_KEY)) {
+            is Database.SettingRead.Present ->
+                (stored.value == "true").also { _cachedEnabled = it }
+            Database.SettingRead.Absent -> false.also { _cachedEnabled = it }
+            is Database.SettingRead.Unreadable -> {
+                logger.log(
+                    Level.WARNING,
+                    "VPN enable state is unreadable; treating protection as enabled without caching the fallback",
+                    stored.cause
+                )
+                true
+            }
+        }
         set(value) {
+            Database.writeSetting(ENABLED_KEY, if (value) "true" else "false")
+                .requireSuccess("update VPN blocker state")
             _cachedEnabled = value
-            Database.setSetting("vpn_block_enabled", if (value) "true" else "false")
         }
 
     fun getCustomProcesses(): List<String> {
-        return _cachedCustomProcesses ?: run {
-            val raw = Database.getSetting("vpn_custom_processes")
-            // Always cache the result — even an empty list — so the DB is not re-read
-            // on every isVpnProcess() call when no custom VPN processes are configured.
-            val result = if (raw.isNullOrBlank()) emptyList()
-                         else raw.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }
-            _cachedCustomProcesses = result
-            result
+        _cachedCustomProcesses?.let { return it }
+        return when (val stored = Database.readSetting(CUSTOM_PROCESSES_KEY)) {
+            is Database.SettingRead.Present ->
+                parseCustomProcesses(stored.value).also { _cachedCustomProcesses = it }
+            Database.SettingRead.Absent -> emptyList<String>().also { _cachedCustomProcesses = it }
+            is Database.SettingRead.Unreadable -> {
+                logger.log(
+                    Level.WARNING,
+                    "VPN custom process list is unreadable; leaving it uncached so a later read can recover",
+                    stored.cause
+                )
+                emptyList()
+            }
         }
     }
 
@@ -119,18 +144,20 @@ object VpnBlocker {
         val lower = processName.trim().lowercase().let {
             if (!it.endsWith(".exe")) "$it.exe" else it
         }
-        val existing = getCustomProcesses().toMutableList()
+        val existing = customProcessesForMutation().toMutableList()
         if (!existing.contains(lower)) {
             existing.add(lower)
-            Database.setSetting("vpn_custom_processes", existing.joinToString(","))
+            Database.writeSetting(CUSTOM_PROCESSES_KEY, existing.joinToString(","))
+                .requireSuccess("add VPN process")
             _cachedCustomProcesses = existing          // keep cache in sync
         }
     }
 
     fun removeCustomProcess(processName: String) {
         val lower = processName.trim().lowercase()
-        val updated = getCustomProcesses().filter { it != lower }
-        Database.setSetting("vpn_custom_processes", updated.joinToString(","))
+        val updated = customProcessesForMutation().filter { it != lower }
+        Database.writeSetting(CUSTOM_PROCESSES_KEY, updated.joinToString(","))
+            .requireSuccess("remove VPN process")
         _cachedCustomProcesses = updated              // keep cache in sync
     }
 
@@ -141,5 +168,31 @@ object VpnBlocker {
         if (!isEnabled) return false
         val lower = processName.lowercase()
         return KNOWN_VPN_PROCESSES.contains(lower) || getCustomProcesses().contains(lower)
+    }
+
+    private fun customProcessesForMutation(): List<String> {
+        _cachedCustomProcesses?.let { return it }
+        return when (val stored = Database.readSetting(CUSTOM_PROCESSES_KEY)) {
+            is Database.SettingRead.Present ->
+                parseCustomProcesses(stored.value).also { _cachedCustomProcesses = it }
+            Database.SettingRead.Absent -> emptyList<String>().also { _cachedCustomProcesses = it }
+            is Database.SettingRead.Unreadable -> {
+                logger.log(
+                    Level.WARNING,
+                    "Refusing to change VPN custom processes because their persisted state is unreadable",
+                    stored.cause
+                )
+                throw SettingReadException("VPN custom process list", stored.cause)
+            }
+        }
+    }
+
+    private fun parseCustomProcesses(raw: String): List<String> =
+        if (raw.isBlank()) emptyList()
+        else raw.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }
+
+    internal fun resetForTest() {
+        _cachedEnabled = null
+        _cachedCustomProcesses = null
     }
 }

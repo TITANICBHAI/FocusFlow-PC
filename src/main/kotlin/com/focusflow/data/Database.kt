@@ -96,6 +96,11 @@ internal class SettingWriteException(
     cause: Throwable,
 ) : IllegalStateException("Could not persist setting: $operation", cause)
 
+internal class SettingReadException(
+    operation: String,
+    cause: Throwable,
+) : IllegalStateException("Could not read setting: $operation", cause)
+
 internal fun Database.SettingWrite.requireSuccess(operation: String) {
     if (this is Database.SettingWrite.Failed) {
         throw SettingWriteException(operation, cause)

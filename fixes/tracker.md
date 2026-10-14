@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10 complete; F12 API foundation and PIN group complete; VPN blocker next).
+- **Status:** In progress — 2026-10-15 (F10 complete; F12 API, PIN, and VPN blocker groups complete; Standalone Block next).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -153,6 +153,8 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F12 API verification:** `SettingsReadWriteTest` (4 tests) and `DatabaseTransactionTest` (4 tests) passed: 8 tests, 0 failures/errors/skips. PIN consumers are next; F12 remains incomplete until all ordered consumer groups are migrated.
 - **2026-10-15 F12 PIN group:** `GlobalPin`, `SessionPin`, and `NuclearPin` now distinguish absent hashes from unreadable storage: unknown counts as configured and verification denies. PIN writes use typed results and throw a contextual persistence exception on failure. Three injected-unavailable-store tests pass; F8's later tri-state UI work remains separate.
 - **2026-10-15 F12 PIN verification:** `PinSettingsUnavailableTest` (3) and `SessionPinInputTest` (5) passed: 8 tests, 0 failures/errors/skips.
+- **2026-10-15 F12 VPN blocker:** `VpnBlocker` uses typed reads/writes. An unreadable enable value fails closed without caching a fallback; custom-list reads preserve cached values or remain retryable, and mutations refuse to overwrite an unreadable list. The screen surfaces failed VPN-setting mutations in a snackbar.
+- **2026-10-15 F12 VPN verification:** `VpnBlockerSettingsTest` passed, covering injected unavailability, fallback recovery, last-known-good cache retention, and failed-write surfacing. F17's dedicated hot-path refresh work remains pending.
 - [ ] **F12 — Distinguish absent from unreadable settings:** Add typed read/write results and migrate consumers in the exact order in the plan: PINs, VPN blocker, Standalone Block, Nuclear Mode/Kill Switch, uninstall requirements, then remaining listed services/UI. Unreadable security reads fail closed; restore-state reads retain last-known-good values; failed writes are surfaced. One injected-unavailable-store test per migrated consumer.
 - [ ] **F7 — Close JDBC statements:** Recount current sites, then close every confirmed unclosed `executeQuery`/`executeUpdate` statement; the plan’s 18/seven counts are estimates, not acceptance criteria. Add leak and source-hygiene tests F7-a…c; scanner must find no unwrapped `createStatement()`.
 - [ ] **F8 — PIN checks fail closed:** Build on F12; distinguish `NOT_SET`, `SET`, and `UNKNOWN`, deny on unknown storage, and report write failures. Verify PIN read-back before returning an auto-generated PIN. Do not change hash strength or add recovery design without owner approval D12. Tests F8-a…e.
