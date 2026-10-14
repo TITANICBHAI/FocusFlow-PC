@@ -1,9 +1,9 @@
 # FocusFlow Database Audit Addendum
 
-**Review date:** 2026-10-14  
-**Current app version:** 2.0.5  
-**Source plan:** [`fixes/plan.md`](fixes/plan.md)  
-**Status:** Static source/test-inventory review only. No application code, tests, audit scripts, telemetry, or Windows checks were run.
+- **Review date:** 2026-10-14
+- **Current app version:** 2.0.5
+- **Source plan:** [`fixes/plan.md`](fixes/plan.md)
+- **Status:** Static source/test-inventory review only. No application code, tests, audit scripts, telemetry, or Windows checks were run.
 
 ## Current-source corrections
 
