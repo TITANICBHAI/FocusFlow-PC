@@ -516,6 +516,7 @@ object ProcessMonitor {
      * hook to prevent duplicate kills within the cooldown window.
      */
     private fun launcherSweep() {
+        val startedAtNanos = System.nanoTime()
         val ownPid = ProcessHandle.current().pid()
         val now    = System.currentTimeMillis()
         try {
@@ -552,6 +553,11 @@ object ProcessMonitor {
                 message   = "Kiosk sweep loop threw an unhandled exception — background process enforcement may be inactive until next sweep tick.",
                 throwable = e
             )
+        } finally {
+            val durationMs = (System.nanoTime() - startedAtNanos) / 1_000_000L
+            if (durationMs > 150L) {
+                EnforcementLog.info("Launcher", "launcherSweep durationMs=$durationMs")
+            }
         }
     }
 

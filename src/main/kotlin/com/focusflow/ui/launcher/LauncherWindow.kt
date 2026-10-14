@@ -1,11 +1,14 @@
 package com.focusflow.ui.launcher
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -13,13 +16,16 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.rememberWindowState
 import com.focusflow.enforcement.User32Extra
+import com.focusflow.enforcement.LauncherWindowRegistry
 import com.focusflow.enforcement.isWindows
 import com.focusflow.services.FocusLauncherService
 import com.sun.jna.Native
+import com.sun.jna.Pointer
 import com.sun.jna.platform.win32.WinDef
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import javax.swing.JFrame
+import kotlinx.coroutines.delay
 
 /**
  * Hosts one undecorated fullscreen launcher window per monitor. The primary
@@ -62,22 +68,43 @@ private fun LauncherWindowForScreen(bounds: Rectangle, isPrimary: Boolean) {
         onCloseRequest = { },
         state = windowState,
         undecorated = true,
-        alwaysOnTop = true,
+        alwaysOnTop = shouldBeTopmost,
         resizable = false,
         focusable = true,
         title = "FocusFlow Launcher"
     ) {
+        var launcherHandle by remember(window) { mutableStateOf<Long?>(null) }
+
         LaunchedEffect(Unit) {
             (window as? JFrame)?.defaultCloseOperation = JFrame.DO_NOTHING_ON_CLOSE
         }
 
-        LaunchedEffect(shouldBeTopmost) {
+        LaunchedEffect(window) {
+            repeat(20) {
+                val rawHandle = try {
+                    Native.getComponentPointer(window)?.let(Pointer::nativeValue)
+                } catch (_: Throwable) {
+                    null
+                }
+                if (rawHandle != null && rawHandle != 0L) {
+                    launcherHandle = rawHandle
+                    return@LaunchedEffect
+                }
+                delay(50)
+            }
+        }
+
+        DisposableEffect(launcherHandle) {
+            val handle = launcherHandle
+            if (isWindows && handle != null) LauncherWindowRegistry.register(handle)
+            onDispose {
+                if (isWindows && handle != null) LauncherWindowRegistry.unregister(handle)
+            }
+        }
+
+        LaunchedEffect(shouldBeTopmost, launcherHandle) {
             if (!isWindows) return@LaunchedEffect
-            val hwnd = try {
-                Native.getComponentPointer(window)?.let { WinDef.HWND(it) }
-            } catch (_: Throwable) {
-                null
-            } ?: return@LaunchedEffect
+            val hwnd = launcherHandle?.let { WinDef.HWND(Pointer(it)) } ?: return@LaunchedEffect
 
             if (shouldBeTopmost) {
                 User32Extra.INSTANCE.SetWindowPos(

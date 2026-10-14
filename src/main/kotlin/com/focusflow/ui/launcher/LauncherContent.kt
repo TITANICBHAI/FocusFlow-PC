@@ -1,6 +1,10 @@
 package com.focusflow.ui.launcher
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.TooltipPlacement
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,13 +71,16 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.Image
 import com.focusflow.enforcement.AppIconExtractor
-import com.focusflow.enforcement.focusWindowByPid
 import com.focusflow.enforcement.isWindows
 import com.focusflow.services.FocusLauncherApp
+import com.focusflow.services.LaunchState
+import com.focusflow.services.LauncherLaunchCoordinator
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.theme.Error
@@ -98,6 +107,7 @@ fun LauncherContent() {
 @Composable
 private fun MainLauncherScreen() {
     val apps by FocusLauncherService.sessionApps.collectAsState()
+    val launchStates by LauncherLaunchCoordinator.shared.states.collectAsState()
     val hardLocked by FocusLauncherService.isHardLocked.collectAsState()
     val canBreak by FocusLauncherService.canTakeBreak.collectAsState()
     val breaksUsed by FocusLauncherService.breaksUsed.collectAsState()
@@ -108,7 +118,10 @@ private fun MainLauncherScreen() {
     var showPinForBreak by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
-        LauncherTopBar(hardLocked)
+        val openingApp = apps.firstOrNull {
+            launchStates[it.processName.lowercase()] is LaunchState.Launching
+        }?.displayName
+        LauncherTopBar(hardLocked, openingApp)
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 148.dp),
@@ -118,7 +131,12 @@ private fun MainLauncherScreen() {
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                items(apps, key = { it.processName.lowercase() }) { AppTile(it) }
+                items(apps, key = { it.processName.lowercase() }) { app ->
+                    AppTile(
+                        app = app,
+                        launchState = launchStates[app.processName.lowercase()] ?: LaunchState.Idle
+                    )
+                }
             }
             FfVerticalScrollbar(
                 gridState = gridState,
@@ -217,9 +235,17 @@ private fun MainLauncherScreen() {
 }
 
 @Composable
-private fun LauncherTopBar(hardLocked: Boolean) {
+private fun LauncherTopBar(hardLocked: Boolean, openingApp: String?) {
     var clock by remember { mutableStateOf("") }
     var timer by remember { mutableStateOf("") }
+    var showOpeningStatus by remember { mutableStateOf(false) }
+    LaunchedEffect(openingApp) {
+        showOpeningStatus = false
+        if (openingApp != null) {
+            delay(800)
+            showOpeningStatus = true
+        }
+    }
     LaunchedEffect(Unit) {
         val formatter = DateTimeFormatter.ofPattern("HH:mm")
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
@@ -239,7 +265,10 @@ private fun LauncherTopBar(hardLocked: Boolean) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Icon(Icons.Default.GridView, null, tint = Purple80, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Text(
@@ -249,6 +278,16 @@ private fun LauncherTopBar(hardLocked: Boolean) {
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp
             )
+            if (showOpeningStatus && openingApp != null) {
+                Text(
+                    "Opening $openingApp… this can take a few seconds",
+                    color = LauncherColors.TextDim,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 16.dp)
+                )
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (hardLocked) {
@@ -269,9 +308,9 @@ private fun LauncherTopBar(hardLocked: Boolean) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AppTile(app: FocusLauncherApp) {
-    val scope = rememberCoroutineScope()
+private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
 
     var iconBitmap by remember(app.exePath) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(app.exePath) {
@@ -282,82 +321,106 @@ private fun AppTile(app: FocusLauncherApp) {
         iconBitmap = extracted
     }
 
-    Box(
-        modifier = Modifier.aspectRatio(1f).clip(RoundedCornerShape(18.dp))
-            .background(LauncherColors.Tile)
-            .clickable {
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        val processName = app.processName.lowercase()
-                        val executablePath = app.exePath?.lowercase()
-                        val matchingProcesses = ProcessHandle.allProcesses()
-                            .toList()
-                            .filter { process ->
-                                if (!process.isAlive) return@filter false
-                                val command = process.info().command().orElse("")
-                                val commandName = command.substringAfterLast('\\')
-                                    .substringAfterLast('/')
-                                    .lowercase()
-                                commandName == processName ||
-                                    (executablePath != null &&
-                                        command.equals(executablePath, ignoreCase = true))
-                            }
-
-                        // A process may exist only as a helper/background process.
-                        // Try every matching PID and launch only when no visible
-                        // top-level window can be focused.
-                        val focusedExisting = isWindows &&
-                            matchingProcesses.any { focusWindowByPid(it.pid()) }
-
-                        if (!focusedExisting) {
-                            val process = if (app.exePath != null) {
-                                ProcessBuilder(app.exePath)
-                            } else {
-                                ProcessBuilder("cmd", "/c", "start", "", app.processName)
-                            }
-                            process.start()
+    val launching = launchState is LaunchState.Launching
+    val failure = launchState as? LaunchState.Failed
+    val shortFailure = failure?.let(::launchFailureLabel)
+    val tileContent: @Composable () -> Unit = {
+        Box(
+            modifier = Modifier
+                .aspectRatio(1f)
+                .alpha(if (launching) 0.65f else 1f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(LauncherColors.Tile)
+                .border(
+                    width = if (failure != null) 1.5.dp else 0.dp,
+                    color = if (failure != null) Error else LauncherColors.Tile,
+                    shape = RoundedCornerShape(18.dp)
+                )
+                .clickable(enabled = !launching && failure?.canRetry != false) {
+                    FocusLauncherService.launchApp(app)
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
+                        .background(Purple80.copy(alpha = .12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (launching) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = Purple80,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        val bitmap = iconBitmap
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap,
+                                contentDescription = app.displayName,
+                                modifier = Modifier.size(36.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                        } else {
+                            Icon(Icons.Default.Apps, null, tint = Purple80, modifier = Modifier.size(28.dp))
                         }
-                        delay(400)
-                        FocusLauncherService.onForegroundChanged(app.processName)
-                    } catch (_: Exception) {
-                        // Process launch failures do not end the focus session.
                     }
                 }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Box(
-                Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Purple80.copy(alpha = .12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                val bitmap = iconBitmap
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = app.displayName,
-                        modifier = Modifier.size(36.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                } else {
-                    Icon(Icons.Default.Apps, null, tint = Purple80, modifier = Modifier.size(28.dp))
-                }
+                Text(
+                    text = when {
+                        launching -> "Opening…"
+                        failure != null -> shortFailure.orEmpty()
+                        else -> app.displayName
+                    },
+                    color = if (failure != null) Error else LauncherColors.Text,
+                    fontSize = if (failure != null) 10.sp else 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
-            Text(
-                app.displayName,
-                color = LauncherColors.Text,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 8.dp),
-                maxLines = 2
-            )
         }
     }
+
+    if (failure == null) {
+        tileContent()
+    } else {
+        TooltipArea(
+            tooltip = {
+                Text(
+                    text = failure.reason,
+                    color = LauncherColors.Text,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(LauncherColors.Dialog)
+                        .border(1.dp, LauncherColors.TextDim.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                )
+            },
+            modifier = Modifier.fillMaxSize(),
+            delayMillis = 450,
+            tooltipPlacement = TooltipPlacement.CursorPoint(
+                alignment = Alignment.BottomCenter,
+                offset = DpOffset(0.dp, 14.dp)
+            ),
+            content = tileContent
+        )
+    }
+}
+
+private fun launchFailureLabel(failure: LaunchState.Failed): String = when {
+    failure.reason.contains("Microsoft Store app", ignoreCase = true) ->
+        "Microsoft Store app unsupported"
+    failure.reason.contains("taking longer", ignoreCase = true) ->
+        "Taking longer than usual — tap to check again"
+    else -> "Couldn't open — tap to retry"
 }
 
 @Composable

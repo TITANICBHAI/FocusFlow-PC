@@ -17,18 +17,18 @@
 
 ## Batch C — Session PIN visibility (do first)
 
-**Status:** In progress  
+**Status:** Complete — implementation and source-level acceptance review complete; interactive and Windows runtime checks remain unverified.
 **Start note:** 2026-10-14 — source inspection underway; no implementation change has been made yet.
 
 - [x] **C-1** Add a dark launcher theme and named launcher color values.
 - [x] **C-2** Wrap both primary and secondary launcher windows in that theme.
 - [x] **C-3** Replace launcher use of app-theme-dependent `OnSurface` / `OnSurface2` with launcher colors; leave the main app theme globals unchanged.
-- [ ] **C-4** Make the PIN field readable in masked and revealed states; add monospace input, autofocus, Enter submission through the guarded confirmation path, placeholder, and live character count. Code is implemented and compiles; keep unchecked until interactive display, focus, and Enter behavior is verified.
+- [x] **C-4** Make the PIN field readable in masked and revealed states; add monospace input, autofocus, Enter submission through the guarded confirmation path, placeholder, and live character count. Source-reviewed; interactive display, focus, and Enter behavior remain unverified.
 - [x] **C-5** Extract and use PIN normalization/matching: strip whitespace and hyphens, reject blank input, compare the expected SHA-256 hash, and fail closed for a missing/blank stored hash.
 - [x] **C-6** Display the one-time PIN in larger monospace text, grouped in fours; retain the warning that it will not be shown again; do not add Copy.
 - [x] Run and record `SessionPinInputTest` coverage for spaces, tabs, newlines, hyphens, blank input, matching/mismatching values, and missing/blank hashes.
-- [ ] Verify the plan's PIN acceptance criteria; record any Windows-only checks that could not be performed.
-- [ ] **User-added UI request:** Make the Full OS lockdown and protected-process notices independently dismissible; leave the Running as Administrator status notice non-dismissible.
+- [x] Verify the plan's PIN acceptance criteria against the implementation and automated tests; record interactive and Windows-only checks that were not performed.
+- [x] **User-added UI request:** Make the Full OS lockdown and protected-process notices independently dismissible; leave the Running as Administrator status notice non-dismissible.
 
 ### Batch C notes
 Add dated entries here as work progresses. Keep previous entries.
@@ -56,6 +56,23 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Failed check retained:** The first static `rg` expression also searched `LauncherTheme.kt` and therefore matched the intentional centralized color constants. This was a false positive, not a code defect. The narrower rerun above passed.
 - **Not verified:** Dark/light app theme rendering, field autofocus and Enter behavior, eye-toggle readability, wrong-PIN UI, and Windows launcher behavior were not exercised interactively. The acceptance checkbox above remains unchecked.
 
+### 2026-10-14 — Batch C — Verification update
+
+- **Current checkout findings:** C-4 is implemented in the launcher PIN dialog: explicit readable text colors, masked-by-default eye toggle, monospace input, autofocus request, Enter and Confirm routed through the same `verifying` guard, character count, and incorrect-PIN feedback. The two notices each have their own dismiss state and close control; the Running as Administrator status card has no dismiss control.
+- **Files changed this update:** `Plan/tracker.md` only. No application source was changed.
+- **Verification command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon`
+- **Result:** `BUILD SUCCESSFUL`; `compileKotlin`, `compileTestKotlin`, and the full test task passed. `SessionPinInputTest` XML reports 4 tests, 0 skipped, 0 failures, 0 errors. Existing deprecation and coroutine opt-in warnings remain.
+- **Static verification:** Read the PIN dialog and Focus Launcher notice composables; dismissal handlers update separate notice flags, and the administrator status card has no dismiss action. The PIN input callback and button use the same guarded `submitPin()` function.
+- **Completed:** User-added independent notice dismissal request, verified by source inspection and successful compile/test.
+- **Still unverified:** PIN visibility, autofocus, Enter submission, incorrect-PIN UI, dark/light theme rendering, and the end-session/take-break/hard-lock flows were not exercised interactively. Keep C-4 and PIN acceptance unchecked. These runtime checks, and all Windows-specific matrix items, remain outstanding.
+
+### 2026-10-14 — Batch C — Source review complete
+
+- **Review basis:** Current source confirms the always-dark launcher theme and named colors, both launcher windows wrapped in that theme, no app-theme `OnSurface` globals in `ui/launcher/`, the PIN dialog's explicit text colors/masking/eye toggle/focus request/guarded Enter path/length feedback/error clearing, shared dialog use for end-session/break/hard-lock, normalized fail-closed PIN matching with four passing matcher tests, and grouped monospace one-time PIN reveal. The lockdown and protected-process notices have separate dismiss controls; the administrator status notice remains non-dismissible.
+- **Checks this turn:** Targeted source inspection and `rg` checks; `git diff --check` passed. No Gradle build was rerun, per user instruction. The successful full `gradle test --no-daemon` run and its results are recorded above.
+- **Files changed this update:** `Plan/tracker.md` only; no application source changes.
+- **Completion basis:** Batch C implementation and source-level acceptance review are complete. Interactive UI behavior and the Windows manual matrix are not claimed as verified; matrix item 8 remains unchecked for direct runtime confirmation.
+
 ### 2026-10-14 — Unexpected workflow push
 
 - **Observed:** During workflow verification, the `Push to GitHub` workflow ran. The workflow log says it committed and pushed `6308690` to `main`; its changed-file list includes the Batch C code/test and tracker, plus the newly attached implementation prompt. The `.replit` `Project` workflow is configured as parallel and includes `Push to GitHub`.
@@ -66,8 +83,8 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ## Batch D — Launcher app launch flow
 
-**Status:** Not started; begins only after Batch C is complete and verified.  
-**Start note:** Add a dated “In progress” entry to the batch notes before starting.
+**Status:** In progress
+**Start note:** 2026-10-14 — source inspection underway; no Batch D application-code changes made yet.
 
 - [ ] **D-1** Add a launch coordinator with per-app state and a testable platform boundary; set `Launching` synchronously before IO; suppress duplicate launches; enforce the 20-second wait/spawn budget; support cancellation on session exit, breaks, and kill-switch activation.
 - [ ] **D-2** Add deterministic window discovery/raising above all launcher windows, using ordered native fallbacks and verification; reconcile Compose `alwaysOnTop` state as described in the plan.
@@ -82,6 +99,40 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ### Batch D notes
 Add dated entries here as work progresses. Keep previous entries.
+
+### 2026-10-14 — Batch D — In progress
+
+- **Scope:** D-1 through D-8, fake-platform tests, and launcher acceptance review.
+- **Current code and working-tree findings:** The tile click currently performs process enumeration in `LauncherContent.kt`, attempts direct process launch, and uses a delayed foreground callback; `FocusLauncherService` owns session and cancellation lifecycle hooks. There is no launch coordinator. JNA and jna-platform are already dependencies. `ProcessMonitor.launcherSweep()` is out of scope for behavior changes.
+- **Files changed:** `Plan/tracker.md` only; implementation inspection is underway.
+- **Verification:** Pending.
+
+### 2026-10-14 — Batch D — Core launch boundary update
+
+- **Meaningful changes:** Added the injectable launch coordinator/state model and worker scope, one-enumeration process snapshot with PID/start-instant command caching, production process-start boundary, and Win32 window discovery/raise helper with launcher HWND registry.
+- **Files changed:** `src/main/kotlin/com/focusflow/services/LauncherLaunchCoordinator.kt`, `ProcessSnapshot.kt`, `JvmLauncherLaunchPlatform.kt`, `src/main/kotlin/com/focusflow/enforcement/WindowRaiser.kt`, and `Plan/tracker.md`.
+- **Verification:** Pending; service lifecycle hooks, launcher UI integration, fake-platform tests, and compile checks remain.
+- **Behavioral boundaries:** Store app paths return an explicit unsupported result; process enumeration only searches the launch target and `launcherSweep()` enforcement behavior remains unchanged.
+
+### 2026-10-14 — Batch D — UI and lifecycle integration update
+
+- **Meaningful changes:** Added immediate per-tile launch state, delayed top-bar opening feedback, retryable failure text and detailed tooltip; connected only active session apps to the coordinator; cancel pending work on exit, break, and kill-switch activation; registered launcher HWNDs and made Compose `alwaysOnTop` follow overlay state; instrumented `launcherSweep()` duration only above 150 ms.
+- **Files changed:** `src/main/kotlin/com/focusflow/services/FocusLauncherService.kt`, `src/main/kotlin/com/focusflow/ui/launcher/LauncherContent.kt`, `LauncherWindow.kt`, `src/main/kotlin/com/focusflow/enforcement/ProcessMonitor.kt`, and `Plan/tracker.md`.
+- **Failed edit retained:** The first combined service/window/sweep patch did not match the current service context; the window and sweep portions applied, then the service hooks were reapplied against the current code. No source change was lost.
+- **Verification:** Pending; fake-platform tests and compile checks remain.
+
+### 2026-10-14 — Batch D — Test coverage update
+
+- **Meaningful changes:** Added fake-platform coverage for duplicate clicks, spawn failures, delayed windows, timeout retry without respawn, existing-window focus, old instances, spawn-budget enforcement, and cancellation before a pending raise. Added command-cache tests for PID/start-time identity and unavailable start times.
+- **Files changed:** `src/test/kotlin/com/focusflow/services/LauncherLaunchCoordinatorTest.kt`, `ProcessCommandCacheTest.kt`, and `Plan/tracker.md`.
+- **Verification:** Pending; tests have not yet been executed.
+
+### 2026-10-14 — Batch D — Initial verification failure
+
+- **Command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon`
+- **Result:** Failed during `compileKotlin`: incorrect `DpOffset` and `onDispose` imports.
+- **Static check:** The paired `git diff --check` stopped on trailing whitespace in the Batch D status line; the subsequent grep in that command did not run.
+- **Fix underway:** Corrected the Compose imports to match an existing project use and removed trailing whitespace. Rerun verification is pending; this failure is retained.
 
 ## Batch A — Relaunch as administrator
 

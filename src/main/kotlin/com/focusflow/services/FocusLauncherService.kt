@@ -140,6 +140,15 @@ object FocusLauncherService {
         _overlayVisible.value = processName.lowercase() !in allowed
     }
 
+    /** Only apps in the current active launcher allow-list may be opened or raised. */
+    fun isLaunchAllowed(app: FocusLauncherApp): Boolean =
+        _isActive.value &&
+            !_breakActive.value &&
+            _sessionApps.value.any { it.processName.equals(app.processName, ignoreCase = true) }
+
+    fun launchApp(app: FocusLauncherApp): Boolean =
+        LauncherLaunchCoordinator.shared.request(app)
+
     private fun sha256(input: String): String {
         val bytes = java.security.MessageDigest.getInstance("SHA-256")
             .digest(input.toByteArray(Charsets.UTF_8))
@@ -215,6 +224,7 @@ object FocusLauncherService {
         // both running the full teardown sequence simultaneously (double showTaskbar,
         // double NuclearMode.disable, redundant DB writes, etc.).
         if (!_isActive.compareAndSet(expect = true, update = false)) return
+        LauncherLaunchCoordinator.shared.cancelAll()
 
         runCatching { Database.clearFocusLauncherSession() }
         _isHardLocked.value       = false
@@ -280,6 +290,7 @@ object FocusLauncherService {
         // compareAndSet prevents a rapid double-click from launching two break countdowns
         // and calling NuclearMode.disable() twice. Only one caller proceeds.
         if (!_breakActive.compareAndSet(false, true)) return
+        LauncherLaunchCoordinator.shared.cancelAll()
         stopTaskbarGuard()
         showTaskbar()
         _overlayVisible.value = false
@@ -379,6 +390,7 @@ object FocusLauncherService {
      */
     fun onKillSwitchActivated() {
         if (!_isActive.value || _breakActive.value) return
+        LauncherLaunchCoordinator.shared.cancelAll()
         ProcessMonitor.launcherAllowedProcesses = emptySet()
         // silent = true: suppress "Nuclear Mode OFF" — kill switch has its own notification.
         if (NuclearMode.isActive) NuclearMode.disable(silent = true)
