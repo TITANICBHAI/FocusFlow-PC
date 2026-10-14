@@ -13,9 +13,20 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class AllowanceEngineTest {
+
+    @Test
+    fun startRethrowsVirtualMachineErrorsFromUsageStore() = runTest {
+        val fatal = OutOfMemoryError("injected usage-store failure")
+        val store = FakeUsageStore().apply { allowanceReadFailure = fatal }
+        val engine = createEngine(backgroundScope, store, FixedClock)
+
+        assertSame(fatal, assertFailsWith<OutOfMemoryError> { engine.start() })
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
@@ -578,6 +589,7 @@ class AllowanceEngineTest {
         var usageReads = 0
         var failNextUpserts = 0
         var failNextAllowanceReads = 0
+        var allowanceReadFailure: Throwable? = null
         var upsertAttempts = 0
         val deleteBeforeDates = mutableListOf<LocalDate>()
         val savedUsage = mutableMapOf<LocalDate, MutableMap<String, Long>>()
@@ -586,6 +598,7 @@ class AllowanceEngineTest {
 
         override fun allowances(): List<DailyAllowance> {
             allowanceReads++
+            allowanceReadFailure?.let { throw it }
             if (failNextAllowanceReads > 0) {
                 failNextAllowanceReads--
                 error("temporary allowance read failure")

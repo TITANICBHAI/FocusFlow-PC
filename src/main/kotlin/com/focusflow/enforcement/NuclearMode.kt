@@ -230,8 +230,18 @@ object NuclearMode {
         found.forEach { exe ->
             val count = escapeCounts.merge(exe, 1, Int::plus) ?: 1
             if (count == 1 || count % 5 == 0) {
-                runCatching {
+                try {
                     Database.setSetting("escape_attempt_${exe.removeSuffix(".exe")}", count.toString())
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (fatal: VirtualMachineError) {
+                    throw fatal
+                } catch (failure: Throwable) {
+                    EnforcementLog.warn(
+                        "NuclearMode",
+                        "Could not persist escape-attempt counter for $exe",
+                        failure
+                    )
                 }
             }
         }

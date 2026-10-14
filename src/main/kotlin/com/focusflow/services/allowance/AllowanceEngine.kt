@@ -71,6 +71,7 @@ class AllowanceEngine(
             persistedUsage = ports.usageStore.usage(loadDate)
             clearStoreWarning("read")
         } catch (failure: Throwable) {
+            rethrowIfFatal(failure)
             warnStoreOnce("read", "Could not load daily allowance state; tracking was not started", failure)
             return
         }
@@ -100,11 +101,15 @@ class AllowanceEngine(
                                 .flush(ports.clock.monoNs(), ports.clock.today())
                                 .also(::applyLedgerUpdate)
                         }.onFailure {
+                            rethrowIfFatal(it)
                             warn("Could not flush foreground usage when Emergency Break ended", it)
                         }
                     }
                     runCatching { enforceNow() }
-                        .onFailure { warn("Could not resume allowance enforcement after Emergency Break", it) }
+                        .onFailure {
+                            rethrowIfFatal(it)
+                            warn("Could not resume allowance enforcement after Emergency Break", it)
+                        }
                     flushUsageToStore(trackingDate)
                 }
                 wasActive = active
@@ -120,6 +125,8 @@ class AllowanceEngine(
                         consecutiveLoopFailures = 0
                     } catch (cancelled: CancellationException) {
                         throw cancelled
+                    } catch (fatal: VirtualMachineError) {
+                        throw fatal
                     } catch (failure: Throwable) {
                         reportLoopFailure(failure)
                     }
@@ -155,6 +162,8 @@ class AllowanceEngine(
                             consecutiveLoopFailures = 0
                         } catch (cancelled: CancellationException) {
                             throw cancelled
+                        } catch (fatal: VirtualMachineError) {
+                            throw fatal
                         } catch (failure: Throwable) {
                             reportLoopFailure(failure)
                         }
@@ -200,6 +209,7 @@ class AllowanceEngine(
             clearStoreWarning("read")
             return Result.success(Unit)
         } catch (failure: Throwable) {
+            rethrowIfFatal(failure)
             warnStoreOnce("read", "Could not reload daily allowances; keeping the last known list", failure)
             return Result.failure(failure)
         }
@@ -415,6 +425,7 @@ class AllowanceEngine(
             )
         }
         runCatching { ports.diagnosticsSink.publish(snapshot) }
+            .onFailure(::rethrowIfFatal)
     }
 
     private fun reportLoopFailure(failure: Throwable) {
@@ -473,6 +484,7 @@ class AllowanceEngine(
                         if (pendingForDate.isEmpty()) pendingUsageWrites.remove(date)
                     }
                 } catch (failure: Throwable) {
+                    rethrowIfFatal(failure)
                     warnStoreOnce("upsert", "Could not persist daily allowance usage; will retry", failure)
                 }
             }
@@ -495,6 +507,7 @@ class AllowanceEngine(
                 pendingUsageWrites.keys.removeAll { it.isBefore(cutoff) }
             }
         } catch (failure: Throwable) {
+            rethrowIfFatal(failure)
             warnStoreOnce("delete", "Could not remove expired daily usage; will retry", failure)
         }
     }
@@ -509,6 +522,7 @@ class AllowanceEngine(
             }
             available
         } catch (failure: Throwable) {
+            rethrowIfFatal(failure)
             warnStoreOnce("availability", "Could not check usage-store availability", failure)
             false
         }
@@ -527,13 +541,24 @@ class AllowanceEngine(
         try {
             ports.blockedSetSink.set(blocked)
         } catch (failure: Throwable) {
+            rethrowIfFatal(failure)
             warnStoreOnce("blocked-set", "Could not update the daily allowance blocked-process set", failure)
         }
     }
 
+    private fun rethrowIfFatal(failure: Throwable) {
+        if (failure is CancellationException || failure is VirtualMachineError) throw failure
+    }
+
     private fun warn(message: String, cause: Throwable? = null) {
-        runCatching {
+        try {
             ports.failureLogger.warn("DailyAllowanceTracker", message, cause)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (_: Throwable) {
+            // Logging must not turn a recoverable tracking error into a job failure.
         }
     }
 
@@ -606,6 +631,7 @@ class AllowanceEngine(
 
     private fun notifyLimitReached(allowance: DailyAllowance) {
         runCatching { ports.limitNotifier.dailyLimitReached(allowance) }
+            .onFailure(::rethrowIfFatal)
             .onFailure { warn("Could not show daily allowance limit notification", it) }
     }
 

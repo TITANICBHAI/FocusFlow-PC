@@ -63,11 +63,15 @@ object BlockScheduleService {
 
             activeScheduleNames = active
             ProcessMonitor.scheduleBlockedProcesses = blockedProcesses
-        } catch (e: Exception) {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
             EnforcementLog.warn(
                 "BlockScheduleService",
                 "tick() threw — schedule enforcement may be stale until next tick",
-                e
+                failure
             )
         }
     }

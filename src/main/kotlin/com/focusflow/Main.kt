@@ -38,6 +38,21 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 
+internal suspend fun initDatabaseSafely(
+    dbFile: File,
+    initialize: suspend () -> DbInitResult
+): Pair<DbInitResult, Boolean> {
+    return try {
+        initialize() to false
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (fatal: VirtualMachineError) {
+        throw fatal
+    } catch (failure: Throwable) {
+        DbInitResult.Failed(failure, dbFile) to true
+    }
+}
+
 private sealed interface StartupView {
     data object WaitingForInstance : StartupView
     data object SwitchingToAdministrator : StartupView
@@ -267,15 +282,16 @@ private fun FocusFlowDesktop(
                 startup = StartupView.Starting
             }
             startupAttemptInProgress = true
-            var initThrew = false
-            val result = try {
-                withContext(Dispatchers.IO) { Database.init() }
+            val (result, initThrew) = try {
+                withContext(Dispatchers.IO) {
+                    initDatabaseSafely(databaseFile) { Database.init() }
+                }
             } catch (cancelled: CancellationException) {
                 startupAttemptInProgress = false
                 throw cancelled
-            } catch (failure: Exception) {
-                initThrew = true
-                DbInitResult.Failed(failure, databaseFile)
+            } catch (fatal: VirtualMachineError) {
+                startupAttemptInProgress = false
+                throw fatal
             }
             startupAttemptInProgress = false
             when (result) {

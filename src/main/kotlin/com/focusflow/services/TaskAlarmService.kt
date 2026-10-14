@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.enforcement.EnforcementLog
 import kotlinx.coroutines.*
 import java.awt.TrayIcon
 import java.util.concurrent.ConcurrentHashMap
@@ -74,13 +75,11 @@ object TaskAlarmService {
     private fun persistFiredId(id: String) {
         // synchronized: prevents two alarms firing in the same 30-second poll from
         // each reading the same `existing` string and overwriting each other's appended ID.
-        try {
-            synchronized(persistLock) {
-                val existing = Database.getSetting("alarm_fired_ids") ?: ""
-                val updated  = if (existing.isBlank()) id else "$existing,$id"
-                Database.setSetting("alarm_fired_ids", updated)
-            }
-        } catch (_: Exception) {}
+        synchronized(persistLock) {
+            val existing = Database.getSetting("alarm_fired_ids") ?: ""
+            val updated  = if (existing.isBlank()) id else "$existing,$id"
+            Database.setSetting("alarm_fired_ids", updated)
+        }
     }
 
     // ── Alarm check ──────────────────────────────────────────────────────────
@@ -137,7 +136,17 @@ object TaskAlarmService {
                     }
                 }
             }
-        } catch (_: Exception) {}
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            EnforcementLog.warn(
+                "TaskAlarmService",
+                "Alarm polling failed; it will retry on the next poll",
+                failure
+            )
+        }
     }
 
     fun testAlarm(taskTitle: String) {

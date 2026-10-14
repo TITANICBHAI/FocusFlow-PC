@@ -346,7 +346,17 @@ object ProcessMonitor {
         // tryAcquireCooldown() — called again inside checkProcess() — is the real
         // correctness boundary; this is a performance optimisation only.
         if ((cooldowns[lower] ?: 0L).let { now - it < COOLDOWN_MS }) return
-        scope.launch { checkProcess(processName, pid) }
+        scope.launch {
+            try {
+                checkProcess(processName, pid)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
+            } catch (failure: Throwable) {
+                EnforcementLog.warn("ProcessMonitor", "Foreground enforcement check failed", failure)
+            }
+        }
     }
 
     private fun isAnyEnforcementActive(): Boolean {
@@ -369,8 +379,18 @@ object ProcessMonitor {
         // is empty and a switch to a blocked app goes undetected.
         invalidateCaches()
         scope.launch(Dispatchers.IO) {
-            try { refreshCaches() } catch (e: Exception) {
-                EnforcementLog.warn("ProcessMonitor", "Initial cache refresh failed — block rules may be empty until next cycle", e)
+            try {
+                refreshCaches()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
+            } catch (failure: Throwable) {
+                EnforcementLog.warn(
+                    "ProcessMonitor",
+                    "Initial cache refresh failed — block rules may be empty until next cycle",
+                    failure
+                )
             }
         }
 
@@ -378,8 +398,18 @@ object ProcessMonitor {
         if (cacheJob?.isActive != true) {
             cacheJob = scope.launch {
                 while (isActive) {
-                    try { refreshCaches() } catch (e: Exception) {
-                        EnforcementLog.warn("ProcessMonitor", "Periodic cache refresh failed — block rules may be stale", e)
+                    try {
+                        refreshCaches()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (fatal: VirtualMachineError) {
+                        throw fatal
+                    } catch (failure: Throwable) {
+                        EnforcementLog.warn(
+                            "ProcessMonitor",
+                            "Periodic cache refresh failed — block rules may be stale",
+                            failure
+                        )
                     }
                     delay(CACHE_TTL_MS)
                 }
@@ -392,7 +422,15 @@ object ProcessMonitor {
 
         monitorJob = scope.launch {
             while (isActive) {
-                if (isAnyEnforcementActive()) tickPoll()
+                try {
+                    if (isAnyEnforcementActive()) tickPoll()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (fatal: VirtualMachineError) {
+                    throw fatal
+                } catch (failure: Throwable) {
+                    EnforcementLog.warn("ProcessMonitor", "Monitor tick failed; it will retry on the next poll", failure)
+                }
                 // Use a slower poll rate when the hook is active — the hook handles
                 // instant detection, the poll is only a safety net (e.g., already-
                 // foreground apps at session start, hook delivery gaps).

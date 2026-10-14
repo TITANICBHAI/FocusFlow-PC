@@ -8,6 +8,7 @@ import com.focusflow.enforcement.NetworkBlocker
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.WatchdogInstaller
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class StartOnce {
@@ -21,6 +22,12 @@ internal class StartOnce {
         return try {
             action()
             StartOnceResult.Started
+        } catch (cancelled: CancellationException) {
+            failure = cancelled
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            failure = fatal
+            throw fatal
         } catch (cause: Throwable) {
             failure = cause
             StartOnceResult.Failed(cause)

@@ -3,6 +3,8 @@ package com.focusflow.services
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class StartOnceTest {
@@ -29,5 +31,14 @@ class StartOnceTest {
         assertTrue(failed is StartOnceResult.Failed)
         assertEquals(failed, once.run { count++ })
         assertEquals(1, count)
+    }
+
+    @Test
+    fun fatalStartupFailureIsRethrownAndRemembered() {
+        val once = StartOnce()
+        val fatal = OutOfMemoryError("injected bootstrap failure")
+
+        assertSame(fatal, assertFailsWith<OutOfMemoryError> { once.run { throw fatal } })
+        assertEquals(StartOnceResult.Failed(fatal), once.run { error("must not run again") })
     }
 }

@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.enforcement.EnforcementLog
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,14 +44,30 @@ object WeeklyReportService {
     fun startScheduler() {
         if (schedulerJob?.isActive == true) return
         schedulerJob = scope.launch {
-            checkAndGenerate()
+            checkAndGenerateSafely()
             while (isActive) {
                 val now = LocalDateTime.now()
                 val nextMidnight = now.toLocalDate().plusDays(1).atTime(0, 1)
                 val millisUntil = Duration.between(now, nextMidnight).toMillis()
                 delay(millisUntil.coerceAtLeast(60_000L))
-                checkAndGenerate()
+                checkAndGenerateSafely()
             }
+        }
+    }
+
+    private suspend fun checkAndGenerateSafely() {
+        try {
+            checkAndGenerate()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            EnforcementLog.warn(
+                "WeeklyReportService",
+                "Report check failed; it will retry on the next scheduled check",
+                failure
+            )
         }
     }
 

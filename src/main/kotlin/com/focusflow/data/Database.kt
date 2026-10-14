@@ -16,6 +16,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CancellationException
 
 sealed interface DbInitResult {
     data object Ready : DbInitResult
@@ -117,6 +118,9 @@ object Database {
     @Volatile
     internal var recoveryFileOpsForTest: RecoveryFileOps? = null
 
+    @Volatile
+    internal var dataSourceFactoryForTest: (() -> javax.sql.DataSource)? = null
+
     @Synchronized
     fun init(
         dbFile: File = defaultDbFile(),
@@ -125,54 +129,64 @@ object Database {
     ): DbInitResult {
         if (isReady) return DbInitResult.Ready
 
-        val dbDir = dbFile.absoluteFile.parentFile ?: File(".")
-        val startedAtNs = System.nanoTime()
-        if (!dbDir.exists() && !dbDir.mkdirs()) {
-            return finishFailed(IOException("Could not create database directory: $dbDir"), dbFile)
-        }
-
-        val (sidecarSnapshots, snapshotFailure) = captureSidecarSnapshots(dbFile)
-        if (snapshotFailure != null) return finishFailed(snapshotFailure, dbFile)
-
-        val first = openWithRetries(dbFile, policy, startedAtNs)
-        if (first is OpenResult.Ready) {
-            cleanupSidecarSnapshots(sidecarSnapshots)
-            return finishReady()
-        }
-
-        val sidecarRestoreFailure = restoreSidecarSnapshots(sidecarSnapshots)
-        if (sidecarRestoreFailure != null) {
-            return finishFailed(sidecarRestoreFailure, dbFile)
-        }
-        cleanupSidecarSnapshots(sidecarSnapshots)
-
-        val failure = first as OpenResult.Failure
-        val kind = failure.kind
-        if (kind == SqliteFailureKind.BUSY || kind == SqliteFailureKind.LOCKED) {
-            return finishBusy(failure, startedAtNs, dbFile)
-        }
-
-        if (kind != SqliteFailureKind.CORRUPT && kind != SqliteFailureKind.NOTADB) {
-            return finishFailed(failure.cause, dbFile)
-        }
-
-        if (!allowRecovery) return finishFailed(failure.cause, dbFile)
-
-        val archiveFailure = preserveCorruptDatabaseSet(dbFile)
-        if (archiveFailure != null) {
-            return finishFailed(
-                IOException("Could not safely preserve the corrupt database set; original files were not intentionally removed.", archiveFailure),
-                dbFile
-            )
-        }
-
-        val afterRecovery = openWithRetries(dbFile, policy, startedAtNs)
-        return when (afterRecovery) {
-            OpenResult.Ready -> finishReady()
-            is OpenResult.Failure -> when (afterRecovery.kind) {
-                SqliteFailureKind.BUSY, SqliteFailureKind.LOCKED -> finishBusy(afterRecovery, startedAtNs, dbFile)
-                else -> finishFailed(afterRecovery.cause, dbFile)
+        try {
+            val dbDir = dbFile.absoluteFile.parentFile ?: File(".")
+            val startedAtNs = System.nanoTime()
+            if (!dbDir.exists() && !dbDir.mkdirs()) {
+                return finishFailed(IOException("Could not create database directory: $dbDir"), dbFile)
             }
+
+            val (sidecarSnapshots, snapshotFailure) = captureSidecarSnapshots(dbFile)
+            if (snapshotFailure != null) return finishFailed(snapshotFailure, dbFile)
+
+            val first = openWithRetries(dbFile, policy, startedAtNs)
+            if (first is OpenResult.Ready) {
+                cleanupSidecarSnapshots(sidecarSnapshots)
+                return finishReady()
+            }
+
+            val sidecarRestoreFailure = restoreSidecarSnapshots(sidecarSnapshots)
+            if (sidecarRestoreFailure != null) {
+                return finishFailed(sidecarRestoreFailure, dbFile)
+            }
+            cleanupSidecarSnapshots(sidecarSnapshots)
+
+            val failure = first as OpenResult.Failure
+            val kind = failure.kind
+            if (kind == SqliteFailureKind.BUSY || kind == SqliteFailureKind.LOCKED) {
+                return finishBusy(failure, startedAtNs, dbFile)
+            }
+
+            if (kind != SqliteFailureKind.CORRUPT && kind != SqliteFailureKind.NOTADB) {
+                return finishFailed(failure.cause, dbFile)
+            }
+
+            if (!allowRecovery) return finishFailed(failure.cause, dbFile)
+
+            val archiveFailure = preserveCorruptDatabaseSet(dbFile)
+            if (archiveFailure != null) {
+                return finishFailed(
+                    IOException("Could not safely preserve the corrupt database set; original files were not intentionally removed.", archiveFailure),
+                    dbFile
+                )
+            }
+
+            val afterRecovery = openWithRetries(dbFile, policy, startedAtNs)
+            return when (afterRecovery) {
+                OpenResult.Ready -> finishReady()
+                is OpenResult.Failure -> when (afterRecovery.kind) {
+                    SqliteFailureKind.BUSY, SqliteFailureKind.LOCKED -> finishBusy(afterRecovery, startedAtNs, dbFile)
+                    else -> finishFailed(afterRecovery.cause, dbFile)
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            rememberThrownFailure(cancelled, dbFile)
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            rememberThrownFailure(fatal, dbFile)
+            throw fatal
+        } catch (failure: Throwable) {
+            return finishFailed(failure, dbFile)
         }
     }
 
@@ -183,6 +197,7 @@ object Database {
         lastInitResult = null
         _startupState.value = DbStartupState.NotStarted
         recoveryFileOpsForTest = null
+        dataSourceFactoryForTest = null
         runCatching { previous?.close() }
     }
 
@@ -335,9 +350,10 @@ object Database {
             val config = org.sqlite.SQLiteConfig().apply {
                 setBusyTimeout(busyTimeoutMs)
             }
-            val dataSource = SQLiteDataSource(config).apply {
-                url = "jdbc:sqlite:${dbFile.absolutePath}"
-            }
+            val dataSource = dataSourceFactoryForTest?.invoke()
+                ?: SQLiteDataSource(config).apply {
+                    url = "jdbc:sqlite:${dbFile.absolutePath}"
+                }
             localConn = dataSource.connection
             localConn.autoCommit = true
 
@@ -374,13 +390,25 @@ object Database {
             conn = localConn
             localConn = null
             return null
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             migrationConnection.remove()
-            runCatching { localConn?.close() }
-            return failure
+            when (failure) {
+                is CancellationException -> throw failure
+                is VirtualMachineError -> throw failure
+                else -> return failure
+            }
         } finally {
             migrationConnection.remove()
-            runCatching { localConn?.close() }
+            try {
+                localConn?.close()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
+            } catch (_: Throwable) {
+                // A failed open remains the primary result; closing its partial
+                // connection is best-effort and must not replace that result.
+            }
         }
     }
 
@@ -462,13 +490,29 @@ object Database {
         _startupState.value = DbStartupState.Failed(cause, untouchedPath)
         logDatabaseMessage(untouchedPath, "Database initialization failed; the file was left untouched: ${cause.message}")
         if (untouchedPath.absoluteFile == defaultDbFile().absoluteFile) {
-            com.focusflow.services.CrashReporter.reportCritical(
-                source = "Database.open",
-                message = "Database initialization failed. FocusFlow is waiting without starting dependent services.\n**Cause:** ${cause.message}",
-                throwable = cause
-            )
+            try {
+                com.focusflow.services.CrashReporter.reportCritical(
+                    source = "Database.open",
+                    message = "Database initialization failed. FocusFlow is waiting without starting dependent services.\n**Cause:** ${cause.message}",
+                    throwable = cause
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
+            } catch (reportFailure: Throwable) {
+                logDatabaseMessage(
+                    untouchedPath,
+                    "Database initialization failed; crash reporting also failed: ${reportFailure.message}"
+                )
+            }
         }
         return result
+    }
+
+    private fun rememberThrownFailure(cause: Throwable, untouchedPath: File) {
+        lastInitResult = DbInitResult.Failed(cause, untouchedPath)
+        _startupState.value = DbStartupState.Failed(cause, untouchedPath)
     }
 
     private fun logDatabaseMessage(dbFile: File, message: String) {

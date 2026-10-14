@@ -82,8 +82,12 @@ object RecurringTaskService {
                 )
                 Database.upsertTask(newTask)
             }
-        } catch (e: Exception) {
-            System.err.println("[RecurringTaskService] generateForToday failed: ${e.message}")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            System.err.println("[RecurringTaskService] generateForToday failed: ${failure.message}")
         }
     }
 

@@ -122,7 +122,13 @@ object AutoBackupService {
 
             pruneOldBackups()
             BackupResult.Success(destDb, hash, destDb.length())
-        } catch (e: Exception) {
+        } catch (cancelled: CancellationException) {
+            runCatching { destDb.delete(); destHash.delete(); destMeta.delete() }
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            runCatching { destDb.delete(); destHash.delete(); destMeta.delete() }
+            throw fatal
+        } catch (e: Throwable) {
             runCatching { destDb.delete(); destHash.delete(); destMeta.delete() }
             BackupResult.Error(e.message ?: "Unknown error")
         }
