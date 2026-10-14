@@ -108,6 +108,27 @@ object Database {
             throw DatabaseUnavailableException(lastInitResult)
         }
 
+    @PublishedApi
+    internal fun transactionConnectionForInline(): Connection = connection
+
+    internal inline fun <T> inTransaction(crossinline block: () -> T): T =
+        synchronized(this) {
+            val transactionConnection = transactionConnectionForInline()
+            transactionConnection.createStatement().use { it.execute("BEGIN IMMEDIATE") }
+            try {
+                val result = block()
+                transactionConnection.createStatement().use { it.execute("COMMIT") }
+                result
+            } catch (failure: Throwable) {
+                runCatching {
+                    transactionConnection.createStatement().use { it.execute("ROLLBACK") }
+                }.exceptionOrNull()?.let { rollbackFailure ->
+                    if (rollbackFailure !== failure) failure.addSuppressed(rollbackFailure)
+                }
+                throw failure
+            }
+        }
+
     /** True only after a migrated, open connection has been published. */
     val isReady: Boolean
         get() = conn?.let { runCatching { !it.isClosed }.getOrDefault(false) } == true
@@ -572,27 +593,25 @@ object Database {
         // Wrap all migration steps in a single transaction — if any step fails
         // mid-way the schema is rolled back to the pre-migration state and
         // user_version is NOT bumped, so the next launch retries cleanly.
-        connection.autoCommit = false
-        try {
-            if (current < 1) migrateV1()
-            if (current < 2) migrateV2()
-            if (current < 3) migrateV3()
-            if (current < 4) migrateV4()
-            if (current < 5) migrateV5()
-            if (current < 6) migrateV6()
-            if (current < 7) migrateV7()
-            if (current < 8) migrateV8()
-            if (current < 9) migrateV9()
+        inTransaction {
+            val lockedVersion = connection.createStatement()
+                .executeQuery("PRAGMA user_version")
+                .use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+            if (lockedVersion >= TARGET_VERSION) return@inTransaction
+
+            if (lockedVersion < 1) migrateV1()
+            if (lockedVersion < 2) migrateV2()
+            if (lockedVersion < 3) migrateV3()
+            if (lockedVersion < 4) migrateV4()
+            if (lockedVersion < 5) migrateV5()
+            if (lockedVersion < 6) migrateV6()
+            if (lockedVersion < 7) migrateV7()
+            if (lockedVersion < 8) migrateV8()
+            if (lockedVersion < 9) migrateV9()
 
             // Bump stored version only after ALL steps succeed
             connection.createStatement()
                 .executeUpdate("PRAGMA user_version = $TARGET_VERSION")
-            connection.commit()
-        } catch (e: Exception) {
-            try { connection.rollback() } catch (_: Exception) {}
-            throw e // init() classifies and records the final outcome
-        } finally {
-            connection.autoCommit = true
         }
     }
 
@@ -996,18 +1015,11 @@ object Database {
         // Transaction: task update + daily completion counter must succeed together.
         // A crash between the two statements would leave the task marked complete but
         // the daily streak/completion count forever stale.
-        connection.autoCommit = false
-        try {
+        inTransaction {
             connection.prepareStatement(
                 "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?"
             ).use { ps -> ps.setString(1, now); ps.setString(2, id); ps.executeUpdate() }
             recordDailyCompletion(LocalDate.now())
-            connection.commit()
-        } catch (e: Exception) {
-            try { connection.rollback() } catch (_: Exception) {}
-            throw e
-        } finally {
-            connection.autoCommit = true
         }
     }
 
@@ -1078,8 +1090,7 @@ object Database {
     @Synchronized fun insertSession(session: FocusSession) {
         // Transaction: the session row and the daily-focus-minutes update must be atomic.
         // A crash between them leaves the session saved but the daily total permanently stale.
-        connection.autoCommit = false
-        try {
+        inTransaction {
             connection.prepareStatement("""
                 INSERT OR REPLACE INTO focus_sessions
                 (id, task_id, task_name, start_time, end_time, planned_minutes,
@@ -1101,12 +1112,6 @@ object Database {
             if (session.completed && session.actualMinutes > 0) {
                 updateDailyFocusMinutes(session.startTime.toLocalDate())
             }
-            connection.commit()
-        } catch (e: Exception) {
-            try { connection.rollback() } catch (_: Exception) {}
-            throw e
-        } finally {
-            connection.autoCommit = true
         }
     }
 
@@ -1633,20 +1638,13 @@ object Database {
     @Synchronized fun deleteHabit(id: String) {
         // Transaction: habit row + its entries must be deleted atomically.
         // A crash between the two DELETEs leaves orphaned entries that can never be cleaned.
-        connection.autoCommit = false
-        try {
+        inTransaction {
             connection.prepareStatement("DELETE FROM habits WHERE id = ?").use { ps ->
                 ps.setString(1, id); ps.executeUpdate()
             }
             connection.prepareStatement("DELETE FROM habit_entries WHERE habit_id = ?").use { ps ->
                 ps.setString(1, id); ps.executeUpdate()
             }
-            connection.commit()
-        } catch (e: Exception) {
-            try { connection.rollback() } catch (_: Exception) {}
-            throw e
-        } finally {
-            connection.autoCommit = true
         }
     }
 
@@ -1884,8 +1882,7 @@ object Database {
     @Synchronized fun saveFocusLauncherSession(session: FocusLauncherSession) {
         if (!isReady) return
 
-        connection.autoCommit = false
-        try {
+        inTransaction {
             connection.prepareStatement(
                 "INSERT OR REPLACE INTO focus_launcher_session " +
                     "(id, session_start_ms, session_end_ms, breaks_total, breaks_used, " +
@@ -1925,33 +1922,19 @@ object Database {
                 }
                 ps.executeBatch()
             }
-
-            connection.commit()
-        } catch (e: Exception) {
-            try { connection.rollback() } catch (_: Exception) {}
-            throw e
-        } finally {
-            connection.autoCommit = true
         }
     }
 
     @Synchronized fun clearFocusLauncherSession() {
         if (!isReady) return
 
-        connection.autoCommit = false
-        try {
+        inTransaction {
             connection.prepareStatement(
                 "DELETE FROM focus_launcher_session_apps WHERE session_id = 1"
             ).use { it.executeUpdate() }
             connection.prepareStatement(
                 "DELETE FROM focus_launcher_session WHERE id = 1"
             ).use { it.executeUpdate() }
-            connection.commit()
-        } catch (e: Exception) {
-            try { connection.rollback() } catch (_: Exception) {}
-            throw e
-        } finally {
-            connection.autoCommit = true
         }
     }
 
