@@ -162,6 +162,30 @@ Add dated entries here as work progresses. Keep previous entries.
 ### Batch A notes
 Add dated entries here as work progresses. Keep previous entries.
 
+### 2026-10-14 — Batch A — In progress (continuation)
+
+- **Scope:** Reconcile A-1 through A-7 against current source, rerun the named Batch A tests, and confirm the tracker accurately distinguishes source/test verification from Windows-only acceptance.
+- **Starting findings:** The tracker records the implementation and automated tests as complete, while UAC/MSIX runtime checks remain unverified. The working tree contains only the two newly attached prompt files as untracked; no source changes are present.
+- **Files changed:** `Plan/tracker.md` only.
+- **Verification:** Pending.
+
+### 2026-10-14 — Batch A — Verification attempt
+
+- **Command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon`
+- **Result:** Shell execution timed out before Gradle reported test completion. The visible output reached main and recovery Kotlin compilation and `:recovery:test NO-SOURCE`; no `build/test-results` reports were written and no Gradle/test processes remained when checked.
+- **Files changed:** `Plan/tracker.md` only; no application source changed.
+- **Next check:** Run the named Batch A test classes separately to obtain a bounded result; preserve this timeout as an incomplete attempt.
+
+### 2026-10-14 — Batch A — Source reconciliation and targeted verification
+
+- **Source review:** Confirmed native package identity lookup and manifest AUMID fallback, in-process token elevation, shared relaunch service/call sites, graceful shutdown handoff, and removal of duplicated administrator/relaunch helpers. `Start-Process` remains only in unrelated `WatchdogInstaller` behavior.
+- **Gap found:** A same-user handoff child that starts without elevation and presents the current valid nonce is rejected before the ordinary single-instance guard can send `SHOW`; this does not meet the plan's normal-second-launch fallback.
+- **Targeted command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon --tests 'com.focusflow.enforcement.RelaunchTargetTest' --tests 'com.focusflow.enforcement.PackageIdentityResolverTest' --tests 'com.focusflow.services.RelaunchHandoffTest' --tests 'com.focusflow.services.SingleInstanceGuardTest'`
+- **Result:** `BUILD SUCCESSFUL`; all 17 tests passed (RelaunchTargetTest 6, PackageIdentityResolverTest 3, RelaunchHandoffTest 4, SingleInstanceGuardTest 4). Main/test compilation passed with existing deprecation and coroutine opt-in warnings.
+- **Implemented:** A handoff child may use the ordinary single-instance `SHOW` path only when it is non-elevated and its nonce matches a fresh marker for the same user and a different PID. Invalid/stale nonces and another user's marker remain rejected.
+- **Files changed:** `Main.kt`, `RelaunchHandoff.kt`, `RelaunchHandoffTest.kt`, and `Plan/tracker.md`.
+- **Regression test:** Added coverage for valid same-user markers and rejection of wrong nonce, wrong user, same PID, invalid PID, and stale markers. Verification after this change is pending.
+
 ### 2026-10-14 — Batch A — In progress
 
 - **Scope:** Reconcile A-1 through A-7, the named tests, and EXE/MSIX acceptance against the current checkout.

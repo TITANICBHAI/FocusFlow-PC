@@ -36,6 +36,20 @@ class RelaunchHandoffTest {
     }
 
     @Test
+    fun normalLaunchFallbackRequiresFreshMatchingNonceAndSameUser() {
+        store.begin(oldPid = 100, userName = "tester", nonce = "fallback")
+
+        assertTrue(store.matchesIncomingAttempt("fallback", currentPid = 200, userName = "tester"))
+        assertFalse(store.matchesIncomingAttempt("wrong", currentPid = 200, userName = "tester"))
+        assertFalse(store.matchesIncomingAttempt("fallback", currentPid = 200, userName = "other"))
+        assertFalse(store.matchesIncomingAttempt("fallback", currentPid = 100, userName = "tester"))
+        assertFalse(store.matchesIncomingAttempt("fallback", currentPid = 0, userName = "tester"))
+
+        nowMs += RelaunchHandoffStore.MAX_MARKER_AGE_MS + 1
+        assertFalse(store.matchesIncomingAttempt("fallback", currentPid = 200, userName = "tester"))
+    }
+
+    @Test
     fun helloRequiresMatchingNonceUserAndElevatedChild() {
         val marker = assertNotNull(store.begin(oldPid = 100, userName = "tester", nonce = "nonce"))
 

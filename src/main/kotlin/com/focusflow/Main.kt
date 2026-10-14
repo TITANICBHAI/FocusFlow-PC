@@ -106,13 +106,19 @@ fun main(args: Array<String>) {
     ElevationManager.logStartupDiagnostics()
     val handoffNonce = args.firstOrNull { it.startsWith("--focusflow-elevation-handoff=") }
         ?.substringAfter('=')
-    val isHandoffChild = handoffNonce != null
-    if (handoffNonce != null && !RelaunchHandoff.acceptIncoming(handoffNonce)) {
-        com.focusflow.enforcement.EnforcementLog.warn(
+    val isHandoffChild = handoffNonce?.let { RelaunchHandoff.acceptIncoming(it) } == true
+    if (handoffNonce != null && !isHandoffChild) {
+        if (!RelaunchHandoff.shouldUseNormalLaunchFallback(handoffNonce)) {
+            com.focusflow.enforcement.EnforcementLog.warn(
+                "Elevation",
+                "incoming elevation handoff rejected pid=${ProcessHandle.current().pid()}"
+            )
+            return
+        }
+        com.focusflow.enforcement.EnforcementLog.info(
             "Elevation",
-            "incoming elevation handoff rejected pid=${ProcessHandle.current().pid()}"
+            "incoming handoff was not elevated; using normal single-instance launch"
         )
-        return
     }
 
     val launch = DesktopLaunch(isHandoffChild)

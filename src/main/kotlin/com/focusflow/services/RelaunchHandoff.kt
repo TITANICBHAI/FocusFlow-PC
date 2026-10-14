@@ -96,6 +96,16 @@ internal class RelaunchHandoffStore(
         readMarker()?.takeIf { isFresh(it.createdAtMs) }
 
     @Synchronized
+    fun matchesIncomingAttempt(nonce: String, currentPid: Long, userName: String): Boolean {
+        if (nonce.isBlank() || userName.isBlank() || currentPid <= 0L) return false
+        val marker = readMarker() ?: return false
+        return marker.nonce == nonce &&
+            marker.oldPid != currentPid &&
+            marker.userName == userName &&
+            isFresh(marker.createdAtMs)
+    }
+
+    @Synchronized
     fun clear(marker: HandoffMarker) {
         if (readMarker()?.nonce == marker.nonce) markerFile.delete()
         if (readHello()?.nonce == marker.nonce) helloFile.delete()
@@ -206,6 +216,14 @@ internal object RelaunchHandoff {
         incomingSuppressShowUntilMs = System.currentTimeMillis() + INCOMING_LOCK_WAIT_MS
         return true
     }
+
+    fun shouldUseNormalLaunchFallback(nonce: String): Boolean =
+        !com.focusflow.enforcement.ElevationManager.isElevated &&
+            store.matchesIncomingAttempt(
+                nonce = nonce,
+                currentPid = ProcessHandle.current().pid(),
+                userName = currentUserName()
+            )
 
     fun shouldSuppressShowRequest(): Boolean =
         incomingMarker != null && System.currentTimeMillis() < incomingSuppressShowUntilMs
