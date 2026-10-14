@@ -1,0 +1,8 @@
+Picked up JAVA_TOOL_OPTIONS: 
+init -> Ready
+before any completion              : completed_count=0 total_count=0
+after completeTask(t1) once        : completed_count=1 total_count=1
+after completeTask(t1) a 2nd time  : completed_count=2 total_count=2   <- same task counted twice
+after completeTask(no-such-task)   : completed_count=3 total_count=3   <- counted although no row was updated
+tasks row t1: completed=true completedAt=2026-10-12T12:52:38.125537715
+getTotalFocusMinutesToday() on empty sessions = 0 (works only because sqlite-jdbc pre-loads the first row)

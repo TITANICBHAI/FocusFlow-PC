@@ -1,0 +1,4 @@
+init -> Ready
+inserted 120 consecutive days ending today into daily_completions
+getCurrentStreak() = 90   (true streak = 120)
+getBestStreak()    = 120

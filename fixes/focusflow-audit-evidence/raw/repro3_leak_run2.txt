@@ -1,0 +1,8 @@
+--- run 2: mode control ---
+Picked up JAVA_TOOL_OPTIONS: 
+init -> Ready
+control: DB.stmts=3  heap(after GC) 2 -> 2 MB   RSS 57 -> 66 MB   (RSS-heap growth = 8 MB)
+--- run 2: mode leak ---
+Picked up JAVA_TOOL_OPTIONS: 
+init -> Ready
+leak: DB.stmts=15003  heap(after GC) 2 -> 3 MB   RSS 60 -> 134 MB   (RSS-heap growth = 73 MB)

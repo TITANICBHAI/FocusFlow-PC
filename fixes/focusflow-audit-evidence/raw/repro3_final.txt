@@ -1,0 +1,9 @@
+--- mode control ---
+init -> Ready
+control: DB.stmts=5  heap(after GC) 2 -> 2 MB   RSS 62 -> 67 MB   (RSS-heap growth = 5 MB)
+--- mode leak ---
+init -> Ready
+leak: DB.stmts=15005  heap(after GC) 2 -> 3 MB   RSS 61 -> 135 MB   (RSS-heap growth = 73 MB)
+--- mode sum ---
+init -> Ready
+getTotalFocusMinutesToday() on empty DB = 0

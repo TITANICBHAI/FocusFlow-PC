@@ -1,0 +1,9 @@
+python sqlite version: 3.45.1
+rows: 200004  span: 2000-01-01T00:18:20 -> 2027-05-18T23:30:33.426368
+PLAN old: [(3, 0, 0, 'SCAN focus_sessions')]
+PLAN new: [(4, 0, 0, 'SEARCH focus_sessions USING INDEX idx_sessions_start (start_time>? AND start_time<?)')]
+equivalence: days checked=4951 (non-empty=4951) mismatches=0
+boundary day 2013-06-15 old=(466, 18) new=(466, 18)
+old  DATE(start_time)=?   : 17.39 ms/query  result=(466, 18)
+new  range on start_time  : 0.0067 ms/query  result=(466, 18)
+getFocusMinutesByDay(7) = 7 queries => old 121.7 ms vs new 0.047 ms (Python SQLite, single thread, NOT the app)

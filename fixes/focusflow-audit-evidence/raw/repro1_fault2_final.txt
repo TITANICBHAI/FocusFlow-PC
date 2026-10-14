@@ -1,0 +1,12 @@
+tmpfs on /mnt/noexec_ff type tmpfs (rw,noexec,relatime,size=65536k)
+java=21.0.12.1 os=Linux tmpdir=/mnt/noexec_ff
+=== Database.init attempt #1 ===
+java.lang.UnsatisfiedLinkError: /mnt/noexec_ff/sqlite-3.47.1.0-1f775256-dcbc-4f3a-a4a0-7eac1d4412e7-libsqlitejdbc.so: /mnt/noexec_ff/sqlite-3.47.1.0-1f775256-dcbc-4f3a-a4a0-7eac1d4412e7-libsqlitejdbc.so: failed to map segment from shared object
+java.lang.UnsatisfiedLinkError: no sqlitejdbc in java.library.path: /usr/java/packages/lib:/usr/lib/x86_64-linux-gnu/jni:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/lib/jni:/lib:/usr/lib
+returned: Failed
+  cause     : java.sql.SQLException: Error opening connection
+  Caused by : org.sqlite.NativeLibraryNotFoundException: No native library found for os.name=Linux, os.arch=x86_64, paths=[/org/sqlite/native/Linux/x86_64:/usr/java/packages/lib:/usr/lib/x86_64-linux-gnu/jni:/lib/x86_64-linux-gnu:/usr/lib/x86_64-linu
+=== Database.init attempt #2 ===
+ESCAPED init(): java.lang.UnsatisfiedLinkError: 'void org.sqlite.core.NativeDB._open_utf8(byte[], int)'
+  is Exception=false  is Error=true  (Main.kt catches only Exception)
+CrashReporter.reportCritical calls = [source=Database.open throwable=java.sql.SQLException: Error opening connection]

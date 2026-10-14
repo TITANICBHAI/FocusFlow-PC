@@ -1,0 +1,55 @@
+Picked up JAVA_TOOL_OPTIONS: 
+
+=== A. PIN helpers while the DB is NOT open (before init / after a failed init) ===
+Database.isReady                 = false
+GlobalPin.isSet()                = false
+GlobalPin.verify("anything")     = true    (true == access granted)
+SessionPin.verify("anything")    = true
+NuclearPin.verify("anything")    = true
+
+=== B. PIN set -> DB handle lost (Database.close() stands in for any condition that makes getSetting() return null) ===
+init -> Ready
+DB open   : isSet=true  verify(correct)=true  verify(wrong)=false
+DB closed : isSet=false  verify(wrong)=true  clear(wrong)=true
+hash on disk meanwhile: ('8468397d898a...',)
+
+=== C. setSetting() swallows SQLITE_BUSY (another process holds the write lock; busy_timeout=300ms) ===
+autoGenerate() returned a 24-char PIN after 308 ms and threw nothing (UI would now show it to the user)
+after the lock is released: verify(newPin)=false   verify(oldPin)=true
+
+=== D. Telemetry opt-out vs. the expression in CrashReporter.reportCritical()/sendToDiscord() ===
+DB open   : getSetting=false  -> optedIn=false
+DB closed : getSetting=null  -> optedIn=true   (report is SENT)
+value on disk: ('false',)
+
+=== E. Statement leak: DB.stmts after the five reads ProcessMonitor.refreshCaches() runs every 2 s ===
+baseline DB.stmts = 3
+  getEnabledBlockProcesses()                   100 calls -> DB.stmts +100
+  isKeywordBlockerEnabled()                    100 calls -> DB.stmts +0
+  getBlockedKeywords()                         100 calls -> DB.stmts +0
+  getEnabledNetworkCutoffRules()               100 calls -> DB.stmts +100
+  getBlockRules()                              100 calls -> DB.stmts +100
+  getSetting("x")  [prepareStatement.use]      100 calls -> DB.stmts +0
+leaked statements per refreshCaches() = 3.0
+at one refresh / 2 s: 5400 per hour, 129600 per day
+after 5,000 refreshes (~2h47m of uptime): DB.stmts 303 -> 15303, process RSS 67 MB -> 146 MB
+Database.close() with that backlog took 105 ms
+
+=== F. RecurringTaskService.generateForToday() logic (copied verbatim, `today` injected) against the real DB ===
+user creates ONE daily recurring task on 2026-01-01
+  day +1  (2026-01-02): tasks shown for that day = 1     | rows with recurring=1 now = 2
+  day +2  (2026-01-03): tasks shown for that day = 2     | rows with recurring=1 now = 4
+  day +3  (2026-01-04): tasks shown for that day = 4     | rows with recurring=1 now = 8
+  day +4  (2026-01-05): tasks shown for that day = 8     | rows with recurring=1 now = 16
+  day +5  (2026-01-06): tasks shown for that day = 16    | rows with recurring=1 now = 32
+  day +6  (2026-01-07): tasks shown for that day = 32    | rows with recurring=1 now = 64
+  day +7  (2026-01-08): tasks shown for that day = 64    | rows with recurring=1 now = 128
+  day +8  (2026-01-09): tasks shown for that day = 128   | rows with recurring=1 now = 256
+  day +9  (2026-01-10): tasks shown for that day = 256   | rows with recurring=1 now = 512
+  day +10 (2026-01-11): tasks shown for that day = 512   | rows with recurring=1 now = 1024
+  day +11 (2026-01-12): tasks shown for that day = 1024  | rows with recurring=1 now = 2048
+  day +12 (2026-01-13): tasks shown for that day = 2048  | rows with recurring=1 now = 4096
+
+real	0m7.839s
+user	0m3.831s
+sys	0m0.731s

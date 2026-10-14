@@ -1,0 +1,4 @@
+python sqlite version: 3.45.1
+first VACUUM INTO a new file: ok, size 8192
+second VACUUM INTO the SAME (non-empty) destination fails: OperationalError output file already exists
+VACUUM INTO an existing EMPTY file: ok, size 8192

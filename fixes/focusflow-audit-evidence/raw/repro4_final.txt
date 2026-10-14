@@ -1,0 +1,9 @@
+--- mode orphan ---
+init -> Ready
+hasUnfinishedFocusSession() on a fresh DB                    = false
+...app is killed / PC loses power mid-session (nothing ever writes end_time)
+init (next launch) -> Ready
+hasUnfinishedFocusSession() 3 days later, after restart      = true   <- UninstallProtectionService treats this as an ACTIVE session
+--- mode txerror ---
+Error escaped 'catch (e: Exception)': StackOverflowError; finally{} now runs autoCommit=true
+after the Error: tasks.completed=1 (should be 0 if rolled back), daily rows=0 (second statement never ran) -> half-applied transaction was COMMITTED

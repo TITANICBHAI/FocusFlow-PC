@@ -1,0 +1,12 @@
+--- writer every 1000 ms, wizard-style Database.init x150 ---
+   150 x Ready
+real 0.560s
+--- writer every 20 ms, wizard-style Database.init x300 ---
+   299 x Ready
+     1 x Failed: IOException: Could not verify startup snapshot for focusflow.db-wal
+real 0.847s
+--- writer every 1 ms, wizard-style Database.init x300 ---
+    23 x Failed: IOException: Could not verify startup snapshot for focusflow.db-wal
+   272 x Ready
+     5 x Failed: IOException: Could not verify startup snapshot for focusflow.db-shm
+real 1.256s
