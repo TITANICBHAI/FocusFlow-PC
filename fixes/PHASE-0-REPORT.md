@@ -14,12 +14,12 @@
 ## Baseline result
 
 - **Command required:** `gradle :test --no-daemon`
-- **Result:** Not run. The suite includes local loopback TCP communication, which is a network call under the current no-network rule. The baseline must remain blocked until the owner resolves whether loopback-only IPC is permitted. No test was excluded or modified.
+- **Result:** Not run. The suite includes local loopback TCP communication, which is a network call under the current no-network rule. The owner left the loopback permission unanswered and asked me to use best judgment; that is not explicit authorization to override the rule, so the baseline remains blocked. No test was excluded or modified.
 - **Pass/fail counts and duration:** Not available; the test task did not run.
 - **Database safety:** Source review found no test path to the real/default database; database tests use explicit temporary files.
 - **External network safety:** No direct external HTTP/telemetry client reference was found. The loopback IPC call remains unresolved under the strict rule.
 - **P0-2:** Not started. No helper or helper smoke-test files were added because the required baseline gate did not pass.
-- **P0-3:** Owner facts are pending; no raw crash-log excerpt or raw user path was requested or inspected.
+- **P0-3:** The owner reports that a Claude agent running in Claude's app produced the reports; the underlying host machine/OS is unknown. The owner does not know the `%TEMP%`/security-software context. No raw crash-log excerpt or raw user path was requested or inspected.
 
 ## Toolchain observation
 
@@ -45,7 +45,7 @@ Results:
 
 ## Outstanding items
 
-- Owner decision: whether the baseline may include the existing loopback-only IPC test. Until then, do not run `:test`, exclude tests, or change their behavior.
-- P0-3: identify the machine/OS that produced the reports and provide any known Windows `%TEMP%`/`%TMP%` or security-software context. Share only reviewed/redacted excerpts if an excerpt is later needed; omit raw paths and secrets.
+- Loopback permission remains unresolved; do not run `:test`, exclude tests, or change their behavior under the current no-network rule.
+- The report source was identified as a Claude agent in Claude's app, but its host machine/OS remains unknown. `%TEMP%`/`%TMP%` and security-software context are unknown. Share only reviewed/redacted excerpts if an excerpt is later needed; omit raw paths and secrets.
 - After the P0-1 gate is resolved, continue with the baseline, then add and smoke-test `TempHome`, `ForkedJvm`, and `StatementLeakAssert`.
 - Windows verification items W1–W15 remain unverified.
