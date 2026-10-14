@@ -6,6 +6,7 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 internal data class HandoffMarker(
     val oldPid: Long,
@@ -23,6 +24,7 @@ internal data class HandoffHello(
 
 internal class RelaunchHandoffStore(
     private val directory: File,
+    private val monotonicNanos: () -> Long = System::nanoTime,
     private val nowMs: () -> Long = System::currentTimeMillis
 ) {
     private val markerFile get() = File(directory, "relaunch.marker")
@@ -69,7 +71,8 @@ internal class RelaunchHandoffStore(
         pollIntervalMs: Long = 100L,
         sleep: (Long) -> Unit = Thread::sleep
     ): Boolean {
-        val deadline = nowMs() + timeoutMs
+        val deadlineNanos = monotonicNanos() +
+            TimeUnit.MILLISECONDS.toNanos(timeoutMs.coerceAtLeast(0L))
         while (true) {
             val hello = readHello()
             if (hello != null &&
@@ -81,9 +84,10 @@ internal class RelaunchHandoffStore(
             ) {
                 return true
             }
-            val remaining = deadline - nowMs()
-            if (remaining <= 0L) return false
-            sleep(minOf(pollIntervalMs, remaining))
+            val remainingNanos = deadlineNanos - monotonicNanos()
+            if (remainingNanos <= 0L) return false
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(remainingNanos).coerceAtLeast(1L)
+            sleep(minOf(pollIntervalMs.coerceAtLeast(1L), remainingMs))
         }
     }
 

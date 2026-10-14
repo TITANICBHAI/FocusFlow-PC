@@ -12,6 +12,7 @@ import com.sun.jna.win32.StdCallLibrary
 import com.sun.jna.win32.W32APIOptions
 import java.io.File
 import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 
 sealed interface RelaunchTarget {
     data class DirectExe(val path: String, val workingDirectory: String?) : RelaunchTarget
@@ -79,8 +80,21 @@ object ElevationManager {
     }
 
     fun relaunchElevated(): RelaunchResult {
-        if (!isWindows) return RelaunchResult.NotSupported("Administrator relaunch is available only on Windows.")
-        if (isElevated) return RelaunchResult.Failed("FocusFlow is already running as Administrator.")
+        val requestStartedAt = System.nanoTime()
+        if (!isWindows) {
+            EnforcementLog.info(
+                "Elevation",
+                "handoff outcome=not-supported strategy=none totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+            )
+            return RelaunchResult.NotSupported("Administrator relaunch is available only on Windows.")
+        }
+        if (isElevated) {
+            EnforcementLog.warn(
+                "Elevation",
+                "handoff outcome=failed reason=already-elevated totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+            )
+            return RelaunchResult.Failed("FocusFlow is already running as Administrator.")
+        }
 
         val identity = CurrentPackageIdentity.value
         val target = chooseRelaunchTarget(
@@ -90,38 +104,75 @@ object ElevationManager {
             exePath = if (InstallVariant.isMsix) null else WindowsStartupManager.resolveExePath(),
             aliasPath = executionAliasPath()?.takeIf(File::isFile)?.absolutePath
         )
+        val strategy = target.strategyName()
         if (target == RelaunchTarget.Manual) {
-            EnforcementLog.warn("Elevation", "relaunch target unavailable; manual Start menu elevation required")
+            EnforcementLog.warn(
+                "Elevation",
+                "handoff outcome=not-supported strategy=$strategy reason=target-unavailable " +
+                    "totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+            )
             return RelaunchResult.NotSupported(MANUAL_ELEVATION_INSTRUCTIONS)
         }
         if (target == RelaunchTarget.NotSupported) {
+            EnforcementLog.info(
+                "Elevation",
+                "handoff outcome=not-supported strategy=$strategy totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+            )
             return RelaunchResult.NotSupported("Administrator relaunch is available only on Windows.")
         }
 
         val marker = RelaunchHandoff.begin()
-            ?: return RelaunchResult.Failed("Another administrator restart is already in progress.")
+            ?: run {
+                EnforcementLog.warn(
+                    "Elevation",
+                    "handoff outcome=failed strategy=$strategy reason=restart-already-in-progress " +
+                        "totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+                )
+                return RelaunchResult.Failed("Another administrator restart is already in progress.")
+            }
         pendingHandoff.set(marker)
-        EnforcementLog.info("Elevation", "relaunch target=$target pid=${ProcessHandle.current().pid()}")
+        EnforcementLog.info(
+            "Elevation",
+            "relaunch begin strategy=$strategy pid=${ProcessHandle.current().pid()} " +
+                "user=${System.getProperty("user.name").orEmpty()}"
+        )
 
+        val shellStartedAt = System.nanoTime()
         val shellResult = try {
             executeRunAs(target, "--focusflow-elevation-handoff=${marker.nonce}")
         } catch (failure: Exception) {
             RelaunchHandoff.clear(marker)
             pendingHandoff.compareAndSet(marker, null)
-            EnforcementLog.warn("Elevation", "ShellExecuteEx failed before handoff", failure)
+            EnforcementLog.warn(
+                "Elevation",
+                "ShellExecuteEx invocation failed strategy=$strategy elapsedMs=${elapsedMsSince(shellStartedAt)}",
+                failure
+            )
+            EnforcementLog.info(
+                "Elevation",
+                "handoff outcome=shell-error strategy=$strategy totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+            )
             return RelaunchResult.Failed(
                 failure.message?.takeIf(String::isNotBlank) ?: "Windows could not start the elevated instance."
             )
         }
 
+        EnforcementLog.info(
+            "Elevation",
+            "ShellExecuteEx strategy=$strategy called=${shellResult.shellExecuteCalled} " +
+                "started=${shellResult.started} errorCode=${shellResult.errorCode} " +
+                "elapsedMs=${elapsedMsSince(shellStartedAt)}"
+        )
         if (!shellResult.started) {
             RelaunchHandoff.clear(marker)
             pendingHandoff.compareAndSet(marker, null)
-            EnforcementLog.warn(
+            val declined = shellResult.errorCode == ERROR_CANCELLED
+            EnforcementLog.info(
                 "Elevation",
-                "ShellExecuteEx target=$target started=false error=${shellResult.errorCode}"
+                "handoff outcome=${if (declined) "user-declined" else "shell-error"} strategy=$strategy " +
+                    "totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
             )
-            return if (shellResult.errorCode == ERROR_CANCELLED) {
+            return if (declined) {
                 RelaunchResult.UserDeclined
             } else {
                 RelaunchResult.Failed(
@@ -130,21 +181,31 @@ object ElevationManager {
             }
         }
 
+        val helloWaitStartedAt = System.nanoTime()
         val confirmed = runCatching { RelaunchHandoff.awaitHello(marker, HANDOFF_TIMEOUT_MS) }
             .getOrElse { failure ->
                 EnforcementLog.warn("Elevation", "handoff wait failed", failure)
                 false
             }
+        val helloWaitMs = elapsedMsSince(helloWaitStartedAt)
         if (!confirmed) {
             RelaunchHandoff.clear(marker)
             pendingHandoff.compareAndSet(marker, null)
-            EnforcementLog.warn("Elevation", "handoff timed out after ${HANDOFF_TIMEOUT_MS}ms; old instance remains active")
+            EnforcementLog.warn(
+                "Elevation",
+                "handoff outcome=timed-out strategy=$strategy helloWaitMs=$helloWaitMs " +
+                    "totalElapsedMs=${elapsedMsSince(requestStartedAt)}; old instance remains active"
+            )
             return RelaunchResult.Failed(
                 "The elevated instance did not confirm startup. FocusFlow is still running; try the Start menu option."
             )
         }
 
-        EnforcementLog.info("Elevation", "handoff confirmed nonce=${marker.nonce}")
+        EnforcementLog.info(
+            "Elevation",
+            "handoff outcome=confirmed strategy=$strategy helloWaitMs=$helloWaitMs " +
+                "totalElapsedMs=${elapsedMsSince(requestStartedAt)}"
+        )
         return RelaunchResult.HandedOff
     }
 
@@ -156,6 +217,17 @@ object ElevationManager {
         val localAppData = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank) ?: return null
         return File(localAppData, "Microsoft/WindowsApps/focusflow.exe")
     }
+
+    private fun RelaunchTarget.strategyName(): String = when (this) {
+        is RelaunchTarget.DirectExe -> "direct-exe"
+        is RelaunchTarget.AppsFolder -> "apps-folder"
+        is RelaunchTarget.ExecutionAlias -> "execution-alias"
+        RelaunchTarget.Manual -> "manual"
+        RelaunchTarget.NotSupported -> "not-supported"
+    }
+
+    private fun elapsedMsSince(startedAtNanos: Long): Long =
+        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos)
 
     private fun queryTokenElevation(): Boolean {
         val kernel = KernelElevationApi.INSTANCE
@@ -190,7 +262,7 @@ object ElevationManager {
             val ole = Ole32Api.INSTANCE
             val initResult = ole.CoInitializeEx(null, COINIT_APARTMENTTHREADED or COINIT_DISABLE_OLE1DDE)
             if (initResult < 0) {
-                return@FutureTask ShellLaunchResult(false, initResult)
+                return@FutureTask ShellLaunchResult(false, false, initResult)
             }
             try {
                 val info = ShellExecuteInfo().apply {
@@ -204,13 +276,13 @@ object ElevationManager {
                         is RelaunchTarget.AppsFolder -> lpFile = WString("shell:AppsFolder\\${target.aumid}")
                         is RelaunchTarget.ExecutionAlias -> lpFile = WString(target.path)
                         RelaunchTarget.Manual, RelaunchTarget.NotSupported ->
-                            return@FutureTask ShellLaunchResult(false, ERROR_INVALID_PARAMETER)
+                            return@FutureTask ShellLaunchResult(false, false, ERROR_INVALID_PARAMETER)
                     }
                     lpParameters = WString(arguments)
                     nShow = SW_SHOWNORMAL
                 }
                 val started = ShellExecuteApi.INSTANCE.ShellExecuteExW(info)
-                ShellLaunchResult(started, if (started) 0 else Native.getLastError())
+                ShellLaunchResult(true, started, if (started) 0 else Native.getLastError())
             } finally {
                 ole.CoUninitialize()
             }
@@ -222,7 +294,11 @@ object ElevationManager {
         return task.get()
     }
 
-    private data class ShellLaunchResult(val started: Boolean, val errorCode: Int)
+    private data class ShellLaunchResult(
+        val shellExecuteCalled: Boolean,
+        val started: Boolean,
+        val errorCode: Int
+    )
 
     @Structure.FieldOrder(
         "cbSize", "fMask", "hwnd", "lpVerb", "lpFile", "lpParameters", "lpDirectory",

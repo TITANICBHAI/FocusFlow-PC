@@ -8,6 +8,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
+import java.util.concurrent.TimeUnit
 
 class RelaunchHandoffTest {
 
@@ -15,7 +16,14 @@ class RelaunchHandoffTest {
     lateinit var tempDir: Path
 
     private var nowMs = 1_000L
-    private val store by lazy { RelaunchHandoffStore(tempDir.toFile()) { nowMs } }
+    private var nowNanos = 1_000_000L
+    private val store by lazy {
+        RelaunchHandoffStore(
+            directory = tempDir.toFile(),
+            monotonicNanos = { nowNanos },
+            nowMs = { nowMs }
+        )
+    }
 
     @Test
     fun onlyFreshMarkersCanBeAccepted() {
@@ -44,7 +52,14 @@ class RelaunchHandoffTest {
     fun timeoutLeavesOldInstanceMarkerForTheRunningProcess() {
         val marker = assertNotNull(store.begin(oldPid = 100, userName = "tester", nonce = "timeout"))
 
-        assertFalse(store.awaitHello(marker, timeoutMs = 0))
+        assertFalse(
+            store.awaitHello(
+                marker = marker,
+                timeoutMs = 25,
+                pollIntervalMs = 10,
+                sleep = { elapsedMs -> nowNanos += TimeUnit.MILLISECONDS.toNanos(elapsedMs) }
+            )
+        )
         assertEquals(marker, store.currentMarker())
     }
 
