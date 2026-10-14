@@ -139,8 +139,10 @@ GitHub Actions at `.github/workflows/build-windows.yml`:
 - Runs on `windows-latest`
 - Builds EXE + MSI (Gradle `packageExe`/`packageMsi`) + MSIX (`makeappx.exe`)
 - All 3 Partner Center identity fields are verified before `makeappx` runs
-- Auto-creates a GitHub Release on every push to `main`
+- The separate `.github/workflows/release.yml` manually publishes artifacts from a successful `build-windows.yml` run
 - Watch CI: https://github.com/TITANICBHAI/FocusFlow-PC/actions
+
+The separate manual `.github/workflows/build-msix-debug.yml` workflow builds a `FocusFlow Debug` MSIX with a distinct package identity and an ephemeral self-signed test certificate. It uploads the MSIX, public certificate, and install instructions; it does not change Store/release artifacts. The debug app still shares the normal user database and single-instance lock, so close the regular app before testing.
 
 ## Pushing to GitHub
 

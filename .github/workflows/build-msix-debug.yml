@@ -1,0 +1,48 @@
+name: Build Windows Debug MSIX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug-msix:
+    runs-on: windows-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 19 (x64)
+        uses: actions/setup-java@v4
+        with:
+          java-version: "19"
+          distribution: temurin
+          architecture: x64
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.6"
+          cache-read-only: false
+
+      - name: Build Windows distributable
+        run: gradle createDistributable --no-daemon --stacktrace
+        shell: cmd
+
+      - name: Package and test-sign debug MSIX
+        shell: pwsh
+        run: ./scripts/package-debug-msix.ps1
+
+      - name: Upload debug MSIX and install files
+        uses: actions/upload-artifact@v4
+        with:
+          name: FocusFlow-Windows-Debug-MSIX
+          path: |
+            build/debug-msix/*.msix
+            build/debug-msix/*.cer
+            build/debug-msix/INSTALL.txt
+          retention-days: 30
+          if-no-files-found: error

@@ -312,3 +312,13 @@ Remaining unverified items / blockers:
 - **Verification:** SHA-256 of the plan before and after the move was `826e9697b68eb0ba136c36935dc7908ced374283af7c57c720fac3e611031e8e`.
 - **Result:** hashes matched, so the plan content was preserved unchanged.
 - **Implementation status:** not started; all implementation and manual-test boxes remain unchecked.
+
+## Separate debug MSIX workflow
+
+### 2026-10-14 — Debug MSIX workflow implementation
+
+- **Scope:** Add a manually triggered debug MSIX path without changing the existing Store/release workflow or its artifact names.
+- **Package identity:** The test package uses a distinct `TBTechs.FocusFlowDebug` identity and display name. A per-run self-signed code-signing certificate is used; only the public `.cer` is uploaded.
+- **Install notes:** Artifact includes administrator trust-store import instructions followed by per-user `Add-AppxPackage`. The debug package shares the regular app's database and single-instance lock; the regular app should be closed during testing.
+- **Static verification:** Extracted AppxManifest XML parsed successfully and checks confirmed the debug identity, publisher, version, and application. `git diff --check` passed, and the existing Store build/release workflow files remain unchanged.
+- **Not verified:** GitHub Actions was not run; this environment has no PowerShell or actionlint, so the Windows script/build/install flow remains unverified.
