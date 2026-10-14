@@ -25,7 +25,7 @@ sealed interface ElevationRelaunchStatus {
 
 object AppLifecycle {
     @Volatile
-    var shutdown: ((skipQuitAuthorization: Boolean) -> Unit)? = null
+    var shutdown: ((skipQuitAuthorization: Boolean, preserveNuclearMode: Boolean) -> Unit)? = null
 }
 
 object ElevationRelaunchService {
@@ -37,12 +37,23 @@ object ElevationRelaunchService {
     fun canRelaunch(): Boolean =
         isWindows &&
             !ElevationManager.isElevated &&
-            !isSessionActive()
+            !hasElevationBlockingSession(
+                focusSessionActive = FocusSessionService.state.value.isActive,
+                focusLauncherActive = FocusLauncherService.isActive.value,
+                nuclearModeActive = NuclearMode.isActive
+            )
 
     fun isSessionActive(): Boolean =
         FocusSessionService.state.value.isActive ||
             FocusLauncherService.isActive.value ||
             NuclearMode.isActive
+
+    private fun hasBlockingSession(): Boolean =
+        hasElevationBlockingSession(
+            focusSessionActive = FocusSessionService.state.value.isActive,
+            focusLauncherActive = FocusLauncherService.isActive.value,
+            nuclearModeActive = NuclearMode.isActive
+        )
 
     fun request(): Boolean {
         if (!isWindows) {
@@ -57,9 +68,14 @@ object ElevationRelaunchService {
             )
             return false
         }
-        if (isSessionActive()) {
+        val resumeNuclearMode = NuclearMode.isActive
+        if (hasBlockingSession()) {
             _status.value = ElevationRelaunchStatus.Blocked(
-                "End your current focus, launcher, or Nuclear Mode session first."
+                if (resumeNuclearMode) {
+                    "End your active Focus or Focus Launcher session first. Nuclear Mode will resume after elevation."
+                } else {
+                    "End your active Focus or Focus Launcher session before restarting as Administrator."
+                }
             )
             return false
         }
@@ -68,7 +84,7 @@ object ElevationRelaunchService {
         _status.value = ElevationRelaunchStatus.Pending
         scope.launch {
             try {
-                when (val result = ElevationManager.relaunchElevated()) {
+                when (val result = ElevationManager.relaunchElevated(resumeNuclearMode)) {
                     RelaunchResult.HandedOff -> {
                         val shutdown = AppLifecycle.shutdown
                         if (shutdown == null) {
@@ -78,7 +94,7 @@ object ElevationRelaunchService {
                             )
                         } else {
                             _status.value = ElevationRelaunchStatus.HandedOff
-                            shutdown(true)
+                            shutdown(true, resumeNuclearMode)
                         }
                     }
                     RelaunchResult.UserDeclined -> _status.value = ElevationRelaunchStatus.UserDeclined
@@ -106,3 +122,10 @@ object ElevationRelaunchService {
         }
     }
 }
+
+@Suppress("UNUSED_PARAMETER")
+internal fun hasElevationBlockingSession(
+    focusSessionActive: Boolean,
+    focusLauncherActive: Boolean,
+    nuclearModeActive: Boolean
+): Boolean = focusSessionActive || focusLauncherActive

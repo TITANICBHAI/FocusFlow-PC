@@ -79,7 +79,7 @@ object ElevationManager {
         }.onFailure { EnforcementLog.warn("Elevation", "startup diagnostics failed", it) }
     }
 
-    fun relaunchElevated(): RelaunchResult {
+    fun relaunchElevated(resumeNuclearMode: Boolean = NuclearMode.isActive): RelaunchResult {
         val requestStartedAt = System.nanoTime()
         if (!isWindows) {
             EnforcementLog.info(
@@ -121,7 +121,7 @@ object ElevationManager {
             return RelaunchResult.NotSupported("Administrator relaunch is available only on Windows.")
         }
 
-        val marker = RelaunchHandoff.begin()
+        val marker = RelaunchHandoff.begin(resumeNuclearMode = resumeNuclearMode)
             ?: run {
                 EnforcementLog.warn(
                     "Elevation",

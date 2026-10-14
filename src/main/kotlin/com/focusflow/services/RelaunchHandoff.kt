@@ -12,14 +12,16 @@ internal data class HandoffMarker(
     val oldPid: Long,
     val nonce: String,
     val createdAtMs: Long,
-    val userName: String
+    val userName: String,
+    val resumeNuclearMode: Boolean = false
 )
 
 internal data class HandoffHello(
     val newPid: Long,
     val nonce: String,
     val createdAtMs: Long,
-    val userName: String
+    val userName: String,
+    val resumeNuclearMode: Boolean = false
 )
 
 internal class RelaunchHandoffStore(
@@ -31,7 +33,12 @@ internal class RelaunchHandoffStore(
     private val helloFile get() = File(directory, "relaunch.hello")
 
     @Synchronized
-    fun begin(oldPid: Long, userName: String, nonce: String = UUID.randomUUID().toString()): HandoffMarker? {
+    fun begin(
+        oldPid: Long,
+        userName: String,
+        nonce: String = UUID.randomUUID().toString(),
+        resumeNuclearMode: Boolean = false
+    ): HandoffMarker? {
         if (!directory.exists() && !directory.mkdirs()) return null
         if (!directory.isDirectory) return null
 
@@ -40,7 +47,7 @@ internal class RelaunchHandoffStore(
         markerFile.delete()
         helloFile.delete()
 
-        val marker = HandoffMarker(oldPid, nonce, nowMs(), userName)
+        val marker = HandoffMarker(oldPid, nonce, nowMs(), userName, resumeNuclearMode)
         return if (writeAtomically(markerFile, encode(marker))) marker else null
     }
 
@@ -61,7 +68,7 @@ internal class RelaunchHandoffStore(
             return null
         }
 
-        val hello = HandoffHello(currentPid, nonce, nowMs(), userName)
+        val hello = HandoffHello(currentPid, nonce, nowMs(), userName, marker.resumeNuclearMode)
         return if (writeAtomically(helloFile, encode(hello))) marker else null
     }
 
@@ -80,6 +87,7 @@ internal class RelaunchHandoffStore(
                 hello.newPid > 0L &&
                 hello.newPid != marker.oldPid &&
                 hello.userName == marker.userName &&
+                hello.resumeNuclearMode == marker.resumeNuclearMode &&
                 isFresh(hello.createdAtMs)
             ) {
                 return true
@@ -146,7 +154,8 @@ internal class RelaunchHandoffStore(
         marker.oldPid.toString(),
         marker.nonce,
         marker.createdAtMs.toString(),
-        encodeUser(marker.userName)
+        encodeUser(marker.userName),
+        marker.resumeNuclearMode.toString()
     ).joinToString("|")
 
     private fun encode(hello: HandoffHello): String = listOf(
@@ -154,19 +163,25 @@ internal class RelaunchHandoffStore(
         hello.newPid.toString(),
         hello.nonce,
         hello.createdAtMs.toString(),
-        encodeUser(hello.userName)
+        encodeUser(hello.userName),
+        hello.resumeNuclearMode.toString()
     ).joinToString("|")
 
     private fun decode(value: String): Any? {
         val fields = value.trim().split('|')
-        if (fields.size != 5) return null
+        if (fields.size !in 5..6) return null
         val id = fields[1].toLongOrNull() ?: return null
         val timestamp = fields[3].toLongOrNull() ?: return null
         val userName = decodeUser(fields[4]) ?: return null
         if (fields[2].isBlank()) return null
+        val resumeNuclearMode = if (fields.size == 6) {
+            fields[5].toBooleanStrictOrNull() ?: return null
+        } else {
+            false
+        }
         return when (fields[0]) {
-            "marker" -> HandoffMarker(id, fields[2], timestamp, userName)
-            "hello" -> HandoffHello(id, fields[2], timestamp, userName)
+            "marker" -> HandoffMarker(id, fields[2], timestamp, userName, resumeNuclearMode)
+            "hello" -> HandoffHello(id, fields[2], timestamp, userName, resumeNuclearMode)
             else -> null
         }
     }
@@ -189,7 +204,8 @@ internal object RelaunchHandoff {
         val oldPid: Long,
         val nonce: String,
         val createdAtMs: Long,
-        val userName: String
+        val userName: String,
+        val resumeNuclearMode: Boolean
     )
 
     private val store by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -199,8 +215,12 @@ internal object RelaunchHandoff {
     @Volatile private var incomingMarker: HandoffMarker? = null
     @Volatile private var incomingSuppressShowUntilMs: Long = 0L
 
-    fun begin(): Marker? {
-        val created = store.begin(ProcessHandle.current().pid(), currentUserName())
+    fun begin(resumeNuclearMode: Boolean = false): Marker? {
+        val created = store.begin(
+            oldPid = ProcessHandle.current().pid(),
+            userName = currentUserName(),
+            resumeNuclearMode = resumeNuclearMode
+        )
             ?: return null
         return created.toPublicMarker()
     }
@@ -228,6 +248,8 @@ internal object RelaunchHandoff {
     fun shouldSuppressShowRequest(): Boolean =
         incomingMarker != null && System.currentTimeMillis() < incomingSuppressShowUntilMs
 
+    fun shouldResumeNuclearMode(): Boolean = incomingMarker?.resumeNuclearMode == true
+
     fun isWaitingForIncomingInstance(): Boolean = shouldSuppressShowRequest()
 
     fun completeIncomingHandoff() {
@@ -246,10 +268,10 @@ internal object RelaunchHandoff {
     private fun currentUserName(): String = System.getProperty("user.name").orEmpty()
 
     private fun HandoffMarker.toPublicMarker() =
-        Marker(oldPid, nonce, createdAtMs, userName)
+        Marker(oldPid, nonce, createdAtMs, userName, resumeNuclearMode)
 
     private fun Marker.toInternalMarker() =
-        HandoffMarker(oldPid, nonce, createdAtMs, userName)
+        HandoffMarker(oldPid, nonce, createdAtMs, userName, resumeNuclearMode)
 
     private const val INCOMING_LOCK_WAIT_MS = 25_000L
 }

@@ -380,6 +380,23 @@ object NuclearMode {
     }
 
     /**
+     * Stop this process's monitor for an administrator handoff without clearing
+     * the persisted active flag or firewall rules. The elevated child resumes
+     * Nuclear Mode once its normal startup has completed.
+     */
+    fun suspendForElevationHandoff() {
+        val totalAttemptsSnapshot = synchronized(lifecycleLock) {
+            if (!_isActiveState.compareAndSet(true, false)) return
+            monitorJob?.cancel()
+            monitorJob = null
+            escapeCounts.values.sum()
+        }
+        if (totalAttemptsSnapshot > 0) {
+            Database.setSetting("nuclear_last_session_attempts", totalAttemptsSnapshot.toString())
+        }
+    }
+
+    /**
      * Block until the background firewall-cleanup thread finishes.
      * Call ONLY from the shutdown thread — never from the UI thread.
      * No-op if no cleanup is pending or it already finished.

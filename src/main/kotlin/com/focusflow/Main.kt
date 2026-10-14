@@ -107,6 +107,7 @@ fun main(args: Array<String>) {
     val handoffNonce = args.firstOrNull { it.startsWith("--focusflow-elevation-handoff=") }
         ?.substringAfter('=')
     val isHandoffChild = handoffNonce?.let { RelaunchHandoff.acceptIncoming(it) } == true
+    val resumeNuclearMode = isHandoffChild && RelaunchHandoff.shouldResumeNuclearMode()
     if (handoffNonce != null && !isHandoffChild) {
         if (!RelaunchHandoff.shouldUseNormalLaunchFallback(handoffNonce)) {
             com.focusflow.enforcement.EnforcementLog.warn(
@@ -125,12 +126,16 @@ fun main(args: Array<String>) {
     if (launch.acquire() is InstanceAcquireResult.AlreadyRunning) return
 
     application {
-        FocusFlowDesktop(launch) { exitApplication() }
+        FocusFlowDesktop(launch, resumeNuclearMode) { exitApplication() }
     }
 }
 
 @Composable
-private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit) {
+private fun FocusFlowDesktop(
+    launch: DesktopLaunch,
+    resumeNuclearMode: Boolean,
+    exitApplication: () -> Unit
+) {
     var startup by remember {
         mutableStateOf(
             when {
@@ -188,7 +193,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
 
     // Shared shutdown action keeps service teardown off the AWT event thread.
     val shutdownStarted = remember { AtomicBoolean(false) }
-    val doShutdown: (Boolean) -> Unit = { skipQuitAuthorization ->
+    val doShutdown: (Boolean, Boolean) -> Unit = { skipQuitAuthorization, preserveNuclearMode ->
         if (shutdownStarted.compareAndSet(false, true)) {
             Thread({
                 if (!skipQuitAuthorization && !UninstallProtectionService.authorizeQuit()) {
@@ -205,8 +210,12 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                 com.focusflow.services.BlockScheduleService.stop()
                 com.focusflow.services.DailyAllowanceTracker.stop()
                 com.focusflow.services.AutoBackupService.stop()
-                com.focusflow.enforcement.NuclearMode.disable()
-                com.focusflow.enforcement.NuclearMode.awaitCleanup()
+                if (preserveNuclearMode) {
+                    com.focusflow.enforcement.NuclearMode.suspendForElevationHandoff()
+                } else {
+                    com.focusflow.enforcement.NuclearMode.disable()
+                    com.focusflow.enforcement.NuclearMode.awaitCleanup()
+                }
                 ProcessMonitor.dispose()
                 com.focusflow.enforcement.WindowsSessionStateMonitor.stop()
                 AppBlocker.dispose()
@@ -278,7 +287,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                     when (val bootstrap = withContext(Dispatchers.IO) {
                         StartupBootstrap.startServices(
                             onRestore = { windowVisible = true },
-                            onQuit = { doShutdown(false) }
+                        onQuit = { doShutdown(false, false) }
                         )
                     }) {
                         StartOnceResult.Started, StartOnceResult.AlreadyStarted -> {
@@ -320,6 +329,21 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                         sendTelemetry = initThrew
                     )
                     return@LaunchedEffect
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(ready, resumeNuclearMode) {
+        if (ready && resumeNuclearMode) {
+            withContext(Dispatchers.IO) {
+                if (ElevationManager.isElevated) {
+                    com.focusflow.enforcement.NuclearMode.enable(silent = true)
+                } else {
+                    com.focusflow.enforcement.EnforcementLog.warn(
+                        "Elevation",
+                        "Nuclear Mode handoff resume skipped because the incoming process is not elevated"
+                    )
                 }
             }
         }
@@ -375,7 +399,7 @@ private fun FocusFlowDesktop(launch: DesktopLaunch, exitApplication: () -> Unit)
                         "Blocking stays active. Right-click the tray icon to quit."
                     )
                 } else {
-                    doShutdown(false)
+                    doShutdown(false, false)
                 }
             },
             state = windowState,

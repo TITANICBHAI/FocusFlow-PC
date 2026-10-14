@@ -51,14 +51,36 @@ class RelaunchHandoffTest {
 
     @Test
     fun helloRequiresMatchingNonceUserAndElevatedChild() {
-        val marker = assertNotNull(store.begin(oldPid = 100, userName = "tester", nonce = "nonce"))
+        val marker = assertNotNull(
+            store.begin(
+                oldPid = 100,
+                userName = "tester",
+                nonce = "nonce",
+                resumeNuclearMode = true
+            )
+        )
 
         assertNull(store.acceptIncoming("nonce", currentPid = 200, userName = "tester", elevated = false))
         assertNull(store.acceptIncoming("nonce", currentPid = 200, userName = "other", elevated = true))
         assertNull(store.acceptIncoming("wrong", currentPid = 200, userName = "tester", elevated = true))
         assertNull(store.acceptIncoming("nonce", currentPid = 100, userName = "tester", elevated = true))
 
-        assertNotNull(store.acceptIncoming("nonce", currentPid = 200, userName = "tester", elevated = true))
+        val incoming = assertNotNull(
+            store.acceptIncoming("nonce", currentPid = 200, userName = "tester", elevated = true)
+        )
+        assertTrue(incoming.resumeNuclearMode)
+        assertTrue(store.awaitHello(marker, timeoutMs = 0))
+    }
+
+    @Test
+    fun ordinaryElevationHandoffDoesNotResumeNuclearMode() {
+        val marker = assertNotNull(store.begin(oldPid = 100, userName = "tester", nonce = "ordinary"))
+        val incoming = assertNotNull(
+            store.acceptIncoming("ordinary", currentPid = 200, userName = "tester", elevated = true)
+        )
+
+        assertFalse(marker.resumeNuclearMode)
+        assertFalse(incoming.resumeNuclearMode)
         assertTrue(store.awaitHello(marker, timeoutMs = 0))
     }
 

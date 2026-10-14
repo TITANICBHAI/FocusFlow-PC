@@ -424,7 +424,8 @@ fun App() {
                 if (!isAdmin && currentScreen in ADMIN_BUTTON_SCREENS) {
                     RestartAsAdminButton(
                         activeAdminFeatures = activeAdminFeatures,
-                        sessionActive = sessionState.isActive || launcherSessionActive || nuclearModeActive
+                        sessionActive = sessionState.isActive || launcherSessionActive,
+                        nuclearModeActive = nuclearModeActive
                     )
                 }
                 ThemeToggleButton()
@@ -582,6 +583,7 @@ fun App() {
 private fun RestartAsAdminButton(
     activeAdminFeatures: List<String>,
     sessionActive: Boolean,
+    nuclearModeActive: Boolean,
     modifier: Modifier = Modifier
 ) {
     val urgent = activeAdminFeatures.isNotEmpty()
@@ -627,7 +629,8 @@ private fun RestartAsAdminButton(
                     Text(
                         when {
                             pending -> "Waiting for the Windows permission prompt…"
-                            sessionActive -> "End your current session first."
+                            sessionActive -> "End your Focus or Focus Launcher session first."
+                            nuclearModeActive -> "Restart as Administrator; Nuclear Mode will resume."
                             else -> "Click to restart with Administrator privileges."
                         },
                         color    = OnSurface2,
@@ -637,7 +640,8 @@ private fun RestartAsAdminButton(
                     Text(
                         when {
                             pending -> "Waiting for the Windows permission prompt…"
-                            sessionActive -> "End your current session before restarting as Administrator."
+                            sessionActive -> "End your Focus or Focus Launcher session before restarting."
+                            nuclearModeActive -> "Restart as Administrator; Nuclear Mode will resume."
                             else -> "Restart as Administrator"
                         },
                         color      = OnSurface2,
