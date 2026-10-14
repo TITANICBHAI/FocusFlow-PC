@@ -16,11 +16,10 @@ object SessionPin {
 
     private const val KEY = "session_pin_hash"
 
-    fun isSet(): Boolean = when (val stored = Database.readSetting(KEY)) {
-        is Database.SettingRead.Present -> stored.value.isNotBlank()
-        Database.SettingRead.Absent -> false
-        is Database.SettingRead.Unreadable -> true
-    }
+    fun state(): PinState = PinPolicy.stateOf(Database.readSetting(KEY))
+
+    /** Unknown storage is treated as configured so security gates remain closed. */
+    fun isSet(): Boolean = state() != PinState.NOT_SET
 
     fun set(rawPin: String) {
         require(rawPin.length in PinPolicy.MIN_LENGTH..PinPolicy.MAX_LENGTH) {
@@ -36,18 +35,19 @@ object SessionPin {
      */
     fun autoGenerate(): String {
         val pin = PinPolicy.generate()
-        Database.writeSetting(KEY, sha256(pin)).requireSuccess("generate Session PIN")
+        PinPolicy.writeGeneratedHashAndVerifyReadBack(
+            KEY,
+            sha256(pin),
+            "generate Session PIN"
+        )
         return pin
     }
 
-    fun verify(rawPin: String): Boolean {
-        return when (val stored = Database.readSetting(KEY)) {
-            is Database.SettingRead.Present ->
-                stored.value.isBlank() || stored.value == sha256(rawPin)
-            Database.SettingRead.Absent -> true
-            is Database.SettingRead.Unreadable -> false
-        }
-    }
+    fun verifyResult(rawPin: String): PinVerificationResult =
+        PinPolicy.verify(Database.readSetting(KEY), rawPin, ::sha256)
+
+    fun verify(rawPin: String): Boolean =
+        verifyResult(rawPin) == PinVerificationResult.ACCEPTED
 
     fun clear(rawPin: String): Boolean {
         if (!verify(rawPin)) return false

@@ -23,12 +23,10 @@ object NuclearPin {
 
     private const val KEY = "nuclear_pin_hash"
 
-    /** Returns true if a PIN hash is stored and non-blank. */
-    fun isSet(): Boolean = when (val stored = Database.readSetting(KEY)) {
-        is Database.SettingRead.Present -> stored.value.isNotBlank()
-        Database.SettingRead.Absent -> false
-        is Database.SettingRead.Unreadable -> true
-    }
+    fun state(): PinState = PinPolicy.stateOf(Database.readSetting(KEY))
+
+    /** Unknown storage is treated as configured so security gates remain closed. */
+    fun isSet(): Boolean = state() != PinState.NOT_SET
 
     /**
      * Store a new PIN. Throws [IllegalArgumentException] if rawPin is shorter than 4 chars.
@@ -39,20 +37,13 @@ object NuclearPin {
         Database.writeSetting(KEY, sha256(rawPin)).requireSuccess("set Nuclear Mode PIN")
     }
 
-    /**
-     * Verify a PIN attempt.
-     * Returns true if no PIN is set (pass-through) or the hash matches.
-     * Callers should check [isSet] before invoking verify() so that a DB read
-     * error returning null does not accidentally grant access when a hash IS stored.
-     */
-    fun verify(rawPin: String): Boolean {
-        return when (val stored = Database.readSetting(KEY)) {
-            is Database.SettingRead.Present ->
-                stored.value.isBlank() || stored.value == sha256(rawPin)
-            Database.SettingRead.Absent -> true
-            is Database.SettingRead.Unreadable -> false
-        }
-    }
+    /** Unknown storage is distinguishable from an incorrect PIN and is denied. */
+    fun verifyResult(rawPin: String): PinVerificationResult =
+        PinPolicy.verify(Database.readSetting(KEY), rawPin, ::sha256)
+
+    /** Returns true if no PIN is set or the stored hash matches. */
+    fun verify(rawPin: String): Boolean =
+        verifyResult(rawPin) == PinVerificationResult.ACCEPTED
 
     /**
      * Clear the PIN after verifying the current one.

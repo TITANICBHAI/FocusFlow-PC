@@ -19,11 +19,10 @@ object GlobalPin {
     private const val KEY          = "global_pin_hash"
     private const val DECLINED_KEY = "global_pin_skipped"
 
-    fun isSet(): Boolean = when (val stored = Database.readSetting(KEY)) {
-        is Database.SettingRead.Present -> stored.value.isNotBlank()
-        Database.SettingRead.Absent -> false
-        is Database.SettingRead.Unreadable -> true
-    }
+    fun state(): PinState = PinPolicy.stateOf(Database.readSetting(KEY))
+
+    /** Unknown storage is treated as configured so security gates remain closed. */
+    fun isSet(): Boolean = state() != PinState.NOT_SET
 
     fun isDeclined(): Boolean = when (val stored = Database.readSetting(DECLINED_KEY)) {
         is Database.SettingRead.Present -> stored.value == "true"
@@ -48,19 +47,20 @@ object GlobalPin {
      */
     fun autoGenerate(): String {
         val pin = PinPolicy.generate()
-        Database.writeSetting(KEY, sha256(pin)).requireSuccess("generate Global PIN")
+        PinPolicy.writeGeneratedHashAndVerifyReadBack(
+            KEY,
+            sha256(pin),
+            "generate Global PIN"
+        )
         return pin
     }
 
+    fun verifyResult(rawPin: String): PinVerificationResult =
+        PinPolicy.verify(Database.readSetting(KEY), rawPin, ::sha256)
+
     /** Returns true if PIN is correct OR if no PIN is set (unguarded). */
-    fun verify(rawPin: String): Boolean {
-        return when (val stored = Database.readSetting(KEY)) {
-            is Database.SettingRead.Present ->
-                stored.value.isBlank() || stored.value == sha256(rawPin)
-            Database.SettingRead.Absent -> true
-            is Database.SettingRead.Unreadable -> false
-        }
-    }
+    fun verify(rawPin: String): Boolean =
+        verifyResult(rawPin) == PinVerificationResult.ACCEPTED
 
     fun clear(rawPin: String): Boolean {
         if (!verify(rawPin)) return false
