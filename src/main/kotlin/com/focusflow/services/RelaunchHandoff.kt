@@ -179,7 +179,7 @@ internal object RelaunchHandoff {
     )
 
     private val store by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        RelaunchHandoffStore(File(File(System.getProperty("user.home"), ".focusflow").absoluteFile))
+        RelaunchHandoffStore(File(System.getProperty("user.home"), ".focusflow").absoluteFile)
     }
 
     @Volatile private var incomingMarker: HandoffMarker? = null

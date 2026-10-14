@@ -109,7 +109,7 @@ object NetworkBlocker {
      *                 (rule is queued in [pendingRules] for retry).
      */
     fun addRule(processName: String): Boolean {
-        if (!isWindows || !isRunningAsAdmin()) return false
+        if (!isWindows || !ElevationManager.isElevated) return false
 
         val lower    = normalizeProcessName(processName)
         val baseName = lower.removeSuffix(".exe")
@@ -200,7 +200,7 @@ object NetworkBlocker {
      * previous session are recognised without being re-applied.
      */
     fun syncFromFirewall() {
-        if (!isWindows || !isRunningAsAdmin()) return
+        if (!isWindows || !ElevationManager.isElevated) return
         val output = runPowerShellAndRead("""
             Get-NetFirewallRule |
             Where-Object { ${'$'}_.DisplayName -like '$RULE_PREFIX*' -and ${'$'}_.Enabled -eq 'True' } |

@@ -166,7 +166,7 @@ object ElevationManager {
         }
 
         try {
-            Memory(Int.SIZE_BYTES).use { elevation ->
+            Memory(Int.SIZE_BYTES.toLong()).use { elevation ->
                 val returned = IntByReference()
                 if (!advapi.GetTokenInformation(
                         token.value,

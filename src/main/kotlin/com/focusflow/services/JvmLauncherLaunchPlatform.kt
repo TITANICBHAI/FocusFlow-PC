@@ -2,7 +2,7 @@ package com.focusflow.services
 
 import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.WindowRaiser
-import com.focusflow.enforcement.isRunningAsAdmin
+import com.focusflow.enforcement.ElevationManager
 import com.focusflow.enforcement.isWindows
 import java.io.File
 import java.util.Locale
@@ -56,7 +56,7 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
         WindowRaiser.raise(window)
 
     override fun focusFlowElevated(): Boolean? =
-        if (isWindows) isRunningAsAdmin() else null
+        if (isWindows) ElevationManager.isElevated else null
 
     private fun isWindowsAppsPath(path: String): Boolean {
         val normalized = path.replace('/', '\\').lowercase(Locale.ROOT)

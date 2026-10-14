@@ -310,33 +310,6 @@ fun isVisibleForegroundWindowForPid(pid: Long): Boolean {
 val isWindows: Boolean get() = System.getProperty("os.name").lowercase().contains("windows")
 
 /**
- * Returns true if the current process is running with administrator privileges.
- *
- * Uses PowerShell's WindowsPrincipal.IsInRole check — the standard Windows
- * elevation test.  Runs synchronously (call from a background thread).
- *
- * Returns false on non-Windows platforms or if the check fails for any reason,
- * so callers should show the Run-as-Admin button on false (safe default).
- */
-fun isRunningAsAdmin(): Boolean {
-    if (!isWindows) return false
-    return try {
-        val proc = ProcessBuilder(
-            "powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-            "-Command",
-            "([Security.Principal.WindowsPrincipal]" +
-            "[Security.Principal.WindowsIdentity]::GetCurrent())" +
-            ".IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"
-        ).redirectErrorStream(true).start()
-        val output = proc.inputStream.bufferedReader().readText().trim()
-        proc.waitFor()
-        output.equals("True", ignoreCase = true)
-    } catch (_: Throwable) {
-        false
-    }
-}
-
-/**
  * Restore and activate a visible top-level window belonging to [pid].
  *
  * A process can have more than one window (and browser processes can have

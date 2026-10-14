@@ -242,7 +242,7 @@ object NuclearMode {
      * or the path can't be resolved, it degrades gracefully to kill-only mode.
      */
     private fun applyFirewallLock() {
-        if (!isRunningAsAdmin()) return
+        if (!ElevationManager.isElevated) return
         escapeProcesses
             .filter { InstallVariant.isWindowsDirectInstall || it !in directInstallerProcesses }
             .filter { it.endsWith(".exe") }

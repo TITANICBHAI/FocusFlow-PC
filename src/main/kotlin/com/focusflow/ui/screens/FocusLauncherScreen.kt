@@ -29,10 +29,8 @@ import com.focusflow.enforcement.isWindows
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.FocusLauncherApp
 import com.focusflow.services.FocusLauncherService
-import com.focusflow.ui.components.isRunningAsAdmin
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.components.FfVerticalScrollbar
-import com.focusflow.ui.components.relaunchAsAdmin
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -96,7 +94,7 @@ fun FocusLauncherScreen() {
 
     // Checked once on composition — running "net session" is a blocking call so we
     // do it inside remember{} rather than on every recomposition.
-    val isAdmin = remember { isRunningAsAdmin() }
+    val isAdmin = remember { com.focusflow.enforcement.ElevationManager.isElevated }
 
     val isActive  by FocusLauncherService.isActive.collectAsState()
     val canBreak  by FocusLauncherService.canTakeBreak.collectAsState()
@@ -270,7 +268,7 @@ fun FocusLauncherScreen() {
                             )
                         }
                         Button(
-                            onClick = { relaunchAsAdmin() },
+                            onClick = { com.focusflow.services.ElevationRelaunchService.request() },
                             colors  = ButtonDefaults.buttonColors(containerColor = Error),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.height(34.dp)
@@ -851,7 +849,7 @@ fun FocusLauncherScreen() {
                 Button(
                     onClick = {
                         showAdminWarning = false
-                        relaunchAsAdmin()
+                        com.focusflow.services.ElevationRelaunchService.request()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Warning)
                 ) {

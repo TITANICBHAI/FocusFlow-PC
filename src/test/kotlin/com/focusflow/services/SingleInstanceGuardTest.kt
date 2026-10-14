@@ -32,6 +32,24 @@ class SingleInstanceGuardTest {
     }
 
     @Test
+    fun handoffChildWaitsForTheOldLockHolderWithoutSendingShow() {
+        val lockFile = tempDir.resolve("handoff-instance.lock").toFile()
+        val focusRequested = CountDownLatch(1)
+        val first = assertIs<InstanceAcquireResult.Acquired>(
+            SingleInstanceGuard.acquire(lockFile) { focusRequested.countDown() }
+        )
+
+        try {
+            assertIs<InstanceAcquireResult.HolderUnresponsive>(
+                SingleInstanceGuard.acquire(lockFile, requestShowIfHeld = false)
+            )
+            assertTrue(!focusRequested.await(150, TimeUnit.MILLISECONDS))
+        } finally {
+            first.handle.close()
+        }
+    }
+
+    @Test
     fun instanceLockIsReleasedWhenTheHolderCloses() {
         val lockFile = tempDir.resolve("instance.lock").toFile()
         val first = assertIs<InstanceAcquireResult.Acquired>(SingleInstanceGuard.acquire(lockFile))

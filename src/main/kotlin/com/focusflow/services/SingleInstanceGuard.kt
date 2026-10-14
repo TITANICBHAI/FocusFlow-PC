@@ -79,8 +79,8 @@ object SingleInstanceGuard {
 
     fun acquire(
         lockFile: File = defaultLockFile(),
-        onShow: () -> Unit = {},
-        requestShowIfHeld: Boolean = true
+        requestShowIfHeld: Boolean = true,
+        onShow: () -> Unit = {}
     ): InstanceAcquireResult {
         val parent = lockFile.absoluteFile.parentFile
         if (parent != null && !parent.exists() && !parent.mkdirs()) {

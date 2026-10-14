@@ -923,13 +923,12 @@ private fun runShellCommand(vararg args: String) {
     try { ProcessBuilder(*args).inheritIO().start() } catch (_: Exception) {}
 }
 
-// relaunchAsAdmin() is defined as internal in OsBanner.kt (same package) — use that.
 
 // ─── Page 5: Permissions ─────────────────────────────────────────────────────
 
 @Composable
 private fun PermissionsPage() {
-    val isAdmin = remember { isRunningAsAdmin() }
+    val isAdmin = remember { com.focusflow.enforcement.ElevationManager.isElevated }
     var autoStartEnabled by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
@@ -1023,7 +1022,7 @@ private fun PermissionsPage() {
                 ) {
                     if (!isAdmin && isWindows) {
                         OutlinedButton(
-                            onClick = { relaunchAsAdmin() },
+                            onClick = { com.focusflow.services.ElevationRelaunchService.request() },
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                         ) {

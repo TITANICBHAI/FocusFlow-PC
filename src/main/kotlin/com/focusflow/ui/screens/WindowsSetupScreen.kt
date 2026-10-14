@@ -19,9 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.enforcement.WindowsStartupManager
 import com.focusflow.enforcement.isWindows
-import com.focusflow.ui.components.AdminBanner
 import com.focusflow.ui.components.PermissionSetupCard
-import com.focusflow.ui.components.isRunningAsAdmin
 import com.focusflow.ui.theme.*
 
 @Composable

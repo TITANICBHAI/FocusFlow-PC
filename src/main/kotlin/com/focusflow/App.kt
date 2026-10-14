@@ -632,7 +632,11 @@ private fun RestartAsAdminButton(
                     )
                 } else {
                     Text(
-                        "Restart as Administrator",
+                        when {
+                            pending -> "Waiting for the Windows permission prompt…"
+                            sessionActive -> "End your current session before restarting as Administrator."
+                            else -> "Restart as Administrator"
+                        },
                         color      = OnSurface2,
                         fontSize   = 11.sp,
                         fontWeight = FontWeight.Medium

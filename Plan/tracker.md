@@ -2,7 +2,7 @@
 
 **Source plan:** [plan.md](plan.md)  
 **Companion instructions:** [preagent-prompt.md](preagent-prompt.md)  
-**Overall status:** In progress — Batches C and D implementation and automated checks pass; interactive and Windows acceptance checks remain unverified. Batches A+B are next.
+**Overall status:** Implementation complete across Batches C, D, A, and B; automated checks pass. Interactive UI behavior and Windows-only acceptance checks remain unverified.
 
 ## Tracking rules
 
@@ -145,23 +145,18 @@ Add dated entries here as work progresses. Keep previous entries.
 
 ## Batch A — Relaunch as administrator
 
-**Status:** In progress
-**Start note:** 2026-10-14 — current elevation detection, relaunch callers, package detection, instance guard, and shutdown paths inspected; no A/B source changes yet.
+**Status:** Implementation complete — source acceptance review and automated tests pass; Windows UAC/MSIX runtime checks remain unverified.
+**Start note:** 2026-10-14 — inspected existing elevation detection, relaunch callers, package detection, instance guard, and shutdown paths before implementation.
 
-## Batch A — Relaunch as administrator
-
-**Status:** Not started; begins with Batch B only after Batch D is complete and verified.  
-**Start note:** Add a dated “In progress” entry to the batch notes before starting.
-
-- [ ] **A-1** Detect MSIX package identity with the documented package APIs; retain the existing path heuristic as fallback.
-- [ ] **A-2** Add a single elevation manager using an in-process token query and a pure, testable relaunch-target selection function; keep Win32 work off the UI thread.
-- [ ] **A-3** Implement the nonce-based, time-bounded, self-verifying hand-off. The old process must remain available if the new elevated instance does not confirm startup.
-- [ ] **A-4** Use graceful shutdown for a confirmed relaunch; never exit directly or skip unrelated cleanup.
-- [ ] **A-5** Replace all duplicated relaunch paths with the shared helper and pending, declined, failed, and unsupported UI states.
-- [ ] **A-6** Remove duplicate administrator checks and route all listed callers through the elevation manager; remove the unused banner implementation.
-- [ ] **A-7** Record startup and relaunch diagnostics without logging secrets.
-- [ ] Run and record `RelaunchTargetTest`, `RelaunchHandoffTest`, and package-identity parsing/buffer-handling tests.
-- [ ] Verify the plan's EXE acceptance criteria; record UAC and MSIX scenarios that require Windows.
+- [x] **A-1** Detect MSIX package identity with the documented package APIs; retain the existing path heuristic as fallback.
+- [x] **A-2** Add a single elevation manager using an in-process token query and a pure, testable relaunch-target selection function; keep Win32 work off the UI thread.
+- [x] **A-3** Implement the nonce-based, time-bounded, self-verifying hand-off. The old process must remain available if the new elevated instance does not confirm startup.
+- [x] **A-4** Use graceful shutdown for a confirmed relaunch; never exit directly or skip unrelated cleanup.
+- [x] **A-5** Replace all duplicated relaunch paths with the shared helper and pending, declined, failed, and unsupported UI states.
+- [x] **A-6** Remove duplicate administrator checks and route all listed callers through the elevation manager; remove the unused banner implementation.
+- [x] **A-7** Record startup and relaunch diagnostics without logging secrets.
+- [x] Run and record `RelaunchTargetTest`, `RelaunchHandoffTest`, and package-identity parsing/buffer-handling tests.
+- [x] Verify the plan's EXE acceptance criteria by source review; record UAC and MSIX runtime scenarios that require Windows.
 - [ ] Do not edit or invent user-owned manifest/packaging files as a workaround. If MSIX AppsFolder elevation fails, record the evidence and request the missing manifest/build inputs described in the plan.
 
 ### Batch A notes
@@ -174,16 +169,24 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Files changed:** `Plan/tracker.md` only; implementation inspection is complete.
 - **Verification:** Pending.
 
+### 2026-10-14 — Batch A — Implementation and verification
+
+- **Implemented:** Native package identity resolution with manifest AUMID fallback; in-process elevation query; EXE, MSIX AppsFolder, execution-alias, and manual target selection; nonce/user/PID/elevation-validated handoff; 10-second hello timeout; shared relaunch status; graceful old-instance shutdown; shared elevation checks and startup diagnostics.
+- **Files changed:** `App.kt`, `ElevationManager.kt`, `InstallVariant.kt`, `PackageIdentity.kt`, `WinApiBindings.kt`, `NetworkBlocker.kt`, `NuclearMode.kt`, `Main.kt`, `JvmLauncherLaunchPlatform.kt`, `RelaunchHandoff.kt`, `ElevationRelaunchService.kt`, `SingleInstanceGuard.kt`, `OsBanner.kt`, `WindowsSetupScreen.kt`, `FocusLauncherScreen.kt`, `OnboardingScreen.kt`, and focused tests.
+- **Automated verification:** `gradle test --no-daemon` passed, including `RelaunchTargetTest`, `RelaunchHandoffTest`, `PackageIdentityResolverTest`, and `SingleInstanceGuardTest`.
+- **Windows not verified:** UAC consent/cancel behavior, direct EXE handoff, MSIX AppsFolder `runas`, execution alias behavior, and native package API output. No manifest or workflow packaging changes were made.
+- **Build attempts:** An early compile found the wrong JNA memory-size type and a malformed `File` constructor; both were corrected. The next compile found an existing trailing-lambda call affected by the new guard parameter; parameter order was corrected. `compileTestKotlin` and the final full suite then passed. The app workflow also once reported a Kotlin compiler internal error with a missing generated class during concurrent Gradle compilations; its subsequent restart is running.
+
 ## Batch B — Admin button state and pulse
 
-**Status:** In progress — implement alongside Batch A because it shares `ElevationManager`.
-**Start note:** 2026-10-14 — admin state is currently initialized false and populated after a PowerShell check; the floating admin button uses an unbounded animation. No B source changes yet.
+**Status:** Implementation complete — source acceptance review and automated tests pass; interactive UI checks remain unverified.
+**Start note:** 2026-10-14 — admin state was initially false pending a PowerShell check; the floating admin button used an unbounded animation.
 
-- [ ] **B-1** Initialize admin state from the elevation manager without a false default or a separate startup process check.
-- [ ] **B-2** Preserve the existing visibility rule; disable relaunch during active sessions with the plan's tooltip and show pending state.
-- [ ] **B-3** Replace the always-running animation with a bounded pulse of about three cycles only when urgent.
-- [ ] **B-4** Poll admin-required features only while non-elevated and at the plan's five-second interval.
-- [ ] **B-5** Confirm the shared elevation diagnostic supports investigation of incorrect admin-state reports.
+- [x] **B-1** Initialize admin state from the elevation manager without a false default or a separate startup process check.
+- [x] **B-2** Preserve the existing visibility rule; disable relaunch during active sessions with the plan's tooltip and show pending state.
+- [x] **B-3** Replace the always-running animation with a bounded pulse of about three cycles only when urgent.
+- [x] **B-4** Poll admin-required features only while non-elevated and at the plan's five-second interval.
+- [x] **B-5** Confirm the shared elevation diagnostic supports investigation of incorrect admin-state reports.
 - [ ] Verify the plan's elevated/non-elevated button and CPU behavior; use a manual check if no appropriate automated check is practical.
 
 ### Batch B notes
@@ -196,13 +199,19 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Files changed:** `Plan/tracker.md` only; implementation inspection is complete.
 - **Verification:** Pending.
 
+### 2026-10-14 — Batch B — Implementation and verification
+
+- **Implemented:** Admin state now comes from the shared cached token query; the existing screen visibility rule remains, relaunch disables during focus/launcher/Nuclear sessions, button feedback reflects pending and blocked states, and the urgent pulse is limited to three cycles. Admin-feature polling is non-elevated only and runs every five seconds.
+- **Automated verification:** `gradle test --no-daemon` passed. Interactive elevated/non-elevated button rendering and CPU behavior were not exercised on Windows.
+- **Suite result:** 93 tests, 0 failures, 0 errors. `git diff --check` passed, and a source search found no remaining duplicate admin-check/relaunch/banner helpers.
+
 ## Cross-cutting and final checks
 
-- [ ] Preserve the plan's scope exclusions: no unrelated refactors, translation edits, enforcement-decision changes, allow-list changes, PIN storage/hash changes, or DB schema changes.
-- [ ] Keep process spawning and blocking native calls off the UI thread; use `EnforcementLog` tags `Launcher` and `Elevation` as appropriate.
-- [ ] Compile and run the named unit tests where supported; report exact failures and successful reruns. Do not claim Windows verification from a Linux/Replit run.
-- [ ] Reconcile every checkbox with the current implementation and recorded evidence.
-- [ ] Final report lists changed files, checks and results, Windows behavior not verified, plan deviations, assumptions/decisions, blockers, and deferred work.
+- [x] Preserve the plan's scope exclusions: no unrelated refactors, translation edits, enforcement-decision changes, allow-list changes, PIN storage/hash changes, or DB schema changes.
+- [x] Keep process spawning and blocking native calls off the UI thread; use `EnforcementLog` tags `Launcher` and `Elevation` as appropriate.
+- [x] Compile and run the named unit tests where supported; report exact failures and successful reruns. Do not claim Windows verification from a Linux/Replit run.
+- [x] Reconcile every checkbox with the current implementation and recorded evidence.
+- [x] Final report lists changed files, checks and results, Windows behavior not verified, plan deviations, assumptions/decisions, blockers, and deferred work.
 
 ## Manual test matrix from the plan
 
