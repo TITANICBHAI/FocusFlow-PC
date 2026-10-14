@@ -126,7 +126,7 @@ These values MUST match Partner Center exactly. The identity name and publisher 
 |---|---|
 | `Identity/@Name` | `TBTechs.FocusFlowDeepFocusAppBlocker` |
 | `Identity/@Publisher` | `CN=E08824C8-6F22-4DC2-8025-DD8C707E2BE9` |
-| `Identity/@Version` | `2.0.4.0` (generated from appVersion; 4th digit is 0 for Store) |
+| `Identity/@Version` | `2.0.5.0` (generated from appVersion; 4th digit is 0 for Store) |
 | `Properties/DisplayName` | `FocusFlow - Deep Focus App Blocker` |
 | `Properties/PublisherDisplayName` | `TBTechs` |
 

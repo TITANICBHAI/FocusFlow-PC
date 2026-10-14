@@ -1,6 +1,6 @@
 # FocusFlow — Microsoft Store Publishing Guide
 
-> Project package version 2.0.4 · MSIX Identity confirmed · All Partner Center fields verified in CI
+> Project package version 2.0.5 · MSIX Identity confirmed · All Partner Center fields verified in CI
 
 ---
 
@@ -10,7 +10,7 @@
 |-------|-------|
 | Identity Name | `TBTechs.FocusFlowDeepFocusAppBlocker` |
 | Publisher | `CN=E08824C8-6F22-4DC2-8025-DD8C707E2BE9` |
-| Version | `2.0.4.0` (generated from `gradle.properties`; 4th digit must be 0 for Store) |
+| Version | `2.0.5.0` (generated from `gradle.properties`; 4th digit must be 0 for Store) |
 | App Display Name | `FocusFlow — Deep Focus & App Blocker` |
 | Publisher Display Name | `TBTechs` |
 
@@ -296,7 +296,7 @@ Export-PfxCertificate -cert $cert -FilePath focusflow-dev.pfx `
 
 The CI workflow (`.github/workflows/build-windows.yml`) builds and uploads the MSIX automatically on every push to `main`. Download it from GitHub Actions → latest run → `FocusFlow-Windows-MSIX`.
 
-The manifest is auto-generated in CI with all 3 Partner Center identity fields and is verified before `makeappx` runs. The output file is `FocusFlow-2.0.4-x64.msix`.
+The manifest is auto-generated in CI with all 3 Partner Center identity fields and is verified before `makeappx` runs. The output file is `FocusFlow-2.0.5-x64.msix`.
 
 ### Step 4 — Reserve App Name
 
@@ -317,7 +317,7 @@ Use the copy-paste blocks above. Required fields:
 
 ### Step 6 — Submit
 
-1. Upload `FocusFlow-2.0.4-x64.msix` under **Packages**.
+1. Upload `FocusFlow-2.0.5-x64.msix` under **Packages**.
 2. Paste the Notes to Certification from above.
 3. Set Availability: All markets (or restrict as needed).
 4. Click **Submit to Store**.
@@ -334,7 +334,7 @@ To publish an update:
 2. Push to `main` — CI builds and uploads the new MSIX artifact.
 3. In Partner Center, upload the new MSIX and submit.
 
-> The Microsoft Store requires each submission's version to be **greater than** the previous. The project is configured to build `2.0.4.0`; verify the version currently shown in Partner Center before submitting.
+> The Microsoft Store requires each submission's version to be **greater than** the previous. The project is configured to build `2.0.5.0`; verify the version currently shown in Partner Center before submitting.
 
 ---
 

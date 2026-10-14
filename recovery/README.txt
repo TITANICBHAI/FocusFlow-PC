@@ -1,5 +1,5 @@
 ================================================================================
-  FocusFlow Emergency Recovery Tool  v2.0.4
+  FocusFlow Emergency Recovery Tool  v2.0.5
   by TBTechs  |  Last-resort escape hatch for locked-down machines
 ================================================================================
 
@@ -22,7 +22,7 @@ A recovery log is written to your Desktop after each run
 HOW TO RUN
 ----------
 Option A — Normal Windows (recommended):
-  1. Double-click FocusFlow-Recovery-2.0.4.exe
+  1. Double-click FocusFlow-Recovery-2.0.5.exe
   2. The app checks automatically whether it is running as Administrator.
      If not, click the amber "Relaunch as Administrator" button — this
      re-opens the tool with elevated rights in one click (no manual
@@ -31,7 +31,7 @@ Option A — Normal Windows (recommended):
   4. Click "Restart Windows Now" when the recovery completes.
 
 Option B — From a USB Drive:
-  Copy this entire folder (FocusFlow-Recovery-2.0.4.exe + README.txt) to
+  Copy this entire folder (FocusFlow-Recovery-2.0.5.exe + README.txt) to
   a USB drive. Plug it into the affected machine and double-click the EXE.
   No installation required — the runtime is fully bundled.
 
@@ -41,7 +41,7 @@ Option C — Windows Safe Mode:
      press F4 for Safe Mode).
   2. Plug in your USB drive.
   3. Open File Explorer, navigate to the USB drive, and double-click
-     FocusFlow-Recovery-2.0.4.exe.
+     FocusFlow-Recovery-2.0.5.exe.
   4. Use "Relaunch as Administrator" if prompted, then click
      "Run Recovery Now".
   5. Restart your PC normally.

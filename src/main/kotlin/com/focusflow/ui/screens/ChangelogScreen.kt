@@ -31,6 +31,19 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
+        version    = "2.0.5",
+        date       = "October 2026",
+        badge      = "IMP",
+        badgeColor = Warning,
+        changes    = listOf(
+            "FIX" to "Launcher PIN entry is clearer, accepts normalized input, and shows the one-time PIN in a readable format",
+            "IMP" to "Focus Launcher prevents duplicate launches, shows progress and errors, and raises existing app windows",
+            "FIX" to "Administrator relaunch now uses a verified handoff and keeps the current app open if elevation fails or is cancelled",
+            "IMP" to "Admin controls track active sessions and pulse only when elevated access is needed",
+            "IMP" to "Full OS lockdown and protected-process notices can be dismissed independently"
+        )
+    ),
+    ChangelogEntry(
         version    = "2.0.4",
         date       = "October 2026",
         badge      = "FIX",
