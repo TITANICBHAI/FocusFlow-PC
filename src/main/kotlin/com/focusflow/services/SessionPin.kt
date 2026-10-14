@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.data.requireSuccess
 import java.security.MessageDigest
 
 /**
@@ -15,13 +16,17 @@ object SessionPin {
 
     private const val KEY = "session_pin_hash"
 
-    fun isSet(): Boolean = Database.getSetting(KEY)?.isNotBlank() == true
+    fun isSet(): Boolean = when (val stored = Database.readSetting(KEY)) {
+        is Database.SettingRead.Present -> stored.value.isNotBlank()
+        Database.SettingRead.Absent -> false
+        is Database.SettingRead.Unreadable -> true
+    }
 
     fun set(rawPin: String) {
         require(rawPin.length in PinPolicy.MIN_LENGTH..PinPolicy.MAX_LENGTH) {
             "PIN must be between ${PinPolicy.MIN_LENGTH} and ${PinPolicy.MAX_LENGTH} characters"
         }
-        Database.setSetting(KEY, sha256(rawPin))
+        Database.writeSetting(KEY, sha256(rawPin)).requireSuccess("set Session PIN")
     }
 
     /**
@@ -31,39 +36,28 @@ object SessionPin {
      */
     fun autoGenerate(): String {
         val pin = PinPolicy.generate()
-        Database.setSetting(KEY, sha256(pin))
+        Database.writeSetting(KEY, sha256(pin)).requireSuccess("generate Session PIN")
         return pin
     }
 
     fun verify(rawPin: String): Boolean {
-        val stored = Database.getSetting(KEY)
-        // null  → KEY was never written; no PIN configured → pass through
-        // blank → KEY was explicitly cleared (clearForced / clear); treat as not set → pass through
-        //
-        // IMPORTANT: do NOT treat null and blank identically here via isNullOrBlank().
-        // After autoGenerate() stores a hash, a transient DB read error would return null
-        // or an empty string. Both must correctly deny access when a hash IS stored.
-        // We resolve this by checking isSet() independently in the caller before calling
-        // verify(). Within verify() itself, we keep the original passthrough for both
-        // null and blank because clearForced() stores "" to mark "no PIN active", and
-        // the caller's isSet() guard prevents verify() from being invoked in that state.
-        //
-        // If stored is non-null but blank: caller's isSet() already returned false
-        // (because getSetting(KEY)?.isNotBlank() == false), so this line is never
-        // reached with a stale non-blank hash in `stored` — safe as-is.
-        if (stored.isNullOrBlank()) return true
-        return stored == sha256(rawPin)
+        return when (val stored = Database.readSetting(KEY)) {
+            is Database.SettingRead.Present ->
+                stored.value.isBlank() || stored.value == sha256(rawPin)
+            Database.SettingRead.Absent -> true
+            is Database.SettingRead.Unreadable -> false
+        }
     }
 
     fun clear(rawPin: String): Boolean {
         if (!verify(rawPin)) return false
-        Database.setSetting(KEY, "") // isSet() treats blank as unset
+        Database.writeSetting(KEY, "").requireSuccess("clear Session PIN")
         return true
     }
 
     /** Clear PIN unconditionally (called when a session ends naturally). */
     fun clearForced() {
-        Database.setSetting(KEY, "")
+        Database.writeSetting(KEY, "").requireSuccess("clear Session PIN")
     }
 
     private fun sha256(input: String): String {

@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.data.requireSuccess
 import java.security.MessageDigest
 
 /**
@@ -18,15 +19,27 @@ object GlobalPin {
     private const val KEY          = "global_pin_hash"
     private const val DECLINED_KEY = "global_pin_skipped"
 
-    fun isSet(): Boolean     = Database.getSetting(KEY)?.isNotBlank() == true
-    fun isDeclined(): Boolean = Database.getSetting(DECLINED_KEY) == "true"
-    fun setDeclined()         { Database.setSetting(DECLINED_KEY, "true") }
+    fun isSet(): Boolean = when (val stored = Database.readSetting(KEY)) {
+        is Database.SettingRead.Present -> stored.value.isNotBlank()
+        Database.SettingRead.Absent -> false
+        is Database.SettingRead.Unreadable -> true
+    }
+
+    fun isDeclined(): Boolean = when (val stored = Database.readSetting(DECLINED_KEY)) {
+        is Database.SettingRead.Present -> stored.value == "true"
+        Database.SettingRead.Absent,
+        is Database.SettingRead.Unreadable -> false
+    }
+
+    fun setDeclined() {
+        Database.writeSetting(DECLINED_KEY, "true").requireSuccess("decline Global PIN setup")
+    }
 
     fun set(rawPin: String) {
         require(rawPin.length in PinPolicy.MIN_LENGTH..PinPolicy.MAX_LENGTH) {
             "PIN must be between ${PinPolicy.MIN_LENGTH} and ${PinPolicy.MAX_LENGTH} characters"
         }
-        Database.setSetting(KEY, sha256(rawPin))
+        Database.writeSetting(KEY, sha256(rawPin)).requireSuccess("set Global PIN")
     }
 
     /**
@@ -35,20 +48,23 @@ object GlobalPin {
      */
     fun autoGenerate(): String {
         val pin = PinPolicy.generate()
-        Database.setSetting(KEY, sha256(pin))
+        Database.writeSetting(KEY, sha256(pin)).requireSuccess("generate Global PIN")
         return pin
     }
 
     /** Returns true if PIN is correct OR if no PIN is set (unguarded). */
     fun verify(rawPin: String): Boolean {
-        val stored = Database.getSetting(KEY)
-        if (stored.isNullOrBlank()) return true
-        return stored == sha256(rawPin)
+        return when (val stored = Database.readSetting(KEY)) {
+            is Database.SettingRead.Present ->
+                stored.value.isBlank() || stored.value == sha256(rawPin)
+            Database.SettingRead.Absent -> true
+            is Database.SettingRead.Unreadable -> false
+        }
     }
 
     fun clear(rawPin: String): Boolean {
         if (!verify(rawPin)) return false
-        Database.setSetting(KEY, "")
+        Database.writeSetting(KEY, "").requireSuccess("clear Global PIN")
         return true
     }
 
@@ -58,8 +74,10 @@ object GlobalPin {
      * Also resets the "declined" flag so the setup dialog will be offered again.
      */
     fun resetWithoutPin() {
-        Database.setSetting(KEY, "")
-        Database.setSetting(DECLINED_KEY, "false")
+        val pinWrite = Database.writeSetting(KEY, "")
+        val declinedWrite = Database.writeSetting(DECLINED_KEY, "false")
+        pinWrite.requireSuccess("reset Global PIN")
+        declinedWrite.requireSuccess("reset Global PIN setup choice")
     }
 
     private fun sha256(input: String): String {

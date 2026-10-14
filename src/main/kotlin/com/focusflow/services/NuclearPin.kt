@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.data.requireSuccess
 import java.security.MessageDigest
 
 /**
@@ -23,7 +24,11 @@ object NuclearPin {
     private const val KEY = "nuclear_pin_hash"
 
     /** Returns true if a PIN hash is stored and non-blank. */
-    fun isSet(): Boolean = Database.getSetting(KEY)?.isNotBlank() == true
+    fun isSet(): Boolean = when (val stored = Database.readSetting(KEY)) {
+        is Database.SettingRead.Present -> stored.value.isNotBlank()
+        Database.SettingRead.Absent -> false
+        is Database.SettingRead.Unreadable -> true
+    }
 
     /**
      * Store a new PIN. Throws [IllegalArgumentException] if rawPin is shorter than 4 chars.
@@ -31,7 +36,7 @@ object NuclearPin {
      */
     fun set(rawPin: String) {
         require(rawPin.length >= 4) { "Nuclear Mode PIN must be at least 4 characters" }
-        Database.setSetting(KEY, sha256(rawPin))
+        Database.writeSetting(KEY, sha256(rawPin)).requireSuccess("set Nuclear Mode PIN")
     }
 
     /**
@@ -41,9 +46,12 @@ object NuclearPin {
      * error returning null does not accidentally grant access when a hash IS stored.
      */
     fun verify(rawPin: String): Boolean {
-        val stored = Database.getSetting(KEY)
-        if (stored.isNullOrBlank()) return true
-        return stored == sha256(rawPin)
+        return when (val stored = Database.readSetting(KEY)) {
+            is Database.SettingRead.Present ->
+                stored.value.isBlank() || stored.value == sha256(rawPin)
+            Database.SettingRead.Absent -> true
+            is Database.SettingRead.Unreadable -> false
+        }
     }
 
     /**
@@ -52,13 +60,13 @@ object NuclearPin {
      */
     fun clear(rawPin: String): Boolean {
         if (!verify(rawPin)) return false
-        Database.setSetting(KEY, "")
+        Database.writeSetting(KEY, "").requireSuccess("clear Nuclear Mode PIN")
         return true
     }
 
     /** Clear the PIN unconditionally (emergency recovery path only). */
     fun clearForced() {
-        Database.setSetting(KEY, "")
+        Database.writeSetting(KEY, "").requireSuccess("clear Nuclear Mode PIN")
     }
 
     private fun sha256(input: String): String {
