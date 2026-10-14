@@ -3,7 +3,7 @@
 - **Review date:** 2026-10-14
 - **App version at review:** 2.0.5
 - **Source plan:** [`fixes/plan.md`](fixes/plan.md)
-- **Status:** Static source/test-inventory review only. No application code, tests, audit scripts, telemetry, or Windows checks were run.
+- **Status:** Static source/test-inventory review plus the Phase 0 root test baseline. No application code, audit scripts, external telemetry, or Windows checks were run.
 
 ## Current-source corrections
 
@@ -28,6 +28,8 @@ The current test task does not set `focusflow.app.version` or `focusflow.telemet
 - **Verified:** `DatabaseTest` uses JUnit `@TempDir` and passes explicit temporary DB files to every `Database.init` call; `SqliteJdbcNativeSmokeTest` also uses `@TempDir`. No direct external HTTP or telemetry-client references were found in `src/test`.
 - **Safety discrepancy:** `SingleInstanceGuardTest` calls `SingleInstanceGuard.acquire()`. That implementation starts a `ServerSocket` bound to `InetAddress.getLoopbackAddress()` and exercises a `Socket` handoff to the same loopback address. This is local-only IPC, not an external endpoint, but it is still a TCP network call under the literal test rule.
 - **Decision/effect:** The full `gradle :test --no-daemon` baseline was not run. No helpers, helper tests, or production changes were made. The owner left the loopback permission unanswered and said to use best judgment; this does not explicitly permit a network call, so Phase 0 remains blocked under the strict no-network rule. Do not silently exclude or change the existing test.
+- **Owner clarification (2026-10-14):** The owner authorized loopback-only IPC for the baseline; external network and telemetry calls remain prohibited. `Database.finishFailed()` calls `CrashReporter.reportCritical()` only when the failed path matches the default DB path; existing `DatabaseTest` failures pass explicit `@TempDir` paths and do not reach this telemetry call. The baseline is now proceeding without test-source changes.
+- **Baseline result (2026-10-14):** Root `gradle :test --no-daemon` passed with 98 tests, 0 failures/errors/skips, and 19 JUnit XML files. The test worker used GraalVM CE 22.3.1 / OpenJDK 19.0.2; Gradle launcher/daemon used JDK 21.0.7. See `fixes/PHASE-0-REPORT.md` for duration and the non-failing AWT shutdown exception.
 - **Runtime observation:** With the workflow's GraalVM `JAVA_HOME`, `java -version` reports GraalVM CE 19.0.2. `gradle --version` reports Gradle 8.14.2 with launcher JVM 21.0.7 and daemon JVM 21.0.7+6; `build.gradle.kts` configures Kotlin's toolchain as Java 19. No test-worker JVM was observed because tests were not run.
 - **P0-3 owner facts:** The owner says the reports were produced by a Claude agent running in Claude's app; the underlying execution host/OS is unknown. The owner does not know the `%TEMP%`/security-software context. No crash-log excerpt or raw user path was requested or inspected.
 
