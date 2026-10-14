@@ -1357,6 +1357,41 @@ object Database {
 
     // ── Settings ──────────────────────────────────────────────────────────────
 
+    internal sealed interface SettingReadResult {
+        data class Found(val value: String) : SettingReadResult
+        data object Missing : SettingReadResult
+        data object NotReady : SettingReadResult
+        data class Unreadable(val failure: Throwable) : SettingReadResult
+    }
+
+    /**
+     * Typed read used only by the one-time telemetry-consent migration. Unlike
+     * getSetting(), this keeps a missing setting distinct from a failed read.
+     */
+    @Synchronized
+    internal fun readSettingForConsentMigration(key: String): SettingReadResult {
+        if (!isReady) return SettingReadResult.NotReady
+        return try {
+            connection.prepareStatement("SELECT value FROM settings WHERE key = ?").use { ps ->
+                ps.setString(1, key)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) {
+                        rs.getString("value")?.let(SettingReadResult::Found)
+                            ?: SettingReadResult.Missing
+                    } else {
+                        SettingReadResult.Missing
+                    }
+                }
+            }
+        } catch (cancelled: java.util.concurrent.CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            SettingReadResult.Unreadable(failure)
+        }
+    }
+
     @Synchronized fun getSetting(key: String): String? {
         if (!isReady) return null
         return try {

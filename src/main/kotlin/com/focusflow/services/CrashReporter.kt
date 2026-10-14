@@ -113,6 +113,13 @@ object CrashReporter {
                 productionTelemetrySink
             }
 
+    /** Final fail-closed privacy gate shared by production and the no-network test sink. */
+    private fun postConsentedTelemetry(sink: TelemetrySink, payload: String) {
+        if (!TelemetryConsent.isGranted()) return
+        val redacted = TelemetryRedactor.redactForCurrentUser(payload) ?: return
+        sink.post(redacted)
+    }
+
     // ── AWT EDT exception handler ─────────────────────────────────────────────
 
     /**
@@ -574,14 +581,13 @@ object CrashReporter {
      *   • Title prefix "🟠 Critical Silent Error" rather than "⚠️ Production Crash".
      *   • No JVM exit — the app keeps running.
      *
-     * Respects the user's crash_reports_enabled privacy setting.
+     * Sends only after DB-independent explicit consent has been granted.
      * Fires on a daemon background thread; never throws.
      */
     fun reportCritical(source: String, message: String, throwable: Throwable? = null) {
         val sink = selectedTelemetrySink()
         if (sink === NoopTelemetrySink) return
-        val optedIn = try { Database.getSetting("crash_reports_enabled") != "false" } catch (_: Throwable) { true }
-        if (!optedIn) return
+        if (!TelemetryConsent.isGranted()) return
 
         Thread {
             try {
@@ -620,7 +626,11 @@ object CrashReporter {
                     }
                 """.trimIndent()
 
-                sink.post(payload)
+                postConsentedTelemetry(sink, payload)
+            } catch (cancelled: java.util.concurrent.CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
             } catch (_: Throwable) {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }
@@ -778,14 +788,10 @@ object CrashReporter {
     internal fun sendToDiscord(throwable: Throwable, source: String) {
         val sink = selectedTelemetrySink()
         if (sink === NoopTelemetrySink) return
+        if (!TelemetryConsent.isGranted()) return
 
         // ── Benign filter — drop well-known harmless Compose/coroutine noise ──
         if (isKnownBenign(throwable)) return
-
-        // ── User opt-out — respect the Privacy setting in Settings screen ──
-        // Default is true (opted in). Only skip if the user explicitly set it to "false".
-        val optedIn = try { Database.getSetting("crash_reports_enabled") != "false" } catch (_: Throwable) { true }
-        if (!optedIn) return
 
         try {
                 val rawTrace = throwable.stackTraceToString()
@@ -826,7 +832,11 @@ object CrashReporter {
                     }
                 """.trimIndent()
 
-                sink.post(payload)
+                postConsentedTelemetry(sink, payload)
+            } catch (cancelled: java.util.concurrent.CancellationException) {
+                throw cancelled
+            } catch (fatal: VirtualMachineError) {
+                throw fatal
             } catch (_: Throwable) {
                 // Intentionally silent — telemetry must never cause secondary failures.
             }

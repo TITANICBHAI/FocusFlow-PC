@@ -35,7 +35,7 @@ class TelemetrySinkTest {
                 assertIs<DbInitResult.Ready>(
                     Database.init(dbFile = dbFile, allowRecovery = false)
                 )
-                Database.setSetting("crash_reports_enabled", "true")
+                assertTrue(TelemetryConsent.save(TelemetryConsentState.GRANTED))
 
                 CrashReporter.telemetrySinkOverrideForTest = fake
                 CrashReporter.reportCritical("F4.0 test", "critical report")

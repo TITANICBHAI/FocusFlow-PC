@@ -54,7 +54,7 @@ Block Defense prevents circumvention — protecting enforcement even when you're
 ──────────────────────────────────────
 🔐 PRIVATE BY DESIGN
 ──────────────────────────────────────
-Everything stays on your device. No account required. No cloud sync. No data collection. All settings, tasks, and statistics are stored locally in a SQLite database on your PC.
+No account or cloud sync. Your settings, tasks, and statistics stay in a local SQLite database on your PC. Crash and critical-error diagnostics are off until you explicitly opt in. If enabled, a bounded technical report is sent to the FocusFlow developers through Discord, which receives your IP address as part of the connection. Error text may contain local paths or other context; FocusFlow redacts your current username, home path, and computer name before sending, but cannot guarantee every identifier is removed. Full local crash logs remain on your PC.
 
 ──────────────────────────────────────
 Runs quietly in the system tray. Blocking stays active even when the window is closed. Built for Windows 10 and Windows 11.

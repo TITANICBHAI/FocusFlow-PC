@@ -117,9 +117,14 @@ maximum focus with no escape hatch.
 ──────────────────────────────────────
 🔐 PRIVATE BY DESIGN
 ──────────────────────────────────────
-Everything stays on your device. No account required. No cloud sync. No 
-data collection. All settings, tasks, and statistics are stored locally in 
-a SQLite database on your PC.
+No account or cloud sync. Your settings, tasks, and statistics stay in a local 
+SQLite database on your PC. Crash and critical-error diagnostics are off until 
+you explicitly opt in. If enabled, a bounded technical report is sent to the 
+FocusFlow developers through Discord; Discord receives your IP address as part 
+of the connection. Error text may contain local paths or other context. 
+FocusFlow redacts your current username, home path, and computer name before 
+sending, but cannot guarantee every identifier is removed. Full local crash 
+logs remain on your PC.
 
 ──────────────────────────────────────
 Runs quietly in the system tray. Blocking stays active even when the 
@@ -165,15 +170,16 @@ NUCLEAR MODE
 When you need maximum enforcement, Nuclear Mode blocks over 30 escape routes — including Task Manager, the Windows Run dialog, PowerShell, command prompt, browser consoles, and system utilities — so there is no easy way out. You chose to focus. Nuclear Mode makes that choice stick.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PRIVACY — YOUR DATA STAYS ON YOUR PC
+PRIVACY — LOCAL DATA, OPT-IN CRASH REPORTS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 • No account required — install and use immediately
 • No internet connection needed — all features work completely offline
-• No telemetry, analytics, or usage data sent anywhere
 • All data stored locally in a SQLite database at %USERPROFILE%\.focusflow\
 • Automatic rolling backups stored locally — your data is safe
-• Crash logs written locally only — never transmitted
+• Crash diagnostics are sent only after explicit opt-in; reports go through Discord, which sees your IP address
+• Error text can include paths or other context; the current username, home path, and computer name are redacted, but other identifiers may remain
+• Full local crash logs stay on your PC; only a bounded technical report may be sent
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SYSTEM & CONVENIENCE
@@ -203,7 +209,7 @@ FocusFlow is a focus enforcement productivity app. It declares the runFullTrust 
 
 4. WINDOWS STARTUP: The app can optionally add itself to the HKCU\Software\Microsoft\Windows\CurrentVersion\Run registry key to start with Windows. This is an explicit opt-in toggle in Settings.
 
-No data leaves the device. No telemetry, analytics, accounts, or network calls are made by the app itself. All data is stored in %USERPROFILE%\.focusflow\ (SQLite database + local backups + local crash log only).
+The app has no account or cloud backend. Normal focus features work offline. Crash/critical-error diagnostics are sent only after the user explicitly opts in; a bounded report containing technical error details and system/software information is delivered to the FocusFlow developers through Discord. Discord receives the sender's IP address as part of the connection. Error text may contain local paths or other context; FocusFlow redacts the current username, home path, and computer name before sending but cannot guarantee every identifier is removed. Full local crash logs, app data, and backups remain on the device. User-submitted issue feedback is sent only when the user chooses to submit it.
 
 Privacy Policy: https://focusflowpc.pages.dev/privacy-policy/
 Terms of Service: https://focusflowpc.pages.dev/terms-of-service/

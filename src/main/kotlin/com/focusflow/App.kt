@@ -60,6 +60,8 @@ import com.focusflow.ui.components.WindowsStartupPromptDialog
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.CrashReporter
+import com.focusflow.services.TelemetryConsent
+import com.focusflow.services.TelemetryConsentState
 import com.focusflow.services.ElevationRelaunchService
 import com.focusflow.services.ElevationRelaunchStatus
 import com.focusflow.ui.screens.*
@@ -117,12 +119,33 @@ fun App() {
     var postPinRecommendationsShown by remember { mutableStateOf(false) }
     val showReviewPrompt    by ReviewPromptService.shouldShow.collectAsState()
     var showTelemetryConsent     by remember { mutableStateOf(false) }
+    var telemetryConsentError by remember { mutableStateOf<String?>(null) }
+    var telemetryConsentSaving by remember { mutableStateOf(false) }
     var showRegistryOrphanDialog by remember { mutableStateOf(false) }
     var sidebarCollapsed    by remember { mutableStateOf(false) }
     val isAdmin = remember { ElevationManager.isElevated }
     // Admin-requiring features that are currently active — drives urgent button styling.
     var activeAdminFeatures by remember { mutableStateOf<List<String>>(emptyList()) }
     val scope               = rememberCoroutineScope()
+
+    fun saveTelemetryConsent(granted: Boolean) {
+        if (telemetryConsentSaving) return
+        telemetryConsentSaving = true
+        telemetryConsentError = null
+        scope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                TelemetryConsent.save(
+                    if (granted) TelemetryConsentState.GRANTED else TelemetryConsentState.DENIED
+                )
+            }
+            telemetryConsentSaving = false
+            if (saved) {
+                showTelemetryConsent = false
+            } else {
+                telemetryConsentError = "Could not save your choice. Crash reports remain disabled."
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         LocalizationManager.loadSavedLanguage()
@@ -186,10 +209,19 @@ fun App() {
             // Show at open 5+: cooldown elapsed OR new version — open count gate applies in both
             // cases so a fresh install or version update never fires this before open 5.
             val showAndroid = !fl && openCount >= 5 && (daysSinceShown >= 30 || isNewVersion)
-            // Show telemetry consent on the 2nd launch (after onboarding is done)
-            // if the user has never been asked (null = never set, as opposed to "true"/"false").
-            val showConsent = !fl
-                && Database.getSetting("crash_reports_enabled") == null
+            // Migrate the legacy DB preference once. The file-backed consent remains
+            // authoritative and reporting stays disabled unless it explicitly says GRANTED.
+            val legacyConsent = if (Database.isReady) {
+                Database.readSettingForConsentMigration(TelemetryConsent.LEGACY_SETTING_KEY)
+            } else {
+                Database.SettingReadResult.NotReady
+            }
+            TelemetryConsent.migrateLegacyOnce(legacyConsent)
+            val consent = TelemetryConsent.state()
+            val showConsent = !fl && (
+                consent == TelemetryConsentState.UNKNOWN ||
+                    consent == TelemetryConsentState.UNREADABLE
+                )
             // Show the Edge extension exactly on the 20th completed app open.
             // Dismissal is permanent so this is never shown again on this install.
             val showEdgeExtension = !fl
@@ -496,18 +528,10 @@ fun App() {
 
         if (showTelemetryConsent) {
             TelemetryConsentDialog(
-                onAllow = {
-                    showTelemetryConsent = false
-                    scope.launch(Dispatchers.IO) {
-                        Database.setSetting("crash_reports_enabled", "true")
-                    }
-                },
-                onDecline = {
-                    showTelemetryConsent = false
-                    scope.launch(Dispatchers.IO) {
-                        Database.setSetting("crash_reports_enabled", "false")
-                    }
-                }
+                saving = telemetryConsentSaving,
+                saveError = telemetryConsentError,
+                onAllow = { saveTelemetryConsent(granted = true) },
+                onDecline = { saveTelemetryConsent(granted = false) },
             )
         }
 

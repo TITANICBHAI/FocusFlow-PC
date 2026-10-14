@@ -67,7 +67,9 @@ fun SettingsScreen() {
     var focusLockUntilTimer   by remember { mutableStateOf(false) }
     var showAlwaysOnPinDialog by remember { mutableStateOf(false) }
     var pendingAlwaysOnValue  by remember { mutableStateOf(false) }
-    var crashReportsEnabled   by remember { mutableStateOf(true) }
+    var crashReportsEnabled   by remember { mutableStateOf(false) }
+    var crashConsentSaving    by remember { mutableStateOf(false) }
+    var crashConsentError     by remember { mutableStateOf<String?>(null) }
     // Nuclear Mode PIN state
     var nuclearPinSet         by remember { mutableStateOf(false) }
     var showNuclearPinGate    by remember { mutableStateOf(false) }
@@ -105,7 +107,9 @@ fun SettingsScreen() {
             val bc         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_break_chime") ?: ChimeStyle.DEFAULT.name }
             val ac         = withContext(Dispatchers.IO) { Database.getSetting("aversion_sound_style") ?: ChimeStyle.DEFAULT.name }
             val lockUntil   = withContext(Dispatchers.IO) { Database.getSetting("focus_lock_until_timer") == "true" }
-            val crashRep    = withContext(Dispatchers.IO) { Database.getSetting("crash_reports_enabled") != "false" }
+            val crashRep    = withContext(Dispatchers.IO) {
+                com.focusflow.services.TelemetryConsent.isGranted()
+            }
             val vol         = withContext(Dispatchers.IO) { Database.getSetting("sound_volume")?.toFloatOrNull() ?: 1.0f }
             val ods         = withContext(Dispatchers.IO) { Database.getSetting("overlay_dismiss_seconds")?.toIntOrNull() ?: 4 }
             val showOverlay = withContext(Dispatchers.IO) { Database.getSetting("block_overlay_enabled") != "false" }
@@ -795,19 +799,32 @@ fun SettingsScreen() {
         item {
             SectionCard(title = "Privacy") {
                 SettingRow(
-                    label    = "Send anonymous diagnostics",
-                    subtitle = "Covers crash reports and stack traces so we can fix bugs. No task names, usernames, file paths, or personal data are ever included.",
+                    label    = "Send crash diagnostics",
+                    subtitle = crashConsentError
+                        ?: "Opt-in only. Error and software details go to FocusFlow via Discord, which sees your IP address. Username, home path, and computer name are redacted, but other error context or paths may remain.",
                     trailing = {
                         Switch(
                             checked = crashReportsEnabled,
                             onCheckedChange = { enabled ->
-                                crashReportsEnabled = enabled
+                                if (crashConsentSaving) return@Switch
+                                crashConsentSaving = true
+                                crashConsentError = null
                                 scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        Database.setSetting("crash_reports_enabled", enabled.toString())
+                                    val saved = withContext(Dispatchers.IO) {
+                                        com.focusflow.services.TelemetryConsent.save(
+                                            if (enabled) com.focusflow.services.TelemetryConsentState.GRANTED
+                                            else com.focusflow.services.TelemetryConsentState.DENIED
+                                        )
+                                    }
+                                    crashConsentSaving = false
+                                    if (saved) {
+                                        crashReportsEnabled = enabled
+                                    } else {
+                                        crashConsentError = "Could not save your choice. Crash reports remain disabled."
                                     }
                                 }
-                            }
+                            },
+                            enabled = !crashConsentSaving,
                         )
                     }
                 )

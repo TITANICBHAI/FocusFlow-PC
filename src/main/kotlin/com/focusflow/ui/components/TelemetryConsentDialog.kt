@@ -24,23 +24,18 @@ import com.focusflow.ui.theme.*
  * Shown once on first launch (after onboarding) to give users an explicit
  * opt-in/out choice before any crash report is ever sent.
  *
- * What we collect (anonymous only):
- *   • Crash stack traces — so we can fix bugs faster
- *
- * What we NEVER collect:
- *   • Task names, notes, or any user-created content
- *   • Which apps you block
- *   • Your name, email, or any personal identifier
- *   • Your IP address
- *
- * Calling [onAllow] saves crash_reports_enabled = "true".
- * Calling [onDecline] saves crash_reports_enabled = "false".
- * Both paths prevent this dialog from ever showing again.
+ * Crash reports are opt-in and are delivered to the FocusFlow developers
+ * through Discord. Discord receives the sender's IP address. Diagnostic text
+ * can contain paths or other error context; the current username, home path,
+ * and computer name are redacted before sending, but other identifiers may
+ * remain.
  */
 @Composable
 fun TelemetryConsentDialog(
     onAllow:  () -> Unit,
-    onDecline: () -> Unit
+    onDecline: () -> Unit,
+    saving: Boolean = false,
+    saveError: String? = null,
 ) {
     Dialog(
         // Both flags false: user must click a button to choose.
@@ -71,7 +66,7 @@ fun TelemetryConsentDialog(
                 )
 
                 Text(
-                    "Help improve FocusFlow?",
+                    "Allow crash diagnostics?",
                     style      = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color      = OnSurface,
@@ -79,8 +74,11 @@ fun TelemetryConsentDialog(
                 )
 
                 Text(
-                    "We'd like to send anonymous diagnostic data so we can fix bugs " +
-                    "and improve performance. No personal information is ever collected.",
+                    "If you allow reports, FocusFlow sends crash/error diagnostics to the " +
+                    "developers through Discord, a third-party service. Discord receives your " +
+                    "IP address when a report is sent. Diagnostic text may contain local paths " +
+                    "or other error context. FocusFlow redacts your current username, home path, " +
+                    "and computer name, but cannot guarantee every identifier is removed.",
                     style      = MaterialTheme.typography.bodyMedium,
                     color      = OnSurface2,
                     textAlign  = TextAlign.Center,
@@ -93,10 +91,10 @@ fun TelemetryConsentDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                         ConsentBullet(label = "Crash reports & stack traces",       allowed = true)
-                         ConsentBullet(label = "Task names, notes, or session data", allowed = false)
-                         ConsentBullet(label = "Which apps you block",               allowed = false)
-                         ConsentBullet(label = "Your name, email, or IP address",    allowed = false)
+                         ConsentBullet(label = "Error details, source, and software/OS information", allowed = true)
+                         ConsentBullet(label = "Task names, notes, or session data",                allowed = false)
+                         ConsentBullet(label = "Username, home path, and computer name (redacted)", allowed = false)
+                         ConsentBullet(label = "Your IP address visible to Discord",                 allowed = true)
                     }
                 }
 
@@ -107,18 +105,28 @@ fun TelemetryConsentDialog(
                     textAlign = TextAlign.Center
                 )
 
+                if (saveError != null) {
+                    Text(
+                        saveError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Error,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+
                 Spacer(Modifier.height(2.dp))
 
                 Button(
                     onClick  = onAllow,
+                    enabled  = !saving,
                     modifier = Modifier.fillMaxWidth(),
                     shape    = RoundedCornerShape(12.dp),
                     colors   = ButtonDefaults.buttonColors(containerColor = Purple80)
                 ) {
-                    Text("Allow anonymous diagnostics", fontWeight = FontWeight.SemiBold)
+                    Text(if (saving) "Saving…" else "Allow crash reports", fontWeight = FontWeight.SemiBold)
                 }
 
-                TextButton(onClick = onDecline, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = onDecline, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
                     Text("No thanks", color = OnSurface2.copy(alpha = 0.6f), fontSize = 13.sp)
                 }
             }
