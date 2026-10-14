@@ -9,15 +9,27 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import java.awt.TrayIcon
+import java.util.logging.Level
+import java.util.logging.Logger
 
 object StandaloneBlockService {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val logger = Logger.getLogger(StandaloneBlockService::class.java.name)
+    private const val PROCESSES_KEY = "standalone_block_processes"
+    private const val UNTIL_KEY = "standalone_block_until"
+    private const val START_KEY = "standalone_block_start"
+    private val CLEAR_BLOCK_SETTINGS = linkedMapOf(
+        PROCESSES_KEY to "",
+        UNTIL_KEY to "0",
+        START_KEY to "0"
+    )
     // @Volatile: watchJob is assigned inside a scope.launch coroutine (IO thread)
     // and read/cancelled from stop() which may be called from the UI thread.
     // Without @Volatile the UI thread may see a stale null reference and fail
     // to cancel the watcher, leaving it running past the intended stop point.
     @Volatile private var watchJob: Job? = null
+    @Volatile private var loadRetryJob: Job? = null
 
     private val _block = MutableStateFlow<StandaloneBlock?>(null)
     val block: StateFlow<StandaloneBlock?> = _block
@@ -39,7 +51,7 @@ object StandaloneBlockService {
 
     /** Starts or schedules a standalone block.
      *  @param startMs epoch-ms when enforcement should begin; null = immediately. */
-    fun start(processNames: List<String>, durationMs: Long, startMs: Long? = null) {
+    fun start(processNames: List<String>, durationMs: Long, startMs: Long? = null): Boolean {
         val resolvedStart = startMs?.coerceAtLeast(System.currentTimeMillis()) ?: System.currentTimeMillis()
         val untilMs = resolvedStart + durationMs
         val newBlock = StandaloneBlock(
@@ -47,10 +59,15 @@ object StandaloneBlockService {
             untilMs      = untilMs,
             startMs      = if (startMs != null && startMs > System.currentTimeMillis()) startMs else null
         )
-        _block.value = newBlock
-        Database.setSetting("standalone_block_processes", processNames.joinToString(","))
-        Database.setSetting("standalone_block_until",     untilMs.toString())
-        Database.setSetting("standalone_block_start",     (newBlock.startMs ?: 0L).toString())
+        val persisted = writeSettings(
+            linkedMapOf(
+                PROCESSES_KEY to processNames.joinToString(","),
+                UNTIL_KEY to untilMs.toString(),
+                START_KEY to (newBlock.startMs ?: 0L).toString()
+            ),
+            "start standalone block"
+        )
+        _block.update { newBlock }
 
         if (newBlock.startMs == null) {
             // Immediate enforcement
@@ -71,9 +88,10 @@ object StandaloneBlockService {
         }
 
         startWatcher()
+        return persisted
     }
 
-    fun addTime(extraMs: Long) {
+    fun addTime(extraMs: Long): Boolean {
         // update{} is atomic — prevents a read-modify-write race if two UI events
         // (e.g., two rapid "Add 5 min" taps) call addTime() simultaneously.
         // Without it, both callers read the same current value, compute the same
@@ -85,10 +103,12 @@ object StandaloneBlockService {
             newUntil = nu
             current.copy(untilMs = nu)
         }
-        newUntil?.let { Database.setSetting("standalone_block_until", it.toString()) }
+        return newUntil?.let {
+            writeSetting(UNTIL_KEY, it.toString(), "extend standalone block")
+        } ?: true
     }
 
-    fun addApps(moreProcesses: List<String>) {
+    fun addApps(moreProcesses: List<String>): Boolean {
         // Same atomicity rationale as addTime() above.
         var finalMerged: List<String>? = null
         _block.update { current ->
@@ -97,38 +117,99 @@ object StandaloneBlockService {
             finalMerged = merged
             current.copy(processNames = merged)
         }
-        val merged = finalMerged ?: return
-        Database.setSetting("standalone_block_processes", merged.joinToString(","))
+        val merged = finalMerged ?: return true
+        val persisted = writeSetting(
+            PROCESSES_KEY,
+            merged.joinToString(","),
+            "add apps to standalone block"
+        )
         if (isActive) {
             ProcessMonitor.standaloneBlockedProcesses = merged.map { it.lowercase() }.toSet()
         }
+        return persisted
     }
 
-    fun stop() {
+    fun stop(): Boolean {
+        if (!writeSettings(CLEAR_BLOCK_SETTINGS, "stop standalone block")) return false
         _block.value = null
         watchJob?.cancel()
         watchJob = null
         ProcessMonitor.standaloneBlockedProcesses = emptySet()
-        Database.setSetting("standalone_block_processes", "")
-        Database.setSetting("standalone_block_until",     "0")
-        Database.setSetting("standalone_block_start",     "0")
         SystemTrayManager.updateTooltip("FocusFlow — Ready")
         ReviewPromptService.triggerCheck()
+        return true
     }
 
     fun loadFromDb() {
-        val processes  = Database.getSetting("standalone_block_processes") ?: ""
-        val until      = Database.getSetting("standalone_block_until")?.toLongOrNull() ?: 0L
-        val startEpoch = Database.getSetting("standalone_block_start")?.toLongOrNull() ?: 0L
+        if (loadFromDbOnce()) {
+            loadRetryJob?.cancel()
+            loadRetryJob = null
+        } else {
+            logger.log(
+                Level.WARNING,
+                "Standalone block settings are unreadable; retaining current state and retrying"
+            )
+            scheduleLoadRetry()
+        }
+    }
+
+    private fun loadFromDbOnce(): Boolean {
+        val processRead = Database.readSetting(PROCESSES_KEY)
+        val untilRead = Database.readSetting(UNTIL_KEY)
+        val startRead = Database.readSetting(START_KEY)
+        val unreadable = listOf(processRead, untilRead, startRead)
+            .filterIsInstance<Database.SettingRead.Unreadable>()
+            .firstOrNull()
+        if (unreadable != null) return false
+
+        val processes = when (processRead) {
+            is Database.SettingRead.Present -> processRead.value
+            Database.SettingRead.Absent -> ""
+            is Database.SettingRead.Unreadable -> return false
+        }
+        val until = when (untilRead) {
+            is Database.SettingRead.Present -> untilRead.value.toLongOrNull() ?: 0L
+            Database.SettingRead.Absent -> 0L
+            is Database.SettingRead.Unreadable -> return false
+        }
+        val startEpoch = when (startRead) {
+            is Database.SettingRead.Present -> startRead.value.toLongOrNull() ?: 0L
+            Database.SettingRead.Absent -> 0L
+            is Database.SettingRead.Unreadable -> return false
+        }
         val startMs    = if (startEpoch > 0L) startEpoch else null
         val now        = System.currentTimeMillis()
-        if (processes.isNotBlank() && until > now) {
-            val pList = processes.split(",").filter { it.isNotBlank() }
-            _block.value = StandaloneBlock(processNames = pList, untilMs = until, startMs = startMs)
-            if (startMs == null || now >= startMs) {
-                ProcessMonitor.standaloneBlockedProcesses = pList.map { it.lowercase() }.toSet()
+        val pList = processes.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        val restored = if (pList.isNotEmpty() && until > now) {
+            StandaloneBlock(processNames = pList, untilMs = until, startMs = startMs)
+        } else {
+            null
+        }
+        _block.update { restored }
+        ProcessMonitor.standaloneBlockedProcesses =
+            if (restored != null && (startMs == null || now >= startMs)) {
+                pList.map { it.lowercase() }.toSet()
+            } else {
+                emptySet()
             }
-            startWatcher()
+        if (restored != null) startWatcher()
+        else {
+            watchJob?.cancel()
+            watchJob = null
+        }
+        return true
+    }
+
+    private fun scheduleLoadRetry() {
+        if (loadRetryJob?.isActive == true) return
+        loadRetryJob = scope.launch {
+            while (isActive) {
+                delay(5_000)
+                if (loadFromDbOnce()) {
+                    loadRetryJob = null
+                    return@launch
+                }
+            }
         }
     }
 
@@ -159,10 +240,10 @@ object StandaloneBlockService {
                 // Expire when end time is reached
                 if (now >= b.untilMs) {
                     ProcessMonitor.standaloneBlockedProcesses = emptySet()
-                    _block.value = null
-                    Database.setSetting("standalone_block_processes", "")
-                    Database.setSetting("standalone_block_until",     "0")
-                    Database.setSetting("standalone_block_start",     "0")
+                    if (!writeSettings(CLEAR_BLOCK_SETTINGS, "expire standalone block")) {
+                        continue
+                    }
+                    _block.update { current -> if (current == b) null else current }
                     SystemTrayManager.showNotification(
                         "Block Ended",
                         "Standalone block expired.",
@@ -186,5 +267,32 @@ object StandaloneBlockService {
         val b = _block.value ?: return 0L
         val startMs = b.startMs ?: return 0L
         return maxOf(0L, startMs - System.currentTimeMillis())
+    }
+
+    private fun writeSetting(key: String, value: String, operation: String): Boolean =
+        when (val result = Database.writeSetting(key, value)) {
+            Database.SettingWrite.Ok -> true
+            is Database.SettingWrite.Failed -> {
+                logger.log(Level.WARNING, "Could not persist $operation", result.cause)
+                false
+            }
+        }
+
+    private fun writeSettings(pairs: Map<String, String>, operation: String): Boolean =
+        when (val result = Database.writeSettings(pairs)) {
+            Database.SettingWrite.Ok -> true
+            is Database.SettingWrite.Failed -> {
+                logger.log(Level.WARNING, "Could not persist $operation", result.cause)
+                false
+            }
+        }
+
+    internal fun resetForTest() {
+        watchJob?.cancel()
+        watchJob = null
+        loadRetryJob?.cancel()
+        loadRetryJob = null
+        _block.update { null }
+        ProcessMonitor.standaloneBlockedProcesses = emptySet()
     }
 }
