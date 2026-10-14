@@ -87,6 +87,8 @@ fun FocusLauncherScreen() {
     var showPinBeforeEnter by remember { mutableStateOf(false) }
     var generatedPin       by remember { mutableStateOf("") }
     var allowedAppsExpanded by remember { mutableStateOf(false) }
+    var showLockdownNotice by remember { mutableStateOf(true) }
+    var showProtectedProcessesNotice by remember { mutableStateOf(true) }
     var launcherPresets    by remember { mutableStateOf<List<FocusLauncherPreset>>(emptyList()) }
     var showPresetDialog   by remember { mutableStateOf(false) }
 
@@ -168,25 +170,41 @@ fun FocusLauncherScreen() {
         }
 
         // ── Warning banner ───────────────────────────────────────────────────
-        item {
-            Row(
-                modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .background(Warning.copy(alpha = 0.08f))
-                    .border(1.dp, Warning.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                    .padding(14.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment     = Alignment.Top
-            ) {
-                Icon(Icons.Default.Warning, null, tint = Warning, modifier = Modifier.size(16.dp).padding(top = 2.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(strings.launcherFullOsLockdown, color = Warning, fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        "Taskbar hidden, keyboard shortcuts disabled, all non-selected apps killed. " +
-                        (if (canBreak) "One 5-minute break available today. " else "Break already used today. ") +
-                        "Requires PIN to exit if hard-locked.",
-                        color = OnSurface2, style = MaterialTheme.typography.bodySmall
-                    )
+        if (showLockdownNotice) {
+            item {
+                Row(
+                    modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(Warning.copy(alpha = 0.08f))
+                        .border(1.dp, Warning.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment     = Alignment.Top
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = Warning, modifier = Modifier.size(16.dp).padding(top = 2.dp))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(strings.launcherFullOsLockdown, color = Warning, fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "Taskbar hidden, keyboard shortcuts disabled, all non-selected apps killed. " +
+                            (if (canBreak) "One 5-minute break available today. " else "Break already used today. ") +
+                            "Requires PIN to exit if hard-locked.",
+                            color = OnSurface2, style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    IconButton(
+                        onClick = { showLockdownNotice = false },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Dismiss full OS lockdown notice",
+                            tint = OnSurface2,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }
@@ -275,23 +293,37 @@ fun FocusLauncherScreen() {
         }
 
         // ── Launcher limitations ──────────────────────────────────────────────
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .background(Warning.copy(alpha = 0.07f))
-                    .border(1.dp, Warning.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp, vertical = 11.dp),
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Icon(Icons.Default.Info, null, tint = Warning, modifier = Modifier.size(17.dp))
-                Text(
-                    "Windows core, input and driver, security, audio, accessibility, " +
-                        "FocusFlow, and Java runtime processes are always protected and will not be terminated. " +
-                        "Some user processes may also require Administrator rights to stop.",
-                    color = OnSurface2,
-                    style = MaterialTheme.typography.bodySmall
-                )
+        if (showProtectedProcessesNotice) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(Warning.copy(alpha = 0.07f))
+                        .border(1.dp, Warning.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(Icons.Default.Info, null, tint = Warning, modifier = Modifier.size(17.dp))
+                    Text(
+                        "Windows core, input and driver, security, audio, accessibility, " +
+                            "FocusFlow, and Java runtime processes are always protected and will not be terminated. " +
+                            "Some user processes may also require Administrator rights to stop.",
+                        modifier = Modifier.weight(1f),
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    IconButton(
+                        onClick = { showProtectedProcessesNotice = false },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Dismiss protected-process notice",
+                            tint = OnSurface2,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
             }
         }
 

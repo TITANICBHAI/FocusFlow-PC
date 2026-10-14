@@ -28,9 +28,16 @@
 - [x] **C-6** Display the one-time PIN in larger monospace text, grouped in fours; retain the warning that it will not be shown again; do not add Copy.
 - [x] Run and record `SessionPinInputTest` coverage for spaces, tabs, newlines, hyphens, blank input, matching/mismatching values, and missing/blank hashes.
 - [ ] Verify the plan's PIN acceptance criteria; record any Windows-only checks that could not be performed.
+- [ ] **User-added UI request:** Make the Full OS lockdown and protected-process notices independently dismissible; leave the Running as Administrator status notice non-dismissible.
 
 ### Batch C notes
 Add dated entries here as work progresses. Keep previous entries.
+
+### 2026-10-14 — User-added Focus Launcher notices — In progress
+
+- **Scope:** Add a dismiss control to the Full OS lockdown notice and protected-process information notice only; keep the Running as Administrator notice unchanged. Dismissal is temporary for the current screen visit.
+- **Files changed:** None yet.
+- **Verification:** Pending.
 
 ### 2026-10-14 — Batch C — In progress
 
