@@ -4,8 +4,14 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class RelaunchTargetTest {
+
+    @Test
+    fun shellExecuteInfoStructureIsAccessibleToJna() {
+        assertTrue(ElevationManager.ShellExecuteInfo().size() > 0)
+    }
 
     @Test
     fun nonWindowsNeverAttemptsElevation() {

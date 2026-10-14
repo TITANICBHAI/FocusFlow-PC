@@ -304,7 +304,9 @@ object ElevationManager {
         "cbSize", "fMask", "hwnd", "lpVerb", "lpFile", "lpParameters", "lpDirectory",
         "nShow", "hInstApp", "lpIDList", "lpClass", "hkeyClass", "dwHotKey", "hIcon", "hProcess"
     )
-    private class ShellExecuteInfo : Structure() {
+    // JNA reflects these fields from its own package. A private nested class
+    // makes even its public @JvmField members inaccessible on Windows.
+    class ShellExecuteInfo : Structure() {
         @JvmField var cbSize: Int = 0
         @JvmField var fMask: Int = 0
         @JvmField var hwnd: Pointer? = null
