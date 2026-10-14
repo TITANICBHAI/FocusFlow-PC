@@ -2,7 +2,7 @@
 
 **Source plan:** [plan.md](plan.md)  
 **Companion instructions:** [preagent-prompt.md](preagent-prompt.md)  
-**Overall status:** Not started — the plan is organized; implementation and its verification have not started.
+**Overall status:** In progress — Batch C implementation and automated checks pass; interactive and Windows acceptance checks remain unverified.
 
 ## Tracking rules
 
@@ -20,13 +20,13 @@
 **Status:** In progress  
 **Start note:** 2026-10-14 — source inspection underway; no implementation change has been made yet.
 
-- [ ] **C-1** Add a dark launcher theme and named launcher color values.
-- [ ] **C-2** Wrap both primary and secondary launcher windows in that theme.
-- [ ] **C-3** Replace launcher use of app-theme-dependent `OnSurface` / `OnSurface2` with launcher colors; leave the main app theme globals unchanged.
-- [ ] **C-4** Make the PIN field readable in masked and revealed states; add monospace input, autofocus, Enter submission through the guarded confirmation path, placeholder, and live character count.
-- [ ] **C-5** Extract and use PIN normalization/matching: strip whitespace and hyphens, reject blank input, compare the expected SHA-256 hash, and fail closed for a missing/blank stored hash.
-- [ ] **C-6** Display the one-time PIN in larger monospace text, grouped in fours; retain the warning that it will not be shown again; do not add Copy.
-- [ ] Run and record `SessionPinInputTest` coverage for spaces, tabs, newlines, hyphens, blank input, matching/mismatching values, and missing/blank hashes.
+- [x] **C-1** Add a dark launcher theme and named launcher color values.
+- [x] **C-2** Wrap both primary and secondary launcher windows in that theme.
+- [x] **C-3** Replace launcher use of app-theme-dependent `OnSurface` / `OnSurface2` with launcher colors; leave the main app theme globals unchanged.
+- [ ] **C-4** Make the PIN field readable in masked and revealed states; add monospace input, autofocus, Enter submission through the guarded confirmation path, placeholder, and live character count. Code is implemented and compiles; keep unchecked until interactive display, focus, and Enter behavior is verified.
+- [x] **C-5** Extract and use PIN normalization/matching: strip whitespace and hyphens, reject blank input, compare the expected SHA-256 hash, and fail closed for a missing/blank stored hash.
+- [x] **C-6** Display the one-time PIN in larger monospace text, grouped in fours; retain the warning that it will not be shown again; do not add Copy.
+- [x] Run and record `SessionPinInputTest` coverage for spaces, tabs, newlines, hyphens, blank input, matching/mismatching values, and missing/blank hashes.
 - [ ] Verify the plan's PIN acceptance criteria; record any Windows-only checks that could not be performed.
 
 ### Batch C notes
@@ -38,6 +38,24 @@ Add dated entries here as work progresses. Keep previous entries.
 - **Current findings:** The current checkout contains the PIN dialog, multi-monitor launcher host, and one-time reveal UI from the plan. `verifyPin()` still compares the raw PIN hash exactly, and launcher text colors still come from theme globals; the service's current implementation differs from the archive snapshot.
 - **Files changed:** `Plan/tracker.md`, `src/main/kotlin/com/focusflow/ui/launcher/LauncherTheme.kt`, `LauncherWindow.kt`, `LauncherContent.kt`, `src/main/kotlin/com/focusflow/services/SessionPinInput.kt`, `FocusLauncherService.kt`, `src/main/kotlin/com/focusflow/ui/screens/FocusLauncherScreen.kt`, and `src/test/kotlin/com/focusflow/services/SessionPinInputTest.kt`.
 - **Verification:** Source references checked with `rg` and targeted reads. Implementation edits are in place; build/tests and acceptance checks are pending.
+
+### 2026-10-14 — Batch C — Update
+
+- **Meaningful changes:** Added an always-dark launcher theme and applied it to both launcher windows; moved launcher background/text colors to launcher-specific constants; improved PIN input colors, monospace styling, placeholder, autofocus, Enter submission, and length feedback; grouped and enlarged the setup PIN; extracted whitespace/hyphen normalization and fail-closed hash matching; added PIN matcher tests.
+- **Files changed:** `src/main/kotlin/com/focusflow/ui/launcher/LauncherTheme.kt`, `LauncherWindow.kt`, `LauncherContent.kt`, `src/main/kotlin/com/focusflow/services/SessionPinInput.kt`, `FocusLauncherService.kt`, `src/main/kotlin/com/focusflow/ui/screens/FocusLauncherScreen.kt`, and `src/test/kotlin/com/focusflow/services/SessionPinInputTest.kt`.
+- **Verification command:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1 && export PATH="$JAVA_HOME/bin:$PATH" && gradle test --no-daemon`
+- **Result:** `BUILD SUCCESSFUL`; `compileKotlin`, `compileTestKotlin`, and the full Gradle test task completed. `SessionPinInputTest` reports 4 tests, 0 failures, 0 errors, 0 skipped. Existing deprecation and coroutine opt-in warnings remain.
+- **Static check:** Targeted `rg` over `LauncherContent.kt` and `LauncherWindow.kt` for app `OnSurface` globals and duplicated launcher background/dialog literals returned no matches.
+- **Failed check retained:** The first static `rg` expression also searched `LauncherTheme.kt` and therefore matched the intentional centralized color constants. This was a false positive, not a code defect. The narrower rerun above passed.
+- **Not verified:** Dark/light app theme rendering, field autofocus and Enter behavior, eye-toggle readability, wrong-PIN UI, and Windows launcher behavior were not exercised interactively. The acceptance checkbox above remains unchecked.
+
+### 2026-10-14 — Unexpected workflow push
+
+- **Observed:** During workflow verification, the `Push to GitHub` workflow ran. The workflow log says it committed and pushed `6308690` to `main`; its changed-file list includes the Batch C code/test and tracker, plus the newly attached implementation prompt. The `.replit` `Project` workflow is configured as parallel and includes `Push to GitHub`.
+- **Instruction conflict:** The supplied pre-agent prompt explicitly prohibited pushes. The push was unintended; I did not intentionally invoke the `Push to GitHub` workflow.
+- **Response:** No additional GitHub workflow or remote operation was run, and I did not attempt a remote revert. Avoid the combined `Project` workflow for this task. Ask before changing its workflow configuration.
+- **Evidence:** `RefreshAllLogs` output for `Push to GitHub`; read-only `git show --stat --name-status HEAD` confirmed the local commit contents.
+- **Follow-up:** Interactive acceptance and the remaining Windows-only checks are still pending.
 
 ## Batch D — Launcher app launch flow
 
