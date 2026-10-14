@@ -41,6 +41,12 @@ object WeeklyReportService {
 
     var onReportReady: ((WeeklyReport) -> Unit)? = null
 
+    internal fun resetForTest() {
+        stopScheduler()
+        latestReport = null
+        _hasNewReport.value = false
+    }
+
     fun startScheduler() {
         if (schedulerJob?.isActive == true) return
         schedulerJob = scope.launch {
@@ -80,12 +86,33 @@ object WeeklyReportService {
         onReportReady = null
     }
 
+    internal suspend fun checkAndGenerateForTest() = checkAndGenerate()
+
     private suspend fun checkAndGenerate() {
-        val lastStr = Database.getSetting("weekly_report_last_generated")
-        val today   = LocalDate.now()
-        val last    = lastStr?.let {
-            try { LocalDate.parse(it) } catch (_: Exception) { null }
+        val lastRead = Database.readSetting("weekly_report_last_generated")
+        val last = when (lastRead) {
+            is Database.SettingRead.Present -> {
+                val parsed = runCatching { LocalDate.parse(lastRead.value) }.getOrNull()
+                if (parsed == null) {
+                    EnforcementLog.warn(
+                        "WeeklyReportService",
+                        "Last report date is malformed; skipping generation rather than treating it as absent"
+                    )
+                    return
+                }
+                parsed
+            }
+            Database.SettingRead.Absent -> null
+            is Database.SettingRead.Unreadable -> {
+                EnforcementLog.warn(
+                    "WeeklyReportService",
+                    "Could not read the last report date; generation is deferred",
+                    lastRead.cause
+                )
+                return
+            }
         }
+        val today   = LocalDate.now()
 
         // Most recent Monday (or today if today is Monday)
         val mostRecentMonday = today.with(DayOfWeek.MONDAY).let { monday ->
@@ -98,13 +125,23 @@ object WeeklyReportService {
 
         if (due) {
             val report = generate()
+            when (val write = Database.writeSetting(
+                "weekly_report_last_generated",
+                today.format(DateTimeFormatter.ISO_LOCAL_DATE)
+            )) {
+                Database.SettingWrite.Ok -> Unit
+                is Database.SettingWrite.Failed -> {
+                    EnforcementLog.warn(
+                        "WeeklyReportService",
+                        "Could not persist report generation date; report was not published",
+                        write.cause
+                    )
+                    return
+                }
+            }
             latestReport = report
             _hasNewReport.value = true
             onReportReady?.invoke(report)
-            Database.setSetting(
-                "weekly_report_last_generated",
-                today.format(DateTimeFormatter.ISO_LOCAL_DATE)
-            )
         }
     }
 

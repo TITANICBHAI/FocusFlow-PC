@@ -2,8 +2,10 @@ package com.focusflow.data
 
 import java.nio.file.Path
 import java.sql.DriverManager
+import kotlinx.coroutines.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -114,6 +116,37 @@ class SettingsReadWriteTest {
         )
     }
 
+    @Test
+    fun typedSettingsConvertNonFatalErrorsAndRethrowFatalErrors() {
+        val linkageFailure = UnsatisfiedLinkError("injected settings linkage failure")
+        Database.settingsStoreForTest = ThrowingSettingsStore(linkageFailure)
+
+        assertEquals(
+            Database.SettingRead.Unreadable(linkageFailure),
+            Database.readSetting("key")
+        )
+        assertEquals(
+            Database.SettingWrite.Failed(linkageFailure),
+            Database.writeSetting("key", "value")
+        )
+        assertEquals(
+            Database.SettingWrite.Failed(linkageFailure),
+            Database.writeSettings(mapOf("key" to "value"))
+        )
+
+        val fatal = OutOfMemoryError("injected fatal settings failure")
+        Database.settingsStoreForTest = ThrowingSettingsStore(fatal)
+        assertFailsWith<OutOfMemoryError> { Database.readSetting("key") }
+        assertFailsWith<OutOfMemoryError> { Database.writeSetting("key", "value") }
+        assertFailsWith<OutOfMemoryError> { Database.writeSettings(mapOf("key" to "value")) }
+
+        val cancelled = CancellationException("injected cancellation")
+        Database.settingsStoreForTest = ThrowingSettingsStore(cancelled)
+        assertFailsWith<CancellationException> { Database.readSetting("key") }
+        assertFailsWith<CancellationException> { Database.writeSetting("key", "value") }
+        assertFailsWith<CancellationException> { Database.writeSettings(mapOf("key" to "value")) }
+    }
+
     private fun init(dbFile: java.io.File) {
         assertIs<DbInitResult.Ready>(
             Database.init(
@@ -150,5 +183,11 @@ class SettingsReadWriteTest {
 
         override fun writeSettings(pairs: Map<String, String>) =
             Database.SettingWrite.Failed(failure)
+    }
+
+    private class ThrowingSettingsStore(private val failure: Throwable) : SettingsStore {
+        override fun readSetting(key: String): Database.SettingRead = throw failure
+        override fun writeSetting(key: String, value: String): Database.SettingWrite = throw failure
+        override fun writeSettings(pairs: Map<String, String>): Database.SettingWrite = throw failure
     }
 }

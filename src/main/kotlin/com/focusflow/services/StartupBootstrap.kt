@@ -2,6 +2,7 @@ package com.focusflow.services
 
 import com.focusflow.data.Database
 import com.focusflow.enforcement.AppBlocker
+import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.FloatingBlockOverlay
 import com.focusflow.enforcement.KillSwitchService
 import com.focusflow.enforcement.NetworkBlocker
@@ -41,6 +42,30 @@ sealed interface StartOnceResult {
     data class Failed(val cause: Throwable) : StartOnceResult
 }
 
+internal fun alwaysOnEnabledFromSetting(setting: Database.SettingRead): Boolean =
+    when (setting) {
+        is Database.SettingRead.Present -> when (setting.value) {
+            "true" -> true
+            "false" -> false
+            else -> {
+                EnforcementLog.warn(
+                    "StartupBootstrap",
+                    "Always-On setting is malformed; enabling enforcement until it can be confirmed"
+                )
+                true
+            }
+        }
+        Database.SettingRead.Absent -> false
+        is Database.SettingRead.Unreadable -> {
+            EnforcementLog.warn(
+                "StartupBootstrap",
+                "Always-On setting could not be read; enabling enforcement until it can be confirmed",
+                setting.cause
+            )
+            true
+        }
+    }
+
 /**
  * Starts every DB-dependent background service once, after Database.init()
  * has reported Ready. Compose recomposition cannot repeat this work.
@@ -53,7 +78,7 @@ object StartupBootstrap {
             AutoBackupService.start()
 
             ProcessMonitor.alwaysOnEnabled =
-                Database.getSetting("always_on_enforcement") == "true"
+                alwaysOnEnabledFromSetting(Database.readSetting("always_on_enforcement"))
             SoundAversion.isEnabled = Database.getSetting("sound_aversion") != "false"
             FocusSessionService.pomodoroMode = Database.getSetting("pomodoro_mode") == "true"
             AppBlocker.overlayEnabled =
@@ -107,8 +132,21 @@ object StartupBootstrap {
                                 )
                                 return@TrayCallbacks
                             }
-                            ProcessMonitor.alwaysOnEnabled = newState
-                            Database.setSetting("always_on_enforcement", newState.toString())
+                            when (val saved = Database.writeSetting("always_on_enforcement", newState.toString())) {
+                                Database.SettingWrite.Ok -> ProcessMonitor.alwaysOnEnabled = newState
+                                is Database.SettingWrite.Failed -> {
+                                    EnforcementLog.warn(
+                                        "StartupBootstrap",
+                                        "Could not persist Always-On state; leaving the current state unchanged",
+                                        saved.cause
+                                    )
+                                    SystemTrayManager.showNotification(
+                                        "Could Not Save Setting",
+                                        "Always-On enforcement was not changed because its setting could not be saved."
+                                    )
+                                    return@TrayCallbacks
+                                }
+                            }
                             val status = if (newState) "ON" else "OFF"
                             SystemTrayManager.showNotification(
                                 "FocusFlow Blocking $status",
@@ -116,8 +154,15 @@ object StartupBootstrap {
                             )
                         },
                         onKillSwitch = {
+                            val wasActive = KillSwitchService.isActive.value
                             val activated = KillSwitchService.toggle()
                             when {
+                                !KillSwitchService.settingsAvailable.value &&
+                                    !wasActive ->
+                                    SystemTrayManager.showNotification(
+                                        "Emergency Break Unavailable",
+                                        "The saved daily budget could not be read or saved. No break was started."
+                                    )
                                 !activated -> SystemTrayManager.showNotification(
                                     "Emergency Break Exhausted",
                                     "You've used your 5-minute daily break budget. Resets at midnight."

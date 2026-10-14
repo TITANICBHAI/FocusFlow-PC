@@ -51,11 +51,11 @@
 | F5 — Uninstall on DB failure | P0 | **Open; owner-gated.** Current code blocks uninstall when protection state cannot be read. Decide D4; implement only after F11’s read-only path. |
 | F6 — Recurring task multiplication | P1 | **Open; confirmed by current logic.** Generated copies remain recurring templates and the existing-key set is not updated in the loop. `@Synchronized` does not prevent this growth. |
 | F7 — JDBC statement closure | P1 | **Open.** Many query sites close the result set but not the owning statement; the enabled-block-process query is reached from the two-second cache refresh. Recount exact sites against current code. |
-| F8 — PIN fail-open | P1 | **Open; high security impact.** Global, Session, and Nuclear PIN lookups treat unavailable/null as “not set” or successful verification. |
+| F8 — PIN fail-open | P1 | **Partially mitigated by F12; remaining work is open.** Unavailable lookups now fail closed; F8 still covers UI tri-state/read-back behavior and generated-PIN verification. |
 | F9 — Orphan focus sessions | P1 | **Open.** The unfinished-session query has no age bound; asynchronous end writes can be lost. Live repair needs F15 backup verification and D8. |
-| F10 — Transactions | P1 | **Open.** Transaction sites catch only `Exception`, suppress rollback errors, and restore auto-commit in `finally`; keep changes narrowly tested. |
+| F10 — Transactions | P1 | **Implemented and tested.** `BEGIN IMMEDIATE` transactions roll back on `Throwable`, preserve rollback failures, and convert the six approved call sites without auto-commit toggling. |
 | F11 — Wizard DB access | P1 | **Open.** The wizard calls full `Database.init()`, which snapshots/restores sidecars and runs DB pragmas/migrations. Separate from F5’s policy decision. |
-| F12 — Missing vs. unreadable settings | P1 | **Open.** Reads collapse absent, unavailable, and failed into `null`; writes silently ignore errors. |
+| F12 — Missing vs. unreadable settings | P1 | **Implemented for the ordered consumers.** Typed reads distinguish absent/unreadable, security consumers fail closed, restore consumers keep known state, and failed writes are logged or surfaced. |
 | F13 — Session write ordering | P1 | **Open.** Start/end writes are independent IO jobs with swallowed errors; `dispose()` cancels their scope. |
 | F14 — Migration schema verification | P2 | **Open, partly inferred.** Existing `ALTER TABLE` catches may hide non-duplicate failures. Add a tested guard for new migrations before F6; do not edit v1–v9. |
 | F15 — Backup verification/restore | P1/P2 | **Partial.** `VACUUM INTO` and SHA-256 sidecars already exist. Hashing does not prove SQLite validity; hashless files are treated as verified, failures can be ignored, and the unsafe restore method has no callers. Keep the targeted validation/reporting/deprecation work. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10 complete; F12 API, PIN, and VPN blocker groups complete; Standalone Block next).
+- **Status:** In progress — 2026-10-15 (F10 and F12 complete; F7 next).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -155,7 +155,11 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F12 PIN verification:** `PinSettingsUnavailableTest` (3) and `SessionPinInputTest` (5) passed: 8 tests, 0 failures/errors/skips.
 - **2026-10-15 F12 VPN blocker:** `VpnBlocker` uses typed reads/writes. An unreadable enable value fails closed without caching a fallback; custom-list reads preserve cached values or remain retryable, and mutations refuse to overwrite an unreadable list. The screen surfaces failed VPN-setting mutations in a snackbar.
 - **2026-10-15 F12 VPN verification:** `VpnBlockerSettingsTest` passed, covering injected unavailability, fallback recovery, last-known-good cache retention, and failed-write surfacing. F17's dedicated hot-path refresh work remains pending.
-- [ ] **F12 — Distinguish absent from unreadable settings:** Add typed read/write results and migrate consumers in the exact order in the plan: PINs, VPN blocker, Standalone Block, Nuclear Mode/Kill Switch, uninstall requirements, then remaining listed services/UI. Unreadable security reads fail closed; restore-state reads retain last-known-good values; failed writes are surfaced. One injected-unavailable-store test per migrated consumer.
+- **2026-10-15 F12 continuation:** Owner authorized implementation to continue. Current source and `StandaloneBlockSettingsTest` already cover the Standalone Block consumer group with typed settings, so the prior “Standalone Block next” status was stale; continue with Nuclear Mode/Kill Switch, then uninstall requirements, Weekly Report, Task Alarm, and App settings.
+- **2026-10-15 F12 consumer completion:** Migrated the remaining Nuclear Mode/Kill Switch, uninstall protection, Weekly Report, Task Alarm, app preferences, and Always-On tray/bootstrap paths. Nuclear Mode, uninstall gates, and budget activation fail closed on unreadable/malformed values; alarm and report state is not reset or published until persistence succeeds. UI preference and tray write failures are logged or shown.
+- **2026-10-15 F12 test attempt:** The first focused Weekly Report run lacked an initialized database and failed with `DatabaseUnavailableException`; changed those tests to use an isolated scratch database. The focused consumer suite then passed, and the final full suite passed without touching the user database.
+- **2026-10-15 F12 verification:** `gradle :test --no-daemon --console=plain` passed 162 tests, 0 failures/errors/skips across 41 JUnit XML reports.
+- [x] **F12 — Distinguish absent from unreadable settings:** Typed read/write results and all listed consumer groups are implemented in plan order. Unreadable security reads fail closed; restore-state reads retain last-known-good values; failed writes are surfaced. Injected-store tests cover each consumer group.
 - [ ] **F7 — Close JDBC statements:** Recount current sites, then close every confirmed unclosed `executeQuery`/`executeUpdate` statement; the plan’s 18/seven counts are estimates, not acceptance criteria. Add leak and source-hygiene tests F7-a…c; scanner must find no unwrapped `createStatement()`.
 - [ ] **F8 — PIN checks fail closed:** Build on F12; distinguish `NOT_SET`, `SET`, and `UNKNOWN`, deny on unknown storage, and report write failures. Verify PIN read-back before returning an auto-generated PIN. Do not change hash strength or add recovery design without owner approval D12. Tests F8-a…e.
 - [ ] **F14a — New-migration guard (before F6):** Add and test a column/schema guard for new migrations without editing v1–v9. This is an explicit F6 prerequisite.

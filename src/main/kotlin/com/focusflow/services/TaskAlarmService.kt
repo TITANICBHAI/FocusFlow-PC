@@ -25,14 +25,16 @@ object TaskAlarmService {
     // Tracks the date for which firedToday was last populated.
     // Compared on every tick — no more time-window race condition at midnight.
     @Volatile private var lastClearedDate: LocalDate = LocalDate.now()
+    @Volatile private var settingsLoaded: Boolean = false
 
     fun start() {
         if (schedulerJob?.isActive == true) return
         // Restore any alarms already fired today (survives app restarts)
-        loadFiredIdsFromDb()
+        settingsLoaded = loadFiredIdsFromDb()
         schedulerJob = scope.launch {
             while (isActive) {
-                checkAlarms()
+                if (!settingsLoaded) settingsLoaded = loadFiredIdsFromDb()
+                if (settingsLoaded) checkAlarms()
                 delay(30_000)
             }
         }
@@ -49,53 +51,99 @@ object TaskAlarmService {
      * Load today's already-fired alarm IDs from the DB so a restart doesn't
      * re-fire alarms that already fired earlier today.
      */
-    private fun loadFiredIdsFromDb() {
+    internal fun loadFiredIdsFromDb(): Boolean {
         val today = LocalDate.now()
-        lastClearedDate = today
-        val storedDateStr = Database.getSetting("alarm_fired_date")
-        val storedDate = storedDateStr?.let {
-            try { LocalDate.parse(it) } catch (_: Exception) { null }
+        val storedDate = when (val read = Database.readSetting("alarm_fired_date")) {
+            is Database.SettingRead.Present -> runCatching {
+                LocalDate.parse(read.value)
+            }.getOrElse {
+                EnforcementLog.warn("TaskAlarmService", "Saved alarm date is malformed", it)
+                return false
+            }
+            Database.SettingRead.Absent -> null
+            is Database.SettingRead.Unreadable -> {
+                EnforcementLog.warn("TaskAlarmService", "Could not read saved alarm date", read.cause)
+                return false
+            }
         }
         if (storedDate == today) {
-            val ids = Database.getSetting("alarm_fired_ids") ?: ""
+            val ids = when (val read = Database.readSetting("alarm_fired_ids")) {
+                is Database.SettingRead.Present -> read.value
+                Database.SettingRead.Absent -> ""
+                is Database.SettingRead.Unreadable -> {
+                    EnforcementLog.warn("TaskAlarmService", "Could not read fired alarm IDs", read.cause)
+                    return false
+                }
+            }
             if (ids.isNotBlank()) {
                 firedToday.addAll(ids.split(",").filter { it.isNotBlank() })
             }
+            lastClearedDate = today
+            return true
         } else {
-            // New day — clear persisted state
-            Database.setSetting("alarm_fired_ids", "")
-            Database.setSetting("alarm_fired_date", today.toString())
+            if (!persistDailyReset(today)) return false
+            firedToday.clear()
+            lastClearedDate = today
+            return true
         }
     }
 
     /**
      * Persist a fired alarm ID so it isn't re-fired after an app restart.
-     * Fire-and-forget — failures are silently swallowed.
+     * Persistence failure is logged; the in-memory set still prevents duplicates until restart.
      */
     private fun persistFiredId(id: String) {
         // synchronized: prevents two alarms firing in the same 30-second poll from
         // each reading the same `existing` string and overwriting each other's appended ID.
         synchronized(persistLock) {
-            val existing = Database.getSetting("alarm_fired_ids") ?: ""
+            val existing = when (val read = Database.readSetting("alarm_fired_ids")) {
+                is Database.SettingRead.Present -> read.value
+                Database.SettingRead.Absent -> ""
+                is Database.SettingRead.Unreadable -> {
+                    EnforcementLog.warn("TaskAlarmService", "Could not read fired alarm IDs", read.cause)
+                    return
+                }
+            }
             val updated  = if (existing.isBlank()) id else "$existing,$id"
-            Database.setSetting("alarm_fired_ids", updated)
+            when (val write = Database.writeSetting("alarm_fired_ids", updated)) {
+                Database.SettingWrite.Ok -> Unit
+                is Database.SettingWrite.Failed ->
+                    EnforcementLog.warn("TaskAlarmService", "Could not persist fired alarm ID", write.cause)
+            }
         }
     }
+
+    private fun persistDailyReset(today: LocalDate): Boolean =
+        when (val write = Database.writeSettings(
+            linkedMapOf(
+                "alarm_fired_ids" to "",
+                "alarm_fired_date" to today.toString()
+            )
+        )) {
+            Database.SettingWrite.Ok -> true
+            is Database.SettingWrite.Failed -> {
+                EnforcementLog.warn("TaskAlarmService", "Could not persist daily alarm reset", write.cause)
+                false
+            }
+        }
 
     // ── Alarm check ──────────────────────────────────────────────────────────
 
     private fun checkAlarms() {
         try {
             val today = LocalDate.now()
+            if (!settingsLoaded) {
+                settingsLoaded = loadFiredIdsFromDb()
+                if (!settingsLoaded) return
+            }
 
             // Date-change reset — works regardless of when the 30-second poll lands.
             // Replaces the old `hour == 0 && minute < 1` time-window that had a race
             // condition if the poll happened to skip past the narrow midnight window.
             if (today != lastClearedDate) {
+                if (!persistDailyReset(today)) return
                 firedToday.clear()
                 lastClearedDate = today
-                Database.setSetting("alarm_fired_ids", "")
-                Database.setSetting("alarm_fired_date", today.toString())
             }
 
             val now = LocalDateTime.now()
@@ -147,6 +195,18 @@ object TaskAlarmService {
                 failure
             )
         }
+    }
+
+    internal fun firedIdsForTest(): Set<String> = firedToday.toSet()
+    internal fun addFiredIdForTest(id: String) {
+        firedToday += id
+    }
+
+    internal fun resetForTest() {
+        stop()
+        settingsLoaded = false
+        firedToday.clear()
+        lastClearedDate = LocalDate.now()
     }
 
     fun testAlarm(taskTitle: String) {

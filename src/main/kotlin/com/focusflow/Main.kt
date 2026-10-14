@@ -208,6 +208,7 @@ private fun FocusFlowDesktop(
     val sessionState by FocusSessionService.state.collectAsState()
     val killSwitchRemaining by KillSwitchService.remainingSecondsToday.collectAsState()
     val killSwitchActive by KillSwitchService.isActive.collectAsState()
+    val killSwitchSettingsAvailable by KillSwitchService.settingsAvailable.collectAsState()
     val ready = startup is StartupView.Ready
 
     val databaseFile = remember {
@@ -448,11 +449,12 @@ private fun FocusFlowDesktop(
         windowVisible = if (ready) !launcherActive else true
     }
 
-    LaunchedEffect(killSwitchRemaining, killSwitchActive, ready) {
+    LaunchedEffect(killSwitchRemaining, killSwitchActive, killSwitchSettingsAvailable, ready) {
         if (!ready) return@LaunchedEffect
         val minutes = killSwitchRemaining / 60
         val seconds = (killSwitchRemaining % 60).toString().padStart(2, '0')
         val label = when {
+            !killSwitchSettingsAvailable -> "Emergency Break (daily budget unavailable)"
             killSwitchRemaining <= 0 -> "Emergency Break (exhausted for today)"
             killSwitchActive -> "Stop Break — ${minutes}m ${seconds}s remaining today"
             else -> "Emergency Break (${minutes}m ${seconds}s left today)"

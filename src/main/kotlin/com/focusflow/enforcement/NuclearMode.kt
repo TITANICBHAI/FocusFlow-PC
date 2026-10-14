@@ -35,6 +35,12 @@ import com.focusflow.enforcement.killProcessesByName
  */
 object NuclearMode {
 
+    internal enum class PersistedState {
+        ENABLED,
+        DISABLED,
+        UNREADABLE
+    }
+
     private val directInstallerProcesses = setOf(
         "msiexec.exe",
         "unins000.exe",
@@ -100,6 +106,8 @@ object NuclearMode {
     private val ownPid: Long = ProcessHandle.current().pid()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var monitorJob: Job? = null
+    @Volatile private var settingsRetryJob: Job? = null
+    @Volatile private var settingsReadFailure: Throwable? = null
 
     /** Per-process escape attempt counter — flushed to DB every 5 hits. */
     private val escapeCounts = ConcurrentHashMap<String, Int>()
@@ -230,19 +238,11 @@ object NuclearMode {
         found.forEach { exe ->
             val count = escapeCounts.merge(exe, 1, Int::plus) ?: 1
             if (count == 1 || count % 5 == 0) {
-                try {
-                    Database.setSetting("escape_attempt_${exe.removeSuffix(".exe")}", count.toString())
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (fatal: VirtualMachineError) {
-                    throw fatal
-                } catch (failure: Throwable) {
-                    EnforcementLog.warn(
-                        "NuclearMode",
-                        "Could not persist escape-attempt counter for $exe",
-                        failure
-                    )
-                }
+                persistSetting(
+                    "escape_attempt_${exe.removeSuffix(".exe")}",
+                    count.toString(),
+                    "escape-attempt counter for $exe"
+                )
             }
         }
     }
@@ -297,7 +297,7 @@ object NuclearMode {
         // and launching two monitorJobs (each firing enforceTick() every 500 ms).
         if (!_isActiveState.compareAndSet(false, true)) return
 
-        Database.setSetting("nuclear_mode", "true")
+        persistSetting("nuclear_mode", "true", "Nuclear Mode state")
         escapeCounts.clear()
 
         // Capture the pending cleanup thread reference before launching the IO work.
@@ -368,10 +368,14 @@ object NuclearMode {
             // even when disable() is called from the shutdown sequence.
             val t = Thread({
                 synchronized(firewallLock) {
-                    Database.setSetting("nuclear_mode", "false")
+                    persistSetting("nuclear_mode", "false", "Nuclear Mode state")
                     removeFirewallLock()
                     if (totalAttemptsSnapshot > 0) {
-                        Database.setSetting("nuclear_last_session_attempts", totalAttemptsSnapshot.toString())
+                        persistSetting(
+                            "nuclear_last_session_attempts",
+                            totalAttemptsSnapshot.toString(),
+                            "last-session escape attempts"
+                        )
                     }
                 }
             }, "FocusFlow-FwCleanup")
@@ -402,7 +406,11 @@ object NuclearMode {
             escapeCounts.values.sum()
         }
         if (totalAttemptsSnapshot > 0) {
-            Database.setSetting("nuclear_last_session_attempts", totalAttemptsSnapshot.toString())
+            persistSetting(
+                "nuclear_last_session_attempts",
+                totalAttemptsSnapshot.toString(),
+                "last-session escape attempts"
+            )
         }
     }
 
@@ -423,6 +431,79 @@ object NuclearMode {
     fun escapeAttemptBreakdown(): Map<String, Int> = HashMap(escapeCounts)
 
     fun loadFromDb() {
-        if (Database.getSetting("nuclear_mode") == "true") enable()
+        if (!loadPersistedState()) {
+            EnforcementLog.warn(
+                "NuclearMode",
+                "Nuclear Mode setting is unreadable; keeping enforcement active and retrying",
+                settingsReadFailure
+            )
+            if (!isActive) enable(silent = true)
+            scheduleSettingsRetry()
+        }
+    }
+
+    internal fun persistedState(read: Database.SettingRead): PersistedState =
+        when (read) {
+            is Database.SettingRead.Present ->
+                when (read.value) {
+                    "true" -> PersistedState.ENABLED
+                    "false" -> PersistedState.DISABLED
+                    else -> PersistedState.UNREADABLE
+                }
+            Database.SettingRead.Absent -> PersistedState.DISABLED
+            is Database.SettingRead.Unreadable -> PersistedState.UNREADABLE
+        }
+
+    private fun loadPersistedState(): Boolean {
+        val read = Database.readSetting("nuclear_mode")
+        settingsReadFailure = (read as? Database.SettingRead.Unreadable)?.cause
+        return when (persistedState(read)) {
+            PersistedState.ENABLED -> {
+                settingsRetryJob?.cancel()
+                settingsRetryJob = null
+                if (!isActive) enable(silent = true)
+                true
+            }
+            PersistedState.DISABLED -> {
+                settingsRetryJob?.cancel()
+                settingsRetryJob = null
+                if (isActive) disable(silent = true)
+                true
+            }
+            PersistedState.UNREADABLE -> false
+        }
+    }
+
+    private fun scheduleSettingsRetry() {
+        if (settingsRetryJob?.isActive == true) return
+        settingsRetryJob = scope.launch {
+            while (isActive) {
+                delay(5_000L)
+                if (loadPersistedState()) {
+                    settingsRetryJob = null
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun persistSetting(key: String, value: String, description: String) {
+        when (val result = Database.writeSetting(key, value)) {
+            Database.SettingWrite.Ok -> Unit
+            is Database.SettingWrite.Failed ->
+                EnforcementLog.warn("NuclearMode", "Could not persist $description", result.cause)
+        }
+    }
+
+    internal fun resetForTest() {
+        settingsRetryJob?.cancel()
+        settingsRetryJob = null
+        monitorJob?.cancel()
+        monitorJob = null
+        _isActiveState.value = false
+        escapeCounts.clear()
+        settingsReadFailure = null
+        cleanupThread?.join(1_000L)
+        cleanupThread = null
     }
 }

@@ -1401,10 +1401,13 @@ object Database {
 
     @Synchronized
     internal fun readSetting(key: String): SettingRead {
-        settingsStoreForTest?.let { return it.readSetting(key) }
-        if (!isReady) return SettingRead.Unreadable(DatabaseUnavailableException(lastInitResult))
+        val testStore = settingsStoreForTest
+        if (testStore == null && !isReady) {
+            return SettingRead.Unreadable(DatabaseUnavailableException(lastInitResult))
+        }
 
         return try {
+            testStore?.let { return it.readSetting(key) }
             connection.prepareStatement("SELECT value FROM settings WHERE key = ?").use { ps ->
                 ps.setString(1, key)
                 ps.executeQuery().use { rs ->
@@ -1419,17 +1422,20 @@ object Database {
             throw cancelled
         } catch (fatal: VirtualMachineError) {
             throw fatal
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             SettingRead.Unreadable(failure)
         }
     }
 
     @Synchronized
     internal fun writeSetting(key: String, value: String): SettingWrite {
-        settingsStoreForTest?.let { return it.writeSetting(key, value) }
-        if (!isReady) return SettingWrite.Failed(DatabaseUnavailableException(lastInitResult))
+        val testStore = settingsStoreForTest
+        if (testStore == null && !isReady) {
+            return SettingWrite.Failed(DatabaseUnavailableException(lastInitResult))
+        }
 
         return try {
+            testStore?.let { return it.writeSetting(key, value) }
             connection.prepareStatement("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)").use { ps ->
                 ps.setString(1, key)
                 ps.setString(2, value)
@@ -1440,17 +1446,20 @@ object Database {
             throw cancelled
         } catch (fatal: VirtualMachineError) {
             throw fatal
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             SettingWrite.Failed(failure)
         }
     }
 
     @Synchronized
     internal fun writeSettings(pairs: Map<String, String>): SettingWrite {
-        settingsStoreForTest?.let { return it.writeSettings(pairs) }
-        if (!isReady) return SettingWrite.Failed(DatabaseUnavailableException(lastInitResult))
+        val testStore = settingsStoreForTest
+        if (testStore == null && !isReady) {
+            return SettingWrite.Failed(DatabaseUnavailableException(lastInitResult))
+        }
 
         return try {
+            testStore?.let { return it.writeSettings(pairs) }
             inTransaction {
                 pairs.forEach { (key, value) ->
                     connection.prepareStatement(
@@ -1467,7 +1476,7 @@ object Database {
             throw cancelled
         } catch (fatal: VirtualMachineError) {
             throw fatal
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             SettingWrite.Failed(failure)
         }
     }

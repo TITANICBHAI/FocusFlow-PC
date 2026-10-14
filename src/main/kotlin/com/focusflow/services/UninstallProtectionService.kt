@@ -2,6 +2,7 @@ package com.focusflow.services
 
 import com.focusflow.data.Database
 import com.focusflow.data.DbInitResult
+import com.focusflow.data.Database.SettingRead
 import com.focusflow.enforcement.InstallVariant
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
@@ -21,9 +22,9 @@ object UninstallProtectionService {
     private const val AUTHORIZATION_WINDOW_MS = 30_000L
     private val authorizedUninstallUntilMs = AtomicLong(0L)
     private val uninstallPromptLock = Any()
-    private enum class Action { QUIT, UNINSTALL }
+    internal enum class Action { QUIT, UNINSTALL }
 
-    private sealed interface Requirement {
+    internal sealed interface Requirement {
         data class WaitForStandalone(val remainingMs: Long) : Requirement
         data class Blocked(val feature: String, val message: String) : Requirement
         data class Pin(
@@ -52,9 +53,24 @@ object UninstallProtectionService {
             }
             if (result !is DbInitResult.Ready || !Database.isReady) return false
 
-            ProcessMonitor.alwaysOnEnabled =
-                Database.getSetting("always_on_enforcement") == "true"
-            true
+            when (val setting = Database.readSetting("always_on_enforcement")) {
+                is SettingRead.Present -> when (setting.value) {
+                    "true" -> {
+                        ProcessMonitor.alwaysOnEnabled = true
+                        true
+                    }
+                    "false" -> {
+                        ProcessMonitor.alwaysOnEnabled = false
+                        true
+                    }
+                    else -> false
+                }
+                SettingRead.Absent -> {
+                    ProcessMonitor.alwaysOnEnabled = false
+                    true
+                }
+                is SettingRead.Unreadable -> false
+            }
         }.getOrDefault(false)
     }
 
@@ -139,34 +155,60 @@ object UninstallProtectionService {
         }
     }
 
-    private fun activeRequirements(action: Action): List<Requirement> {
+    internal fun activeRequirements(action: Action): List<Requirement> {
         val result = mutableListOf<Requirement>()
 
-        runCatching {
-            val persistedUntil = Database.getSetting("standalone_block_until")
-                ?.toLongOrNull() ?: 0L
-            val persistedStart = Database.getSetting("standalone_block_start")
-                ?.toLongOrNull() ?: 0L
-            val persistedProcesses = Database.getSetting("standalone_block_processes")
-                .orEmpty()
-            val persistedActive =
-                persistedProcesses.isNotBlank() &&
-                    persistedUntil > System.currentTimeMillis() &&
-                    (persistedStart == 0L || persistedStart <= System.currentTimeMillis())
+        val standaloneReads = listOf(
+            Database.readSetting("standalone_block_until"),
+            Database.readSetting("standalone_block_start"),
+            Database.readSetting("standalone_block_processes")
+        )
+        val unreadableStandalone = standaloneReads
+            .filterIsInstance<SettingRead.Unreadable>()
+            .firstOrNull()
+        if (unreadableStandalone != null) {
+            result += unreadableRequirement("Standalone Block")
+        } else {
+            val untilRead = standaloneReads[0] as? SettingRead.Present
+            val startRead = standaloneReads[1] as? SettingRead.Present
+            val persistedUntil = untilRead?.value?.toLongOrNull()
+            val persistedStart = startRead?.value?.toLongOrNull()
+            val persistedProcesses = (standaloneReads[2] as? SettingRead.Present)?.value.orEmpty()
+            val now = System.currentTimeMillis()
+            val malformed = (untilRead != null && persistedUntil == null) ||
+                (startRead != null && persistedStart == null) ||
+                (persistedProcesses.isNotBlank() && persistedUntil == null) ||
+                (persistedUntil != null && persistedUntil > now && persistedProcesses.isBlank())
+            if (malformed) result += unreadableRequirement("Standalone Block")
+            val persistedActive = persistedProcesses.isNotBlank() &&
+                (persistedUntil ?: 0L) > now &&
+                (persistedStart == null || persistedStart == 0L || persistedStart <= now)
 
             if (StandaloneBlockService.isActive || persistedActive) {
                 val remaining = if (StandaloneBlockService.isActive) {
                     StandaloneBlockService.remainingMs()
                 } else {
-                    (persistedUntil - System.currentTimeMillis()).coerceAtLeast(0L)
+                    ((persistedUntil ?: 0L) - now).coerceAtLeast(0L)
                 }
                 result += Requirement.WaitForStandalone(remaining)
             }
         }
 
-        runCatching {
-            val persistedAlwaysOn = Database.getSetting("always_on_enforcement") == "true"
-            if ((ProcessMonitor.alwaysOnEnabled || persistedAlwaysOn) && GlobalPin.isSet()) {
+        when (val setting = Database.readSetting("always_on_enforcement")) {
+            is SettingRead.Unreadable -> result += unreadableRequirement("Always-On enforcement")
+            is SettingRead.Present -> {
+                if (setting.value != "true" && setting.value != "false") {
+                    result += unreadableRequirement("Always-On enforcement")
+                }
+                if ((ProcessMonitor.alwaysOnEnabled || setting.value == "true") && GlobalPin.isSet()) {
+                    result += Requirement.Pin(
+                        feature = "Always-On enforcement",
+                        prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
+                        verify = GlobalPin::verify
+                    )
+                }
+            }
+            SettingRead.Absent -> if (ProcessMonitor.alwaysOnEnabled && GlobalPin.isSet()) {
                 result += Requirement.Pin(
                     feature = "Always-On enforcement",
                     prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
@@ -205,26 +247,55 @@ object UninstallProtectionService {
             }
         }
 
-        runCatching {
-            val persistedNuclearMode = Database.getSetting("nuclear_mode") == "true"
-            if (NuclearMode.isActive || persistedNuclearMode) {
-                if (NuclearPin.isSet()) {
-                    result += Requirement.Pin(
-                        feature = "Nuclear Mode",
-                        prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
-                        verify = NuclearPin::verify
-                    )
-                } else {
-                    result += Requirement.Blocked(
-                        feature = "Nuclear Mode",
-                        message = "Disable Nuclear Mode from within FocusFlow before quitting or uninstalling."
-                    )
-                }
+        fun addNuclearModeRequirement() {
+            if (!NuclearMode.isActive) return
+            if (NuclearPin.isSet()) {
+                result += Requirement.Pin(
+                    feature = "Nuclear Mode",
+                    prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
+                    verify = NuclearPin::verify
+                )
+            } else {
+                result += Requirement.Blocked(
+                    feature = "Nuclear Mode",
+                    message = "Disable Nuclear Mode from within FocusFlow before quitting or uninstalling."
+                )
             }
+        }
+
+        when (val setting = Database.readSetting("nuclear_mode")) {
+            is SettingRead.Unreadable -> result += unreadableRequirement("Nuclear Mode")
+            is SettingRead.Present -> when (setting.value) {
+                "true" -> {
+                    if (NuclearMode.isActive) addNuclearModeRequirement()
+                    else if (NuclearPin.isSet()) {
+                        result += Requirement.Pin(
+                            feature = "Nuclear Mode",
+                            prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
+                            verify = NuclearPin::verify
+                        )
+                    } else {
+                        result += Requirement.Blocked(
+                            feature = "Nuclear Mode",
+                            message = "Disable Nuclear Mode from within FocusFlow before quitting or uninstalling."
+                        )
+                    }
+                }
+                "false" -> addNuclearModeRequirement()
+                else -> result += unreadableRequirement("Nuclear Mode")
+            }
+            SettingRead.Absent -> addNuclearModeRequirement()
         }
 
         return result
     }
+
+    private fun unreadableRequirement(feature: String) =
+        Requirement.Blocked(
+            feature = feature,
+            message = "FocusFlow could not read the $feature protection settings safely. " +
+                "Try again when the database is available."
+        )
 
     private fun authorizeRequirements(
         requirements: List<Requirement>

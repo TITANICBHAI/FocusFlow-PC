@@ -37,6 +37,7 @@ import com.focusflow.enforcement.NetworkBlocker
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.RegistryLockdown
+import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.WindowsStartupManager
 import com.focusflow.enforcement.isWindows
 import com.focusflow.enforcement.VpnBlocker
@@ -80,6 +81,57 @@ private const val WINDOWS_STARTUP_PROMPT_PENDING = "windows_startup_prompt_pendi
 private const val WINDOWS_STARTUP_PROMPT_SHOWN = "windows_startup_prompt_shown"
 private const val DIRECT_RELEASES_URL =
     "https://github.com/TITANICBHAI/FocusFlow-PC/releases"
+
+internal fun nextAppOpenCount(read: Database.SettingRead): Int? =
+    when (read) {
+        is Database.SettingRead.Present ->
+            read.value.toIntOrNull()?.takeIf { it >= 0 && it < Int.MAX_VALUE }?.plus(1)
+        Database.SettingRead.Absent -> 1
+        is Database.SettingRead.Unreadable -> null
+    }
+
+private fun readAppSetting(key: String): Database.SettingRead =
+    Database.readSetting(key).also { result ->
+        if (result is Database.SettingRead.Unreadable) {
+            EnforcementLog.warn("AppSettings", "Could not read setting '$key'", result.cause)
+        }
+    }
+
+private fun readAppBoolean(
+    key: String,
+    read: Database.SettingRead,
+    absentValue: Boolean
+): Boolean? =
+    when (read) {
+        is Database.SettingRead.Present -> when (read.value) {
+            "true" -> true
+            "false" -> false
+            else -> {
+                EnforcementLog.warn("AppSettings", "Boolean setting '$key' is malformed")
+                null
+            }
+        }
+        Database.SettingRead.Absent -> absentValue
+        is Database.SettingRead.Unreadable -> null
+    }
+
+private fun writeAppSetting(key: String, value: String): Boolean =
+    when (val result = Database.writeSetting(key, value)) {
+        Database.SettingWrite.Ok -> true
+        is Database.SettingWrite.Failed -> {
+            EnforcementLog.warn("AppSettings", "Could not save setting '$key'", result.cause)
+            false
+        }
+    }
+
+private fun writeAppSettings(values: Map<String, String>): Boolean =
+    when (val result = Database.writeSettings(values)) {
+        Database.SettingWrite.Ok -> true
+        is Database.SettingWrite.Failed -> {
+            EnforcementLog.warn("AppSettings", "Could not save grouped app settings", result.cause)
+            false
+        }
+    }
 
 /**
  * Screens where the floating "Restart as Admin" button is shown.
@@ -150,12 +202,15 @@ fun App() {
     LaunchedEffect(Unit) {
         LocalizationManager.loadSavedLanguage()
         withContext(Dispatchers.IO) {
-            when (Database.getSetting("theme_mode")) {
-                "light" -> applyLightTheme()
-                else    -> applyDarkTheme()
+            when (val setting = readAppSetting("theme_mode")) {
+                is Database.SettingRead.Present ->
+                    if (setting.value == "light") applyLightTheme() else applyDarkTheme()
+                Database.SettingRead.Absent -> applyDarkTheme()
+                is Database.SettingRead.Unreadable -> Unit
             }
             // Restore sidebar collapsed state from last session
-            sidebarCollapsed = Database.getSetting("sidebar_collapsed") == "true"
+            readAppBoolean("sidebar_collapsed", readAppSetting("sidebar_collapsed"), false)
+                ?.let { sidebarCollapsed = it }
         }
         AppBlocker.onOverlayShow = { appName ->
             overlayAppName = appName
@@ -165,50 +220,74 @@ fun App() {
             overlayVisible = false
         }
         val launchData = withContext(Dispatchers.IO) {
-            val fl = Database.getSetting("onboarding_complete") != "true"
+            val onboardingRead = readAppSetting("onboarding_complete")
+            val onboardingComplete = readAppBoolean("onboarding_complete", onboardingRead, false)
+            val fl = onboardingComplete?.not() ?: false
 
-            val openCount = (Database.getSetting("app_open_count")?.toIntOrNull() ?: 0) + 1
-            Database.setSetting("app_open_count", openCount.toString())
+            val openCountRead = readAppSetting("app_open_count")
+            val openCount = nextAppOpenCount(openCountRead)
+            if (openCount == null && openCountRead is Database.SettingRead.Present) {
+                EnforcementLog.warn("AppSettings", "App open count is malformed; skipping launch-based prompts")
+            }
+            if (openCount != null) writeAppSetting("app_open_count", openCount.toString())
 
             val startupEnabled = isWindows && WindowsStartupManager.isEnabled()
+            val startupShownRead = readAppSetting(WINDOWS_STARTUP_PROMPT_SHOWN)
+            val startupPendingRead = readAppSetting(WINDOWS_STARTUP_PROMPT_PENDING)
             val startupPromptShown =
-                Database.getSetting(WINDOWS_STARTUP_PROMPT_SHOWN) == "true"
+                readAppBoolean(WINDOWS_STARTUP_PROMPT_SHOWN, startupShownRead, false)
             val startupPromptPending =
-                Database.getSetting(WINDOWS_STARTUP_PROMPT_PENDING) == "true"
+                readAppBoolean(WINDOWS_STARTUP_PROMPT_PENDING, startupPendingRead, false)
             val shouldOfferStartupPrompt = isWindows
                 && !fl
                 && !startupEnabled
-                && !startupPromptShown
-                && (openCount == 3 || startupPromptPending)
+                && startupPromptShown == false
+                && startupPromptPending != null
+                && openCount != null
+                && (openCount == 3 || startupPromptPending == true)
 
-            if (startupEnabled || startupPromptShown) {
-                Database.setSetting(WINDOWS_STARTUP_PROMPT_PENDING, "false")
+            if (startupEnabled || startupPromptShown == true) {
+                if (startupPromptPending != null) {
+                    writeAppSetting(WINDOWS_STARTUP_PROMPT_PENDING, "false")
+                }
             } else if (shouldOfferStartupPrompt) {
                 // Keep the reminder queued if another launch dialog is still open.
-                Database.setSetting(WINDOWS_STARTUP_PROMPT_PENDING, "true")
+                if (startupPromptPending != null) {
+                    writeAppSetting(WINDOWS_STARTUP_PROMPT_PENDING, "true")
+                }
             }
 
             // PIN prompt: show on the second app open, after the first-run onboarding.
-            val pn = !GlobalPin.isSet() && !GlobalPin.isDeclined() && openCount >= 2
+            val pn = openCount != null && !GlobalPin.isSet() && !GlobalPin.isDeclined() && openCount >= 2
 
             // 30-day cooldown: store last-shown date instead of a permanent boolean.
-            val lastShownDateStr = Database.getSetting("android_promo_shown_date")
-            val daysSinceShown: Long = if (lastShownDateStr != null) {
-                try {
+            val lastShownDateRead = readAppSetting("android_promo_shown_date")
+            val daysSinceShown: Long? = when (lastShownDateRead) {
+                is Database.SettingRead.Present -> runCatching {
                     java.time.temporal.ChronoUnit.DAYS.between(
-                        java.time.LocalDate.parse(lastShownDateStr),
+                        java.time.LocalDate.parse(lastShownDateRead.value),
                         java.time.LocalDate.now()
                     )
-                } catch (_: Exception) { 31L }
-            } else 31L
+                }.getOrElse {
+                    EnforcementLog.warn("AppSettings", "Android promo date is malformed; skipping promo", it)
+                    null
+                }
+                Database.SettingRead.Absent -> 31L
+                is Database.SettingRead.Unreadable -> null
+            }
 
             // Version-update trigger: show once per new app version.
-            val lastPromoVersion = Database.getSetting("android_promo_last_version")
-            val isNewVersion = lastPromoVersion != CrashReporter.APP_VERSION
+            val lastPromoVersionRead = readAppSetting("android_promo_last_version")
+            val isNewVersion = when (lastPromoVersionRead) {
+                is Database.SettingRead.Present -> lastPromoVersionRead.value != CrashReporter.APP_VERSION
+                Database.SettingRead.Absent -> true
+                is Database.SettingRead.Unreadable -> false
+            }
 
             // Show at open 5+: cooldown elapsed OR new version — open count gate applies in both
             // cases so a fresh install or version update never fires this before open 5.
-            val showAndroid = !fl && openCount >= 5 && (daysSinceShown >= 30 || isNewVersion)
+            val showAndroid = !fl && openCount != null && openCount >= 5 &&
+                ((daysSinceShown ?: Long.MIN_VALUE) >= 30 || isNewVersion)
             // Migrate the legacy DB preference once. The file-backed consent remains
             // authoritative and reporting stays disabled unless it explicitly says GRANTED.
             val legacyConsent = if (Database.isReady) {
@@ -226,13 +305,24 @@ fun App() {
             // Dismissal is permanent so this is never shown again on this install.
             val showEdgeExtension = !fl
                 && openCount == 20
-                && Database.getSetting(EDGE_EXTENSION_PROMO_DISMISSED) != "true"
-            val recommendationsShown =
-                Database.getSetting(POST_PIN_RECOMMENDATIONS_SHOWN) == "true"
+                && readAppBoolean(
+                    EDGE_EXTENSION_PROMO_DISMISSED,
+                    readAppSetting(EDGE_EXTENSION_PROMO_DISMISSED),
+                    false
+                ) == false
+            val recommendationsShown = readAppBoolean(
+                POST_PIN_RECOMMENDATIONS_SHOWN,
+                readAppSetting(POST_PIN_RECOMMENDATIONS_SHOWN),
+                false
+            ) ?: true
 
             if (showAndroid) {
-                Database.setSetting("android_promo_shown_date", java.time.LocalDate.now().toString())
-                Database.setSetting("android_promo_last_version", CrashReporter.APP_VERSION)
+                writeAppSettings(
+                    linkedMapOf(
+                        "android_promo_shown_date" to java.time.LocalDate.now().toString(),
+                        "android_promo_last_version" to CrashReporter.APP_VERSION
+                    )
+                )
             }
 
             listOf(
@@ -287,8 +377,12 @@ fun App() {
                 !WindowsStartupManager.isEnabled()
             }
             withContext(Dispatchers.IO) {
-                Database.setSetting(WINDOWS_STARTUP_PROMPT_PENDING, "false")
-                Database.setSetting(WINDOWS_STARTUP_PROMPT_SHOWN, "true")
+                writeAppSettings(
+                    linkedMapOf(
+                        WINDOWS_STARTUP_PROMPT_PENDING to "false",
+                        WINDOWS_STARTUP_PROMPT_SHOWN to "true"
+                    )
+                )
             }
             pendingWindowsStartupPrompt = false
             if (stillDisabled) showWindowsStartupPrompt = true
@@ -374,7 +468,7 @@ fun App() {
                             sidebarCollapsed = !sidebarCollapsed
                             val newValue = sidebarCollapsed
                             scope.launch(Dispatchers.IO) {
-                                Database.setSetting("sidebar_collapsed", if (newValue) "true" else "false")
+                                writeAppSetting("sidebar_collapsed", newValue.toString())
                             }
                         }
                     )
@@ -469,7 +563,7 @@ fun App() {
                 showOnboarding = false
                 scope.launch {
                     val needsConsent = withContext(Dispatchers.IO) {
-                        Database.setSetting("onboarding_complete", "true")
+                        writeAppSetting("onboarding_complete", "true")
                         val consent = TelemetryConsent.state()
                         consent == TelemetryConsentState.UNKNOWN ||
                             consent == TelemetryConsentState.UNREADABLE
@@ -490,7 +584,7 @@ fun App() {
                         postPinRecommendationsShown = true
                         showPostPinRecommendations = true
                         scope.launch(Dispatchers.IO) {
-                            Database.setSetting(POST_PIN_RECOMMENDATIONS_SHOWN, "true")
+                            writeAppSetting(POST_PIN_RECOMMENDATIONS_SHOWN, "true")
                         }
                     }
                 }
@@ -516,13 +610,13 @@ fun App() {
                     openEdgeExtensionStore()
                     showEdgeExtensionPromo = false
                     scope.launch(Dispatchers.IO) {
-                        Database.setSetting(EDGE_EXTENSION_PROMO_DISMISSED, "true")
+                        writeAppSetting(EDGE_EXTENSION_PROMO_DISMISSED, "true")
                     }
                 },
                 onDismiss = {
                     showEdgeExtensionPromo = false
                     scope.launch(Dispatchers.IO) {
-                        Database.setSetting(EDGE_EXTENSION_PROMO_DISMISSED, "true")
+                        writeAppSetting(EDGE_EXTENSION_PROMO_DISMISSED, "true")
                     }
                 }
             )
@@ -774,10 +868,10 @@ private fun ThemeToggleButton(modifier: Modifier = Modifier) {
         onClick = {
             if (dark) {
                 applyLightTheme()
-                scope.launch(Dispatchers.IO) { Database.setSetting("theme_mode", "light") }
+                scope.launch(Dispatchers.IO) { writeAppSetting("theme_mode", "light") }
             } else {
                 applyDarkTheme()
-                scope.launch(Dispatchers.IO) { Database.setSetting("theme_mode", "dark") }
+                scope.launch(Dispatchers.IO) { writeAppSetting("theme_mode", "dark") }
             }
         },
         modifier = modifier
