@@ -467,8 +467,14 @@ fun App() {
         if (showOnboarding) {
             OnboardingDialog(onDismiss = {
                 showOnboarding = false
-                scope.launch(Dispatchers.IO) {
-                    Database.setSetting("onboarding_complete", "true")
+                scope.launch {
+                    val needsConsent = withContext(Dispatchers.IO) {
+                        Database.setSetting("onboarding_complete", "true")
+                        val consent = TelemetryConsent.state()
+                        consent == TelemetryConsentState.UNKNOWN ||
+                            consent == TelemetryConsentState.UNREADABLE
+                    }
+                    if (needsConsent) showTelemetryConsent = true
                 }
                 // PIN setup intentionally deferred — shown on the 2nd launch
                 // so the user finishes onboarding before being asked about it.

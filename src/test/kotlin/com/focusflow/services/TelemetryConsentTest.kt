@@ -160,6 +160,61 @@ class TelemetryConsentTest {
             assertFalse(redacted.contains("C:/Users/FocusUser", ignoreCase = true), "$name leaked slash variant")
             assertFalse(redacted.contains("FOCUS-PC", ignoreCase = true), "$name leaked host")
         }
+
+        // The production sink receives JSON, where each Windows separator is
+        // escaped. Redaction must still remove the full home path before send.
+        val jsonPayload =
+            """{"message":"failed at C:\\Users\\FocusUser\\AppData\\Local\\state.db","""" +
+                """"stack":"at C:\\Users\\FocusUser\\FocusFlow\\Database.kt","""" +
+                """"source":"startup:C:\\Users\\FocusUser\\.focusflow on FOCUS-PC"}"""
+        val redactedJson = TelemetryRedactor.redact(jsonPayload, context)
+        assertTrue(redactedJson.contains("<home>"), "escaped JSON home path was not replaced")
+        assertFalse(redactedJson.contains("C:\\\\Users"), "escaped Windows home path leaked")
+        assertFalse(redactedJson.contains("FocusUser", ignoreCase = true), "escaped username leaked")
+        assertFalse(redactedJson.contains("FOCUS-PC", ignoreCase = true), "escaped host leaked")
+    }
+
+    @Test
+    fun sinkRedactsCurrentHomeUsernameAndHostAcrossReportFields() {
+        TempHome.withHome { home ->
+            assertTrue(TelemetryConsent.save(TelemetryConsentState.GRANTED))
+            val previousUser = System.getProperty("user.name")
+            val userName = "FocusFlow-Privacy-Test-User"
+            val hostName = System.getenv("COMPUTERNAME")
+                ?: System.getenv("HOSTNAME")
+            val homePath = home.resolve("private").toString()
+            val fake = FakeTelemetrySink(expectedPosts = 2)
+            val previousSink = CrashReporter.telemetrySinkOverrideForTest
+
+            try {
+                System.setProperty("user.name", userName)
+                CrashReporter.telemetrySinkOverrideForTest = fake
+                val source = "startup $homePath for $userName ${hostName.orEmpty()}"
+                val message = "failed at $homePath for $userName ${hostName.orEmpty()}"
+                val failure = IllegalStateException(message).apply {
+                    stackTrace = arrayOf(
+                        StackTraceElement("com.focusflow.Test", "open", homePath, 1)
+                    )
+                }
+
+                CrashReporter.reportCritical(source, message, failure)
+                CrashReporter.sendToDiscord(failure, source)
+
+                assertTrue(fake.awaitPosts(), "Reports should reach the fake sink")
+                val payloads = fake.payloads()
+                assertEquals(2, payloads.size)
+                payloads.forEach { payload ->
+                    assertFalse(payload.contains(homePath), "home path leaked")
+                    assertFalse(payload.contains(userName), "username leaked")
+                    hostName?.let { assertFalse(payload.contains(it, ignoreCase = true), "host leaked") }
+                    assertTrue(payload.contains("<home>"), "redacted path marker missing")
+                }
+            } finally {
+                CrashReporter.telemetrySinkOverrideForTest = previousSink
+                if (previousUser == null) System.clearProperty("user.name")
+                else System.setProperty("user.name", previousUser)
+            }
+        }
     }
 
     private enum class DatabaseMode { READY, NOT_READY, THROWING }

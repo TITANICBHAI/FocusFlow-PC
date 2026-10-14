@@ -50,7 +50,10 @@ internal object TelemetryRedactor {
     private fun pathAwarePattern(value: String): String = buildString(value.length * 2) {
         value.forEach { character ->
             if (character == '/' || character == '\\') {
-                append("[\\\\/]")
+                // A JSON payload contains two backslash characters for each
+                // original Windows path separator. Match one or both so the
+                // final sink-bound payload can be redacted without decoding JSON.
+                append("[\\\\/]{1,2}")
             } else {
                 append(Regex.escape(character.toString()))
             }
