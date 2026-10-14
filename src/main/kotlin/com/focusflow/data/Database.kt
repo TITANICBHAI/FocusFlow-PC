@@ -85,6 +85,23 @@ class DatabaseUnavailableException(
     val state: DbInitResult?
 ) : IllegalStateException("FocusFlow database is unavailable: $state")
 
+internal interface SettingsStore {
+    fun readSetting(key: String): Database.SettingRead
+    fun writeSetting(key: String, value: String): Database.SettingWrite
+    fun writeSettings(pairs: Map<String, String>): Database.SettingWrite
+}
+
+internal class SettingWriteException(
+    operation: String,
+    cause: Throwable,
+) : IllegalStateException("Could not persist setting: $operation", cause)
+
+internal fun Database.SettingWrite.requireSuccess(operation: String) {
+    if (this is Database.SettingWrite.Failed) {
+        throw SettingWriteException(operation, cause)
+    }
+}
+
 internal interface RecoveryFileOps {
     fun copy(source: File, destination: File)
     fun move(source: File, destination: File)
@@ -141,6 +158,9 @@ object Database {
 
     @Volatile
     internal var dataSourceFactoryForTest: (() -> javax.sql.DataSource)? = null
+
+    @Volatile
+    internal var settingsStoreForTest: SettingsStore? = null
 
     @Synchronized
     fun init(
@@ -229,6 +249,7 @@ object Database {
         _startupState.value = DbStartupState.NotStarted
         recoveryFileOpsForTest = null
         dataSourceFactoryForTest = null
+        settingsStoreForTest = null
         NativeSqlite.resetForTest()
         runCatching { previous?.close() }
     }
@@ -1361,6 +1382,90 @@ object Database {
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────
+
+    internal sealed interface SettingRead {
+        data class Present(val value: String) : SettingRead
+        data object Absent : SettingRead
+        data class Unreadable(val cause: Throwable) : SettingRead
+    }
+
+    internal sealed interface SettingWrite {
+        data object Ok : SettingWrite
+        data class Failed(val cause: Throwable) : SettingWrite
+    }
+
+    @Synchronized
+    internal fun readSetting(key: String): SettingRead {
+        settingsStoreForTest?.let { return it.readSetting(key) }
+        if (!isReady) return SettingRead.Unreadable(DatabaseUnavailableException(lastInitResult))
+
+        return try {
+            connection.prepareStatement("SELECT value FROM settings WHERE key = ?").use { ps ->
+                ps.setString(1, key)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) {
+                        rs.getString("value")?.let(SettingRead::Present) ?: SettingRead.Absent
+                    } else {
+                        SettingRead.Absent
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Exception) {
+            SettingRead.Unreadable(failure)
+        }
+    }
+
+    @Synchronized
+    internal fun writeSetting(key: String, value: String): SettingWrite {
+        settingsStoreForTest?.let { return it.writeSetting(key, value) }
+        if (!isReady) return SettingWrite.Failed(DatabaseUnavailableException(lastInitResult))
+
+        return try {
+            connection.prepareStatement("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)").use { ps ->
+                ps.setString(1, key)
+                ps.setString(2, value)
+                ps.executeUpdate()
+            }
+            SettingWrite.Ok
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Exception) {
+            SettingWrite.Failed(failure)
+        }
+    }
+
+    @Synchronized
+    internal fun writeSettings(pairs: Map<String, String>): SettingWrite {
+        settingsStoreForTest?.let { return it.writeSettings(pairs) }
+        if (!isReady) return SettingWrite.Failed(DatabaseUnavailableException(lastInitResult))
+
+        return try {
+            inTransaction {
+                pairs.forEach { (key, value) ->
+                    connection.prepareStatement(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)"
+                    ).use { ps ->
+                        ps.setString(1, key)
+                        ps.setString(2, value)
+                        ps.executeUpdate()
+                    }
+                }
+            }
+            SettingWrite.Ok
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Exception) {
+            SettingWrite.Failed(failure)
+        }
+    }
 
     internal sealed interface SettingReadResult {
         data class Found(val value: String) : SettingReadResult

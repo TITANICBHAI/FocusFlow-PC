@@ -142,13 +142,15 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10 complete; F12 next in required order).
+- **Status:** In progress — 2026-10-15 (F10 complete; F12 API foundation in place; PIN migration next).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
 - **2026-10-15 F10 completion:** Added the `BEGIN IMMEDIATE` / SQL `COMMIT` / rollback-on-`Throwable` helper and converted `migrate`, `completeTask`, `insertSession`, `deleteHabit`, `saveFocusLauncherSession`, and `clearFocusLauncherSession`. SQL text and transaction nesting were preserved; `user_version` is still bumped last. No `autoCommit = false` remains in `Database.kt`.
 - **2026-10-15 F10 verification:** `DatabaseTransactionTest` (4 tests) and `DatabaseTest` (13 tests) passed: 17 tests, 0 failures/errors/skips.
 - [x] **F10 — Correct transaction helper:** `BEGIN IMMEDIATE` / `COMMIT` / rollback on any `Throwable`; six call sites converted without changing their SQL or nesting transactions. F10-a…d pass; current schema v9 comparison is covered.
+- **2026-10-15 F12 API foundation:** Added `SettingRead`/`SettingWrite`, typed single and transactional batch operations, and a shared injected-store seam. Preserved the existing telemetry-consent migration result type and `getSetting`/`setSetting` compatibility API.
+- **2026-10-15 F12 API verification:** `SettingsReadWriteTest` (4 tests) and `DatabaseTransactionTest` (4 tests) passed: 8 tests, 0 failures/errors/skips. PIN consumers are next; F12 remains incomplete until all ordered consumer groups are migrated.
 - [ ] **F12 — Distinguish absent from unreadable settings:** Add typed read/write results and migrate consumers in the exact order in the plan: PINs, VPN blocker, Standalone Block, Nuclear Mode/Kill Switch, uninstall requirements, then remaining listed services/UI. Unreadable security reads fail closed; restore-state reads retain last-known-good values; failed writes are surfaced. One injected-unavailable-store test per migrated consumer.
 - [ ] **F7 — Close JDBC statements:** Recount current sites, then close every confirmed unclosed `executeQuery`/`executeUpdate` statement; the plan’s 18/seven counts are estimates, not acceptance criteria. Add leak and source-hygiene tests F7-a…c; scanner must find no unwrapped `createStatement()`.
 - [ ] **F8 — PIN checks fail closed:** Build on F12; distinguish `NOT_SET`, `SET`, and `UNKNOWN`, deny on unknown storage, and report write failures. Verify PIN read-back before returning an auto-generated PIN. Do not change hash strength or add recovery design without owner approval D12. Tests F8-a…e.
