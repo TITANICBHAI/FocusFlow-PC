@@ -49,7 +49,7 @@ Ranked by accumulated monitor wait:
 
 ## Limits and remaining gates
 
-This was a Linux fresh-profile capture, not a Windows validation or a busy-user workload. The absence of AWT waits applies only to this ten-minute session. F19's design note is now complete, but D11 approval remains required before implementing runtime recovery. D19 remains an owner-approval gate for any threading restructure.
+This was a Linux fresh-profile capture, not a Windows validation or a busy-user workload. The absence of AWT waits applies only to this ten-minute session. The owner approved the F19 design direction only on 2026-10-15; no runtime recovery implementation is authorized. D19 remains an owner-approval gate for any threading restructure.
 
 ## F18 — Database unavailable status
 
@@ -101,15 +101,29 @@ The non-owner-gated Phase 2 implementation findings have passing Linux tests. Th
 | D4 — Uninstall on unreadable DB | **Resolved 2026-10-15, option A.** Non-BUSY/LOCKED failures require typed confirmation; BUSY/LOCKED remain blocked. |
 | D7 — Delete recurring-task duplicates | **Open.** F6 repair remains mark-only; no user rows are deleted without approval. |
 | D8 — Orphan-session end time | **Resolved 2026-10-15.** Mark interrupted and set `end_time = start_time`; applied repairs now require a verified backup, and no real-profile repair has been run. |
-| D9 — Backup location, restore UI, recovery notice | **Open.** Separate design/approval required; direct restore remains disabled. |
+| D9 — Backup location, restore UI, recovery notice | **Approved for all three capabilities on 2026-10-15.** The safety design is recorded in `fixes/D9-backup-recovery-design.md`; runtime changes and real-profile restore remain unperformed. |
 | D10 — Startup behavior while DB is unavailable | **Resolved 2026-10-15, option A.** Show the blocking-off status on the gate and tray; no degraded blocker. |
-| D11 — Mid-run DB-loss behavior | **Open.** F19 design note is complete; no implementation before owner approval. |
+| D11 — Mid-run DB-loss behavior | **Design direction approved 2026-10-15 only.** Runtime implementation is not approved. |
 | D19 — Threading restructure | **Open.** F16 measured low contention; no restructure without owner approval. |
+| D6 — sqlite-jdbc upgrade | **Resolved 2026-10-15: no upgrade in this work.** |
+| D12 — PIN security and recovery | **Deferred by owner on 2026-10-15.** |
+| D15 — Crash-log placement | **Resolved 2026-10-15:** new reports move to the app-owned logs folder; legacy reports remain discoverable. |
 
 ### F6/F9/F15 data-safety gates and Windows checks
 
 - F6 and F9 dry-runs remain read-only. `DatabaseRepairService` is now the applied-repair entry point: it requires `AutoBackupService.runBackupNow()` to return a verified success before mutation, and it refuses to apply a repair after a failed or unverified backup. The F6/F9 tests verify that the snapshot contains the pre-repair rows and that a failed backup leaves rows unchanged.
 - No repair was run against a real profile, and no startup caller was added. F6 remains mark-only; F9 uses the D8 end-time rule. The human W12 test on a copy of a polluted database remains pending.
-- F15 backup verification code/tests are complete, but this work did not create or verify a backup of any real profile. D9 still gates a second backup location, a safe restore workflow, and the recovery notice after automatic corruption recovery.
+- F15 backup verification code/tests are complete, but this work did not create or verify a backup of any real profile. D9's three capabilities are approved; implementation must follow the safety design in `fixes/D9-backup-recovery-design.md`. No real-profile backup or restore has been performed.
 - No Windows verification was performed. Applicable W1–W15 checks remain human-run gates and are not claimed complete here.
 - The follow-on F29 implementation and verification are recorded in `fixes/PHASE-3-REPORT.md`. Files changed for the backup gate: `src/main/kotlin/com/focusflow/services/DatabaseRepairService.kt`, `src/test/kotlin/com/focusflow/services/RecurringTaskServiceTest.kt`, `src/test/kotlin/com/focusflow/data/OrphanFocusSessionReconciliationTest.kt`, this report, `fixes/tracker.md`, and `fixes/PHASE-3-REPORT.md`. Files read for that follow-on: `src/main/kotlin/com/focusflow/services/AutoBackupService.kt`, the two F6/F9 test files above, `src/test/kotlin/com/focusflow/testutil/TempHome.kt`, and the F6/F9 repair methods in `src/main/kotlin/com/focusflow/data/Database.kt`.
+
+## D9 — Backup and recovery design
+
+**Date:** 2026-10-15  
+**Owner decision:** Approved the secondary backup destination, verified-backup restore UI, and post-recovery notice.  
+**Implementation status:** Design prepared; no restore or real-profile data operation was performed.
+
+The design is in [`D9-backup-recovery-design.md`](D9-backup-recovery-design.md). It requires verified backups, a verified pre-restore safety backup, staged restore on a later process start, preservation of the current database and sidecars, rollback on failed installation/initialization, and an explicit user notice after automatic corruption recovery. The design also leaves secondary-folder retention policy explicit before any automated cleanup is introduced.
+
+**Files read:** `src/main/kotlin/com/focusflow/services/AutoBackupService.kt`; relevant recovery-preservation and backup methods in `src/main/kotlin/com/focusflow/data/Database.kt`; `fixes/plan.md`; `fixes/tracker.md`; `fixes/F19-mid-run-db-loss-design.md`.  
+**Files changed:** `fixes/D9-backup-recovery-design.md`; `fixes/tracker.md`; this report.

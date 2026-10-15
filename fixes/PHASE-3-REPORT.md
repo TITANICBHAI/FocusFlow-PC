@@ -1,7 +1,7 @@
 # Phase 3 Report — F20–F30 local status and verification
 
 Date: 2026-10-15
-Status: F20–F26 and F28–F30 are complete or closed locally on branch `F23-consistent-csv-exports`; F27 remains blocked on human Windows check W9. Phase 3 is not closed; human Windows verification and owner-gated work remain.
+Status: F20–F26 and F28–F30 are complete or closed locally on branch `F23-consistent-csv-exports`; D15 is now implemented. F27 remains blocked on human Windows check W9. Phase 3 is not closed; human Windows verification and owner-gated work remain.
 
 ## Approved scope
 
@@ -63,9 +63,9 @@ The builds emitted existing Compose icon deprecation and coroutine opt-in warnin
 
 - Tests ran on Linux only. Windows behavior and the interactive desktop UI were not verified; the desktop application workflow was not started.
 - No live user profile or database was read or changed, and no evidence script was run.
-- D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 remains open only if the Desktop-first crash-report policy is to change; no F24 change has been made yet.
+- D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 was resolved on 2026-10-15: new crash reports go to `~/.focusflow/logs`; legacy reports remain searchable and no Desktop report is moved or deleted.
 - D18 was resolved on 2026-10-15: the 90-day current-streak cap was not intentional. F30 is complete; its implementation and passing tests are recorded below.
-- W1–W15 remain human-only and unverified. F27 awaits W9; D5/F1b awaits W1–W3. D7, D9, D11, D12, D15, and D19 remain open or deferred. F6/F9 repairs have not been run against a real profile.
+- W1–W15 remain human-only and unverified. F27 awaits W9; D5/F1b awaits W1–W3. D9's approved features have a written safety design but no runtime implementation; D11's design is approved only, with runtime implementation still unapproved. D7, D12, and D19 remain open or deferred. F6/F9 repairs have not been run against a real profile.
 
 ## F23 — Consistent CSV exports
 
@@ -100,10 +100,10 @@ The build reported one non-failing warning in `CsvExport.kt` about the temporary
 ### Audit and verification
 
 - `CrashReportRetention` was already present in the checkout. Review confirmed it hashes the root exception class/message and first stack frames, persists signatures under a file lock, and suppresses duplicate local report writes for 60 minutes.
-- Retention caps only files matching `FocusFlow-crash-*.log` in the app-data and temp directories, keeping the newest 20. Desktop-first report writing is unchanged; Desktop and its ancestors are excluded from pruning.
+- Retention caps only files matching `FocusFlow-crash-*.log` in the app-owned report and temp directories, keeping the newest 20. Desktop reports remain excluded from pruning.
 - Focused verification: `gradle :test --no-daemon --tests com.focusflow.services.CrashReportRetentionTest`, with the configured GraalVM JDK 19, a fresh temporary `user.home`, and telemetry disabled. Result: 2 tests passed (F24-a/b), 0 failures/errors/skips.
 - The full isolated-home root suite recorded under F25 also passed F24-a/b: 225 tests across 58 JUnit XML files, 0 failures/errors/skips.
-- No code change was needed. D15 remains unresolved because the Desktop-first policy was preserved. W13 (Desktop redirected through OneDrive) remains unverified on Windows.
+- The original F24 retention implementation needed no change. D15 was resolved and implemented separately below. W13 (Desktop redirected through OneDrive) remains unverified on Windows.
 
 ### Files read
 
@@ -112,6 +112,28 @@ The build reported one non-failing warning in `CsvExport.kt` about the temporary
 - `src/main/kotlin/com/focusflow/services/CrashReportRetention.kt`
 - `src/main/kotlin/com/focusflow/services/CrashReporter.kt` (retention integration, write destinations, and crash-log discovery)
 - `src/test/kotlin/com/focusflow/services/CrashReportRetentionTest.kt`
+
+## D15 — Crash-log location
+
+**Date:** 2026-10-15  
+**Owner decision:** Move new crash reports to `~/.focusflow/logs`; preserve the existing Desktop-first reports.
+
+### Implementation
+
+- New fatal and startup reports try `AppPaths.crashReportDir` first, then the system temp directory. They are no longer written to Desktop.
+- Existing Desktop and legacy `~/.focusflow` reports remain searchable in Contact & Bug Reports. No old files are moved or deleted.
+- The startup gate already opens the generated report's folder; Contact & Bug Reports already lists crash logs with an Open Folder action.
+
+### Verification
+
+- Focused command: `gradle :test --no-daemon --console=plain --tests com.focusflow.services.CrashReportLocationTest --tests com.focusflow.AppPathsTest`.
+- Result: recorded after the final test run below.
+- W13 remains unverified and human-only.
+
+### Files read and changed
+
+- **Read:** `src/main/kotlin/com/focusflow/AppPaths.kt`; `src/main/kotlin/com/focusflow/services/CrashReporter.kt` (excluding the secret-bearing constant lines); `src/test/kotlin/com/focusflow/AppPathsTest.kt`; `src/test/kotlin/com/focusflow/services/CrashReportRetentionTest.kt`; `src/main/kotlin/com/focusflow/ui/startup/StartupGateWindow.kt`; relevant `Main.kt` and `ContactScreen.kt` folder-opening paths.
+- **Changed:** `src/main/kotlin/com/focusflow/AppPaths.kt`; `src/main/kotlin/com/focusflow/services/CrashReporter.kt`; `src/test/kotlin/com/focusflow/AppPathsTest.kt`; `src/test/kotlin/com/focusflow/services/CrashReportLocationTest.kt`; `fixes/tracker.md`; this report.
 
 ## F25 — Central application paths
 

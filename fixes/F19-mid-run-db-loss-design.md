@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15
 
-**Status:** Design proposal only. D11 approval is required before implementation.
+**Status:** Design direction approved by the owner on 2026-10-15. Runtime implementation is not approved.
 
 ## Current behavior
 
@@ -18,6 +18,6 @@
 4. Refresh enforcement/VPN caches as one candidate snapshot before publishing or returning to `Healthy`. Do not claim stale reads are current, replay failed writes, or start duplicate services. D11 must decide whether enforcement continues from last-known-good values, pauses selected rules, or stops.
 5. Show a persistent banner on every main-app screen below the OS banner; keep F18's blocking-off message startup-only. Distinguish reconnecting from lost, state only what the approved enforcement policy guarantees, and clear it only after a validated reopen and cache refresh. Retry/dismiss controls require approval.
 
-## Required approval and verification
+## Required implementation approval and verification
 
-D11 must approve failure classes/retry limits, enforcement during `Degraded`/`Lost`, corrupt-DB handling, and banner/retry semantics before code changes. Tests should use temporary DBs and injected failures for busy/closed connections, failed and successful reopen, single-flight retries, coherent caches, surfaced write failures, and banner transitions. No real profile, live repair, or DB reset is part of F19.
+The owner approved this design only. No runtime behavior may change under that approval. Before implementation, confirm the failure classes/retry limits, enforcement during `Degraded`/`Lost`, corrupt-DB handling, and banner/retry semantics. Tests should use temporary DBs and injected failures for busy/closed connections, failed and successful reopen, single-flight retries, coherent caches, surfaced write failures, and banner transitions. No real profile, live repair, or DB reset is part of F19.

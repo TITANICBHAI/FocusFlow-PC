@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 remains gated on human Windows check W9, so Phase 3 is not closed. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. F19 runtime recovery remains gated on D11. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D5, D6, D7, D9, D11, D12, D15, D17, and D19 remain open or deferred; all W1–W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains an owner action. D2, D3, D4, D8, D10, D13, D14, and D18 are resolved; D16 is closed. F1b remains gated on W1–W3.
+- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 remains gated on human Windows check W9, so Phase 3 is not closed. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. D11's design direction is approved, but runtime recovery remains unapproved. D9's three capabilities are approved for design; implementation follows the safety design. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D5, D7, D9 implementation, D11 implementation, D12, D17, and D19 remain open or deferred; all W1–W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains an owner action. D2, D3, D4, D6, D8, D10, D13, D14, and D18 are resolved; D15 is implemented; D16 is closed. F1b remains gated on W1–W3.
 
 ## Tracking rules
 
@@ -244,6 +244,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F23 verification:** `CsvExportTest` passed 3/3 (F23-a…c). Root `gradle :test --no-daemon --console=plain --rerun-tasks` passed 221 tests across 56 JUnit XML files, with 0 failures, errors, or skips; `user.home` was redirected to a fresh temporary directory. `git diff --check` passed. Windows/Excel verification W15 remains pending.
 - **2026-10-15 F24 start:** Preserve Desktop-first writes and never delete Desktop reports. Persist root-cause signatures for the duplicate window; cap only exact `FocusFlow-crash-*.log` files in `~/.focusflow` and `java.io.tmpdir`. D15 is unchanged.
 - **2026-10-15 F24 verification:** Existing `CrashReportRetention` implementation passed F24-a/b (2/2) with a fresh temporary home and telemetry disabled. The full isolated-home root suite passed 225 tests across 58 XML files, 0 failures/errors/skips. No code change was needed; W13 remains a Windows-only check.
+- **2026-10-15 D15 approval and implementation:** Owner approved moving new crash reports from Desktop-first to `~/.focusflow/logs`. Existing Desktop and legacy app-data reports remain discoverable; the startup gate and Contact & Bug Reports screen already provide open-folder actions. Focused verification is recorded in `fixes/PHASE-3-REPORT.md`; W13 remains human-only.
 - [x] **F24 — Bounded crash reports:** Persistently deduplicate matching root-cause reports for 60 minutes and cap only matching app-data/temp files at 20; preserve Desktop-first writes and never prune Desktop. F24-a/b pass. D15 remains unresolved; W13 remains unverified.
 - **2026-10-15 F25 start:** Owner explicitly authorized central application paths. Add getter-based `AppPaths` that reads the current `user.home` on each access, replace the four database-path computations, and verify F25-a…b. Scope limited to required path centralization and trivial replacements.
 - **2026-10-15 F25 verification:** F25-a…b passed. The full root suite passed 225 tests across 58 JUnit XML files with 0 failures, errors, or skips, using a fresh temporary `user.home` and telemetry disabled. W4/W5 remain Windows-only and unverified.
@@ -271,16 +272,16 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D3 | Final consent dialog and Store privacy wording | **Resolved 2026-10-14:** use factual wording that the receiving service sees the sender IP and diagnostic text may contain local paths. |
 | D4 | Uninstall outcome when DB state is unreadable | **Resolved 2026-10-15: A — allow after typed confirmation for failures other than BUSY/LOCKED. F5.** |
 | D5 | Ship SQLite DLL inside installation | F1b; wait for W1–W3. |
-| D6 | sqlite-jdbc upgrade timing | No version bump without explicit approval; separate change. |
+| D6 | sqlite-jdbc upgrade timing | **Resolved 2026-10-15: no upgrade in this work.** |
 | D7 | Whether to offer deletion of recurring-task duplicates | F6 repair defaults to mark-only; never delete user rows without approval. |
 | D8 | End-time rule for orphan focus sessions | **Resolved 2026-10-15:** mark interrupted and set `end_time = start_time`. Applied repairs now require a verified F15 backup; no real-profile repair has been run. |
-| D9 | Second backup location, restore UI, and recovery notice | F15; separate design/work. |
+| D9 | Second backup location, restore UI, and recovery notice | **Owner approved all three capabilities on 2026-10-15.** Design: [D9 backup/recovery design](D9-backup-recovery-design.md). Runtime work must follow its safety requirements; no real-profile repair or restore was run. |
 | D10 | Behavior while DB is down | **Resolved 2026-10-15: A — show the blocking-off status on the startup gate and tray; no degraded blocker.** |
-| D11 | Mid-run DB-loss design | F19; design note first, implementation only after approval. |
-| D12 | PIN hashing/recovery design and security wording | F8; separate project per source plan. |
+| D11 | Mid-run DB-loss design | **Design direction approved 2026-10-15 only.** No runtime implementation is authorized. |
+| D12 | PIN hashing/recovery design and security wording | **Deferred by owner on 2026-10-15.** Separate future project; no change in this work. |
 | D13 | “Clear all data” scope and Global PIN requirement | **Resolved 2026-10-15:** clear only sessions/completion stats, tasks, daily notes, and temptation logs; preserve settings, rules, habits, allowances, PINs, and presets; fix wording; require the Global PIN. |
 | D14 | CSV formula-injection guard and UTF-8 BOM | **Resolved 2026-10-15:** formula-prefix protection enabled for formula-like text; no UTF-8 BOM. W15 Excel verification remains open. |
-| D15 | Crash-log placement: Desktop-first or app log directory | F24. |
+| D15 | Crash-log placement: Desktop-first or app log directory | **Resolved 2026-10-15:** new reports go to `~/.focusflow/logs`; legacy Desktop/app-data reports remain searchable. |
 | D16 | Whether the recovery Gradle module is still needed | **Closed—not required for this audit:** F26 is stale; revisit only if the owner proposes removing the existing module. |
 | D17 | Keep/replace/remove SelectorProvider flag | F27; only after W9. |
 | D18 | Whether the 90-day current-streak cap is intentional | **Resolved 2026-10-15:** cap was not intentional; remove the 90-row limit. F30-a…c pass. |
