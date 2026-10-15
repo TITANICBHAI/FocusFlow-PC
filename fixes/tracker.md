@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 is in progress. F10, F12, F7, F8, F14a/b, F6, F9, F13, F11, F5, F17, F15, F16, and F18 are implemented and Linux-tested as recorded below. Live F6/F9 repairs remain owner-gated; F19 remains open. D19 approval is still required before any threading restructure. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated, and Windows checks remain human-only.
+- **Overall status:** Phase 2 non-owner-gated exit criteria are met as of 2026-10-15. F19's design note is complete; runtime recovery remains gated on D11. Live F6/F9 repairs, D7/D9/D19, and Windows checks remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated.
 
 ## Tracking rules
 
@@ -50,8 +50,8 @@
 | F4 — Consent, PII, endpoints | P0 | **Implemented and Linux-tested.** Consent remains DB-independent, opt-in and fail-closed; the one-time legacy migration is covered, and serialized Windows paths plus current home/user/host values are redacted before the sink. D1’s delivery choice and exposure risk remain open; Windows W10 remains unverified. |
 | F5 — Uninstall on DB failure | P0 | **Implemented and Linux-tested; D4 option A.** Non-BUSY/LOCKED database read failures require a typed confirmation phrase; BUSY/LOCKED remain blocked, and readable-database protections remain enforced. W6 is pending human verification. |
 | F6 — Recurring task multiplication | P1 | **Implemented and Linux-tested.** Schema v10 tracks template parents, generated copies are excluded from templates, and daily generation is idempotent. The legacy repair defaults to dry-run and only marks duplicates; live repair waits for F15 backup verification. |
-| F7 — JDBC statement closure | P1 | **Open.** Many query sites close the result set but not the owning statement; the enabled-block-process query is reached from the two-second cache refresh. Recount exact sites against current code. |
-| F8 — PIN fail-open | P1 | **Partially mitigated by F12; remaining work is open.** Unavailable lookups now fail closed; F8 still covers UI tri-state/read-back behavior and generated-PIN verification. |
+| F7 — JDBC statement closure | P1 | **Implemented and Linux-tested.** All 43 `createStatement()` sites are `.use`-scoped; the F7-a…c leak and source-hygiene tests passed. |
+| F8 — PIN fail-open | P1 | **Implemented and Linux-tested.** PIN status is tri-state, unavailable reads deny with distinct messaging, failed writes surface, and generated PINs require stored-hash read-back verification. F8-a…e passed; hashing strength and recovery design remain out of scope. |
 | F9 — Orphan focus sessions | P1 | **Implemented and Linux-tested.** The unfinished-session query has a 12-hour age bound; dry-run/idempotent reconciliation marks orphan sessions interrupted with `end_time = start_time`. No startup wiring or live repair; the latter still requires F15 backup verification. |
 | F10 — Transactions | P1 | **Implemented and tested.** `BEGIN IMMEDIATE` transactions roll back on `Throwable`, preserve rollback failures, and convert the six approved call sites without auto-commit toggling. |
 | F11 — Wizard DB access | P1 | **Implemented and Linux-tested.** The uninstall wizard uses a separate read-only open with no snapshots, migrations, recovery, or checkpoints. Missing DB means no saved protection state; Windows W6 remains human-only. Separate from F5's unreadable-DB policy decision. |
@@ -62,7 +62,7 @@
 | F16 — DB contention | P2 | **Measured on Linux for 10 minutes:** 9 contended enters / 9.248 ms total, 0 AWT event-thread waits, and 7 distinct callsites. No threading rewrite is justified by this run; D19 approval remains required. |
 | F17 — VPN cache after read failure | P1 | **Implemented and Linux-tested.** The IO cache refresh reloads VPN settings; enforcement paths only read volatile state. Failed refreshes retain last-known-good values, unknown enable state fails closed, and failed writes remain visible to callers. |
 | F18 — Enforcement while DB unavailable | P1 | **Implemented and Linux-tested under D10 option A.** The gate and tray state that blocking is off until the database opens; no degraded blocker or enforcement-policy change was added. Windows remains unverified. |
-| F19 — Mid-run DB loss | P2 / owner decision | **Design note only.** No specific mid-run recovery behavior has been approved or reproduced. |
+| F19 — Mid-run DB loss | P2 / owner decision | **Design note complete:** [F19 mid-run DB-loss design](F19-mid-run-db-loss-design.md). No runtime behavior was changed; D11 approval is required before implementation. |
 | F20 — Date queries/N+1 | P3 | **Open, low urgency.** Indexed timestamps are wrapped in `DATE(...)`; daily views also make repeated queries. Optimize after correctness work. |
 | F21 — Task completion idempotence | P3 | **Open.** Repeated calls and unknown IDs still increment the daily counter. |
 | F22 — Clear activity | P3 / destructive scope | **Open.** UI promises to clear settings, but clears four activity areas in separate operations without a verified backup. Clarify wording and atomicity; do not broaden to PINs/settings without D13. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, F11, F5, F16, and F18 complete).
+- **Status:** Exit criteria met — 2026-10-15 for non-owner-gated scope; owner decisions, live repairs, and human Windows checks remain outstanding.
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -213,8 +213,9 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F18 verification attempt:** The first focused Gradle invocation hit the 300-second shell limit during `:compileKotlin` and produced no final test result. The background rerun completed successfully.
 - **2026-10-15 F18 verification:** `gradle :test --no-daemon --console=plain --tests com.focusflow.StartupUnavailableStatusTest` passed 2/2; the final root `gradle :test --no-daemon --console=plain` passed 206 tests, 0 failures/errors/skips across 52 JUnit XML reports. The suite used the configured GraalVM CE 19 `JAVA_HOME`; Gradle 8.14.2 launcher/daemon reported OpenJDK 21.0.7. `git diff --check` and the changed-file empty-catch scan passed. The desktop workflow was not launched against the normal profile; no Windows verification was performed.
 - [x] **F18 — Database unavailable behavior:** D10 option A is implemented: the startup gate and tray explicitly say blocking is OFF until the database opens. The unavailable tray offers only status, Open, and Quit; recovery restores the standard tray. No degraded enforcement or enforcement-policy change was made.
-- [ ] **F19 — Mid-run DB loss:** Write only the one-page health/reopen/banner design note; do not implement it without owner approval D11.
-- [ ] **Phase 2 exit:** All non-owner-gated findings have passing tests; report remaining owner gates (including D7, D9, D11, and D19) and F6/F9 live repairs still blocked on verified F15 backups in `fixes/PHASE-2-REPORT.md`.
+- **2026-10-15 F19 start:** Owner authorized the one-page mid-run database health/reopen/banner design note only. Do not implement runtime health tracking, reconnect, enforcement changes, or UI behavior before D11 approval.
+- [x] **F19 — Mid-run DB loss:** Wrote the one-page health/reopen/banner proposal in `fixes/F19-mid-run-db-loss-design.md`. No runtime implementation; D11 approval is required before any behavior change.
+- [x] **Phase 2 exit:** All non-owner-gated findings have passing tests. `fixes/PHASE-2-REPORT.md` records the resolved/open states for D4 and D7–D11, the F6/F9 live-repair and F15 backup decisions, D19, and Windows verification. Phase 3 was not started.
 
 ## Phase 3 — P3 hardening and cleanup
 

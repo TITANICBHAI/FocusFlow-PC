@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15
 
-**Status:** F16 measurement complete; Phase 2 remains in progress.
+**Status:** Phase 2 non-owner-gated exit criteria met on 2026-10-15. Owner decisions, live-data repairs, and human Windows checks remain outstanding; Phase 3 was not started.
 
 ## Outcome
 
@@ -49,7 +49,7 @@ Ranked by accumulated monitor wait:
 
 ## Limits and remaining gates
 
-This was a Linux fresh-profile capture, not a Windows validation or a busy-user workload. The absence of AWT waits applies only to this ten-minute session. F19 remains open, and the Phase 2 exit criteria are not met. D19 remains an owner-approval gate for any threading restructure.
+This was a Linux fresh-profile capture, not a Windows validation or a busy-user workload. The absence of AWT waits applies only to this ten-minute session. F19's design note is now complete, but D11 approval remains required before implementing runtime recovery. D19 remains an owner-approval gate for any threading restructure.
 
 ## F18 — Database unavailable status
 
@@ -78,4 +78,36 @@ This was a Linux fresh-profile capture, not a Windows validation or a busy-user 
 
 ### Limits and remaining gates
 
-No Windows verification was performed. The desktop workflow was not launched because its configured command initializes the normal profile database; no real profile was accessed. The Compose screen and system tray were compiled and their presentation rules were unit-tested, but the failure UI was not visually exercised. F19 remains open; Phase 2 exit criteria and the remaining owner/data-repair gates are not met.
+No Windows verification was performed. The desktop workflow was not launched because its configured command initializes the normal profile database; no real profile was accessed. The Compose screen and system tray were compiled and their presentation rules were unit-tested, but the failure UI was not visually exercised.
+
+## F19 — Mid-run database loss
+
+**Date:** 2026-10-15
+**Scope:** Design note only; no runtime health tracking, reconnect, enforcement, or banner code was changed.
+
+The one-page proposal is in [`F19-mid-run-db-loss-design.md`](F19-mid-run-db-loss-design.md). It describes a separate `Database.health` state flow, single-flight background reopen, safety limits around the existing synchronized `init()` and corruption-recovery paths, coherent enforcement-cache refresh, and a persistent app-shell banner. It explicitly leaves reconnect thresholds, enforcement during `Degraded`/`Lost`, corruption handling, and retry/banner controls to D11 approval.
+
+**Files read:** `fixes/plan.md` F19; `fixes/tracker.md`; this report; `src/main/kotlin/com/focusflow/data/Database.kt`; `src/main/kotlin/com/focusflow/enforcement/ProcessMonitor.kt`; `src/main/kotlin/com/focusflow/App.kt`.
+**Files changed:** `fixes/F19-mid-run-db-loss-design.md`; `fixes/tracker.md`; this report.
+
+## Phase 2 exit assessment
+
+The non-owner-gated Phase 2 implementation findings have passing Linux tests. The latest full root suite, run after the F18 code change and before this documentation-only F19 work, passed **206 tests, 0 failures, 0 errors, 0 skipped** across **52 JUnit XML reports**. The F7-a…c and F8-a…e focused test evidence is recorded in `fixes/tracker.md`. No production source changed for F19, so the existing suite evidence remains applicable. This is an engineering-scope exit, not Windows or live-profile sign-off.
+
+### Decision inventory — D4 and D7–D11
+
+| Decision | Current status |
+|---|---|
+| D4 — Uninstall on unreadable DB | **Resolved 2026-10-15, option A.** Non-BUSY/LOCKED failures require typed confirmation; BUSY/LOCKED remain blocked. |
+| D7 — Delete recurring-task duplicates | **Open.** F6 repair remains mark-only; no user rows are deleted without approval. |
+| D8 — Orphan-session end time | **Resolved 2026-10-15.** Mark interrupted and set `end_time = start_time`; live repair still requires a verified backup. |
+| D9 — Backup location, restore UI, recovery notice | **Open.** Separate design/approval required; direct restore remains disabled. |
+| D10 — Startup behavior while DB is unavailable | **Resolved 2026-10-15, option A.** Show the blocking-off status on the gate and tray; no degraded blocker. |
+| D11 — Mid-run DB-loss behavior | **Open.** F19 design note is complete; no implementation before owner approval. |
+| D19 — Threading restructure | **Open.** F16 measured low contention; no restructure without owner approval. |
+
+### F6/F9/F15 data-safety gates and Windows checks
+
+- F6 and F9 code and dry-run tests are complete, but no live repair was run against a user profile. A verified F15 backup must exist before any live repair; F6 remains mark-only, and F9 uses the D8 end-time rule.
+- F15 backup verification code/tests are complete, but this work did not create or verify a backup of any real profile. D9 still gates a second backup location, a safe restore workflow, and the recovery notice after automatic corruption recovery.
+- No Windows verification was performed. Applicable W1–W15 checks remain human-run gates and are not claimed complete here.
