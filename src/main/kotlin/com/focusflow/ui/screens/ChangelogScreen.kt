@@ -36,11 +36,14 @@ internal val CHANGELOG = listOf(
         badge      = "PLANNED",
         badgeColor = OnSurface2,
         changes    = listOf(
-            "IMP" to "Planned: Improve SQLite startup recovery, native-library diagnostics, and safe retry handling",
-            "SEC" to "Planned: Make unreadable settings and PIN checks fail safely; improve consent and diagnostic redaction after owner decisions",
-            "FIX" to "Planned: Prevent recurring-task duplication and stale-session lockouts; strengthen transaction and session-write reliability",
-            "IMP" to "Planned: Verify backups, close JDBC statement leaks, and improve CSV exports and date-query performance",
-            "UPD" to "Scope remains subject to owner decisions; Windows-specific behavior will remain unverified until human testing"
+            "IMP" to "Clearer recovery guidance when FocusFlow cannot safely open its saved data or a required component",
+            "SEC" to "Focus protections and PIN checks will fail safely when the settings they rely on cannot be read",
+            "FIX" to "Focus-session and task changes will be saved more reliably, with failed saves reported clearly",
+            "IMP" to "Daily recurring tasks will be less likely to create duplicate copies",
+            "IMP" to "Backups will be checked before they are trusted or restored; activity exports will handle complete histories more reliably",
+            "IMP" to "Stats and history views will work more efficiently with larger records",
+            "SEC" to "Optional diagnostics will remain under your control and avoid sending identifying details",
+            "UPD" to "Windows-specific behavior still needs hands-on verification"
         )
     ),
     ChangelogEntry(
