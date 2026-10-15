@@ -1232,16 +1232,22 @@ object Database {
         }
     }
 
-    @Synchronized fun completeTask(id: String) {
-        val now = LocalDateTime.now().format(dtFmt)
-        // Transaction: task update + daily completion counter must succeed together.
-        // A crash between the two statements would leave the task marked complete but
-        // the daily streak/completion count forever stale.
-        inTransaction {
-            connection.prepareStatement(
-                "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?"
-            ).use { ps -> ps.setString(1, now); ps.setString(2, id); ps.executeUpdate() }
-            recordDailyCompletion(LocalDate.now())
+    @Synchronized fun completeTask(id: String): Boolean {
+        val completedAt = LocalDateTime.now()
+        return inTransaction {
+            val updatedRows = connection.prepareStatement(
+                "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ? AND completed = 0"
+            ).use { ps ->
+                ps.setString(1, completedAt.format(dtFmt))
+                ps.setString(2, id)
+                ps.executeUpdate()
+            }
+            if (updatedRows != 1) {
+                false
+            } else {
+                recordDailyCompletion(completedAt.toLocalDate())
+                true
+            }
         }
     }
 

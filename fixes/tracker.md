@@ -63,8 +63,8 @@
 | F17 — VPN cache after read failure | P1 | **Implemented and Linux-tested.** The IO cache refresh reloads VPN settings; enforcement paths only read volatile state. Failed refreshes retain last-known-good values, unknown enable state fails closed, and failed writes remain visible to callers. |
 | F18 — Enforcement while DB unavailable | P1 | **Implemented and Linux-tested under D10 option A.** The gate and tray state that blocking is off until the database opens; no degraded blocker or enforcement-policy change was added. Windows remains unverified. |
 | F19 — Mid-run DB loss | P2 / owner decision | **Design note complete:** [F19 mid-run DB-loss design](F19-mid-run-db-loss-design.md). No runtime behavior was changed; D11 approval is required before implementation. |
-| F20 — Date queries/N+1 | P3 | **Open, low urgency.** Indexed timestamps are wrapped in `DATE(...)`; daily views also make repeated queries. Optimize after correctness work. |
-| F21 — Task completion idempotence | P3 | **Open.** Repeated calls and unknown IDs still increment the daily counter. |
+| F20 — Date queries/N+1 | P3 | **Implemented and verified on Linux.** Replaced date-wrapped indexed filters and repeated daily reads; focused and root suites pass. |
+| F21 — Task completion idempotence | P3 | **Implemented and verified on Linux.** Only the first completion of an existing incomplete task increments the daily counter; focused and root suites pass. |
 | F22 — Clear activity | P3 / destructive scope | **Open.** UI promises to clear settings, but clears four activity areas in separate operations without a verified backup. Clarify wording and atomicity; do not broaden to PINs/settings without D13. |
 | F23 — CSV output | P3 | **Open.** Current paths alter quotes/newlines rather than RFC-4180 escaping and have different row limits. |
 | F24 — Crash-log retention | P3 | **Open.** Reports are written Desktop-first and have no current cap/deduplication. Keep Desktop deletion out of scope; resolve D15 first. |
@@ -219,11 +219,16 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 3 — P3 hardening and cleanup
 
-**Status:** In progress — 2026-10-15 (F20). Phase 2 non-owner-gated exit criteria were met; the plan allows any Phase 3 order except F28 is already pulled forward.
+**Status:** In progress — 2026-10-15 (F22 owner decision pending). Phase 2 non-owner-gated exit criteria were met; F20 and F21 are implemented and verified.
 
 - **2026-10-15 F20 start:** Replacing date-wrapped indexed-column filters and per-day reads only. Preserve returned values, timestamp storage, and schema; use isolated temporary databases for verification.
-- [ ] **F20 — Index-friendly date queries:** Replace date-wrapped indexed columns and per-day N+1 queries while preserving results/storage; add boundary, query-plan, grouping, and empty-table tests F20-a…d.
-- [ ] **F21 — Idempotent task completion:** Update only incomplete existing tasks and increment daily completion once; add tests F21-a…c.
+- **2026-10-15 F20 verification:** The implementation has no `DATE(...)` predicates in `Database.kt`; `DayQueriesTest` passed 4/4 focused tests, and the final root suite passed 213/213 tests with 0 failures/errors/skips. XML: `build/test-results/test/TEST-com.focusflow.data.DayQueriesTest.xml`.
+- [x] **F20 — Index-friendly date queries:** Replace date-wrapped indexed columns and per-day N+1 queries while preserving results/storage; add boundary, query-plan, grouping, and empty-table tests F20-a…d.
+- **2026-10-15 F21 start:** Add temporary-home characterization tests for duplicate completion and unknown task IDs before changing `completeTask`; preserve the existing UI call behavior.
+- **2026-10-15 F21 pre-fix characterization:** `gradle :test --no-daemon --console=plain --tests com.focusflow.data.DatabaseTaskCompletionTest --rerun-tasks` ran 3 tests: F21-a and F21-b failed as expected, while F21-c passed. The second completion overwrote `completed_at`; completing an unknown ID incremented the daily count. XML: `build/test-results/test/TEST-com.focusflow.data.DatabaseTaskCompletionTest.xml`.
+- **2026-10-15 F21 focused verification:** After the fix, the same targeted command passed 3/3 tests with 0 failures/errors/skips. The XML report records F21-a, F21-b, and F21-c as passing; the root suite also passed 213/213.
+- **2026-10-15 Phase 3 root verification:** `gradle :test --no-daemon --console=plain --rerun-tasks --info` completed with `BUILD SUCCESSFUL` in 1m 59s. JUnit XML: 54 files; 213 tests, 0 failures, 0 errors, 0 skipped. Gradle 8.14.2 launcher/daemon ran on OpenJDK 21.0.7; test worker ran on GraalVM CE 19.0.2 with telemetry disabled.
+- [x] **F21 — Idempotent task completion:** Update only incomplete existing tasks and increment daily completion once; add tests F21-a…c.
 - [ ] **F22 — Atomic activity clear:** Clear only the four explicitly listed activity areas in one transaction and take a verified backup first; abort on backup failure. Do not broaden deletion or add a Global PIN gate before owner decisions D13. Tests F22-a…c.
 - [ ] **F23 — Consistent CSV exports:** Use RFC-4180 quoting, correct row counts, and distinct saved/cancelled/failed results across export paths. Ask owner about formula-prefix protection and UTF-8 BOM (D14). Tests F23-a…c.
 - [ ] **F24 — Bounded crash reports:** De-duplicate matching reports and cap only the specified app-owned locations; do not delete Desktop reports. Ask owner before changing the Desktop-first policy (D15). Tests F24-a…b.
