@@ -132,7 +132,14 @@
 
   <url>
     <loc>https://focusflowpc.pages.dev/privacy-policy/</loc>
-    <lastmod>2026-10-07</lastmod>
+    <lastmod>2026-10-15</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <url>
+    <loc>https://focusflowpc.pages.dev/data-and-backups/</loc>
+    <lastmod>2026-10-15</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.5</priority>
   </url>

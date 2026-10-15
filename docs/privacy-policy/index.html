@@ -77,7 +77,7 @@
   </div>
 
   <div class="highlight">
-    Short version: FocusFlow is local-first. Your tasks, notes, habits, and session history stay on your PC. No account is needed, and normal use does not require internet access. Crash and critical-error diagnostics are off until you explicitly opt in in Settings → Privacy. If enabled, FocusFlow sends a bounded technical report through Discord to the FocusFlow developers. Reports can contain error/cause details, source, app/OS/Java information, and an error fingerprint. Discord receives your IP address and connection metadata. Error text may contain local paths or other context; FocusFlow redacts your current username, home path, and computer name before sending, but cannot guarantee every identifier is removed. If you choose "Report an Issue" in the rating dialog, the message you enter (up to 4,000 characters) and app version are sent separately. FocusFlow does not intentionally attach local tasks, notes, or other app data to either report.
+    Short version: FocusFlow stores your tasks, notes, habits, and session history on your PC by default. No account is needed, and normal use does not require internet access. If you choose a secondary backup folder on another drive or network location, verified database snapshots are copied there. Crash and critical-error diagnostics are off until you explicitly opt in in Settings → Privacy. If enabled, FocusFlow sends a bounded technical report through Discord to the FocusFlow developers. Reports can contain error/cause details, source, app/OS/Java information, and an error fingerprint. Discord receives your IP address and connection metadata. Error text may contain local paths or other context; FocusFlow redacts your current username, home path, and computer name before sending, but cannot guarantee every identifier is removed. If you choose "Report an Issue" in the rating dialog, the message you enter (up to 4,000 characters) and app version are sent separately. FocusFlow does not intentionally attach local tasks, notes, or other app data to either report.
   </div>
 
   <h2>Local-only storage</h2>
@@ -92,7 +92,7 @@
     <li>Daily notes and app settings</li>
     <li>Temptation log (which blocked apps were attempted and when)</li>
   </ul>
-  <p>None of this data is transmitted to or stored on any FocusFlow-operated or TBTechs-operated server. It never leaves your device except as described in the "Anonymous diagnostics" section below.</p>
+  <p>FocusFlow does not transmit this database to a FocusFlow-operated or TBTechs-operated server. If you choose a secondary backup folder on another drive or network location, verified snapshots are copied there; the storage and access practices of that destination depend on how it is configured. Diagnostic and feedback transmissions are described below.</p>
 
   <h2>No account system or backend</h2>
   <p>FocusFlow does not require a user account, email address, or any form of registration. There is no FocusFlow backend service, cloud sync, or remote database. The app operates locally on your device. Internet access is used only when an enabled diagnostic report needs to be sent or when you choose to send feedback from the rating dialog.</p>
@@ -106,9 +106,10 @@
     <li><strong>Hosts-file blocking (optional):</strong> When website blocking is enabled, FocusFlow adds entries to <code>C:\Windows\System32\drivers\etc\hosts</code> to block specific domains. This requires administrator privileges. Entries are removed when blocking is disabled.</li>
     <li><strong>System tray:</strong> Used to display a tray icon and provide quick controls (restore window, toggle blocking, quit) while the app runs in the background.</li>
     <li><strong>Windows Registry (optional, opt-in):</strong> If the user enables "Start with Windows" in Settings, FocusFlow adds a single entry to <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code>. This is an explicit user opt-in and can be removed at any time from the Settings screen.</li>
-    <li><strong>File system (user profile only):</strong> Used to read and write the local SQLite database, automatic backups, and crash log in <code>%USERPROFILE%\.focusflow\</code>. FocusFlow does not access files outside this directory except for the hosts file (when website blocking is enabled) and the registry key described above.</li>
-    <li><strong>Auto-backup:</strong> FocusFlow creates periodic rolling backups of your local database within the same <code>.focusflow</code> folder. These backups never leave your device.</li>
+    <li><strong>File system:</strong> Used to read and write the local SQLite database, automatic backups, recovery files, and crash logs in <code>%USERPROFILE%\.focusflow\</code>. If you choose a secondary backup folder, FocusFlow also writes its verified backup copies there. Other system access is limited to the hosts file (when website blocking is enabled) and the registry key described above.</li>
+    <li><strong>Auto-backup:</strong> FocusFlow creates periodic rolling backups in <code>%USERPROFILE%\.focusflow\backups\</code>. If you choose a secondary backup folder, verified copies are also stored there. This is a folder you choose, not FocusFlow-hosted cloud backup.</li>
   </ul>
+  <p>For details about the database, backup retention, restore, and deleting saved copies, see the <a href="../data-and-backups/">Database &amp; backups guide</a>.</p>
 
   <h2>Opt-in crash diagnostics</h2>
   <p>Crash and critical-error diagnostics are <strong>off by default</strong>. FocusFlow sends them only after you explicitly turn on "Send crash diagnostics" in <strong>Settings → Privacy</strong>. If enabled, a bounded report is sent to the FocusFlow developers through Discord, a third-party service. Discord receives your IP address and connection metadata when the report is sent. Reports are not queued for later delivery.</p>

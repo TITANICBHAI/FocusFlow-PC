@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Database &amp; Backups — FocusFlow</title>
+  <meta name="description" content="Where FocusFlow stores its local database and backups, how automatic backups and restore work, and how to delete saved copies." />
+  <link rel="canonical" href="https://focusflowpc.pages.dev/data-and-backups/" />
+  <meta property="og:title" content="Database &amp; Backups — FocusFlow" />
+  <meta property="og:description" content="A plain-language guide to FocusFlow's local database, backup retention, restore, and deletion." />
+  <meta property="og:url" content="https://focusflowpc.pages.dev/data-and-backups/" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #09090F;
+      color: #E8E6F0;
+      line-height: 1.75;
+      padding: 48px 24px 80px;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; }
+    .brand { margin-bottom: 36px; }
+    .brand-name { font-size: 22px; font-weight: 700; }
+    .brand-sub { font-size: 13px; color: #9D97FF; }
+    .links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 14px; }
+    h1 { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+    .lead { font-size: 16px; color: #9D97FF; margin-bottom: 8px; }
+    .updated { font-size: 13px; color: #6C6880; margin-bottom: 32px; }
+    h2 {
+      font-size: 18px; font-weight: 600; color: #9D97FF;
+      margin: 32px 0 10px;
+      border-left: 3px solid #7C4DFF;
+      padding-left: 12px;
+    }
+    p { margin-bottom: 14px; color: #C8C6D8; }
+    ul, ol { margin: 0 0 14px 22px; color: #C8C6D8; }
+    li { margin-bottom: 7px; }
+    a { color: #9D97FF; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: monospace; font-size: 0.875em;
+      background: rgba(124,77,255,0.12); padding: 0.1em 0.4em;
+      border-radius: 4px; color: #a78bfa; overflow-wrap: anywhere;
+    }
+    .notice, .warning {
+      border-radius: 10px; padding: 16px 20px; margin: 16px 0;
+      font-size: 14px; color: #C8C6D8;
+    }
+    .notice { background: #1C1B26; border: 1px solid #252436; }
+    .warning { background: rgba(124,77,255,0.08); border: 1px solid rgba(124,77,255,0.25); }
+    footer {
+      margin-top: 56px; font-size: 13px; color: #77738A;
+      border-top: 1px solid #1C1B26; padding-top: 22px;
+    }
+    @media (max-width: 520px) {
+      body { padding: 32px 18px 56px; }
+      h1 { font-size: 27px; }
+    }
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <header class="brand">
+    <div class="brand-name">FocusFlow</div>
+    <div class="brand-sub">Deep Focus App Blocker · by TBTechs</div>
+    <nav class="links" aria-label="Related pages">
+      <a href="../privacy-policy/">Privacy Policy</a>
+      <a href="../">FocusFlow home</a>
+    </nav>
+  </header>
+
+  <h1>Database &amp; backups</h1>
+  <p class="lead">Where your FocusFlow data lives, how backup and restore work, and how to remove saved copies.</p>
+  <p class="updated">Last updated: October 15, 2026 · Applies to FocusFlow for Windows</p>
+
+  <h2>Your live database</h2>
+  <p>FocusFlow keeps its active SQLite database on your PC at <code>%USERPROFILE%\.focusflow\focusflow.db</code>. It contains app data such as tasks, focus history, settings, protection rules, and PIN settings. The database is local; FocusFlow does not sync it to a FocusFlow cloud account.</p>
+  <p>The app uses this database while it is running. Do not move or delete <code>focusflow.db</code> while FocusFlow is open.</p>
+
+  <h2>Where backups are stored</h2>
+  <ul>
+    <li><strong>Primary app-data backups:</strong> <code>%USERPROFILE%\.focusflow\backups\</code>. These are database snapshots with matching <code>.sha256</code> and <code>.meta.json</code> files.</li>
+    <li><strong>Optional secondary backups:</strong> You can choose another folder in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>. Verified snapshots are copied there. It may be on another drive or network location; FocusFlow does not host this as a cloud backup.</li>
+    <li><strong>Restore recovery files:</strong> Safety backups and preserved pre-restore files are kept in FocusFlow's app-data backup area so a restore can be recovered if needed.</li>
+  </ul>
+
+  <h2>Creating and verifying backups</h2>
+  <p>After the database is ready, FocusFlow checks for a backup at startup and then every six hours. It normally creates one regular automatic backup per day; the six-hour check does not mean six backups per day. To create an extra snapshot, use <strong>Back up now</strong> in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>.</p>
+  <p>You can create a snapshot while FocusFlow is running. FocusFlow asks SQLite to make a consistent copy of the live database, then checks the copy's integrity and SHA-256 hash. A backup is marked <strong>Verified</strong> only when those checks pass. Unverified or invalid backups cannot be restored through the normal restore flow.</p>
+
+  <h2>Automatic cleanup</h2>
+  <p>FocusFlow keeps up to seven regular primary app-data backups. After a new backup succeeds, older regular snapshots beyond that limit are removed along with their matching hash and metadata files. Cleanup is based on file age and count, not on which backups are verified.</p>
+  <p>Safety backups, pre-restore recovery archives, and copies in your secondary folder are not automatically deleted. Removing the selected secondary-folder setting also leaves existing files in that folder untouched.</p>
+
+  <h2>Restoring a snapshot</h2>
+  <ol>
+    <li>Open <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong> and choose a backup marked <strong>Verified</strong>.</li>
+    <li>Review the confirmation and choose <strong>Stage restore</strong>. The current database keeps running; it is not replaced immediately.</li>
+    <li>Quit and reopen FocusFlow. Before applying the restore, FocusFlow creates and verifies a safety backup of the current database and preserves the current database files. If the restored database fails to initialize, FocusFlow attempts to put the preserved files back.</li>
+  </ol>
+  <div class="warning">
+    <strong>A restore replaces the whole database; it does not merge data.</strong> It restores the selected snapshot, including its rules, settings, and PIN state. The restore flow checks that the snapshot is verified and asks for confirmation, but it does not ask for the current Global PIN or judge whether the snapshot has fewer restrictions. A verified older snapshot with fewer rules or no PIN can therefore restore that older state at the next launch.
+  </div>
+
+  <h2>Deleting backups</h2>
+  <ul>
+    <li><strong>Safety backups, secondary copies, and preserved restore archives:</strong> Use the corresponding delete control in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>. The app asks for confirmation before removing the selected copy.</li>
+    <li><strong>Regular primary backups:</strong> The current screen does not provide a delete button for these; automatic cleanup keeps the newest seven. To remove one manually, quit FocusFlow first, then delete that selected <code>focusflow_*.db</code> file and its matching <code>.sha256</code> and <code>.meta.json</code> sidecars from the <code>backups</code> folder. Do not delete files you may need to restore.</li>
+    <li><strong>Removing a secondary-folder setting:</strong> This stops future copies to that folder; it does not delete copies already there.</li>
+  </ul>
+  <p>Deleting a backup is different from deleting the live database. To remove all local FocusFlow data, first uninstall the app, then delete <code>%USERPROFILE%\.focusflow\</code>. This also removes the database, settings, logs, backups, and recovery files and cannot be undone.</p>
+
+  <footer>
+    This guide describes local database and backup behavior. For broader data-handling details, read the <a href="../privacy-policy/">Privacy Policy</a>.
+  </footer>
+</main>
+</body>
+</html>
