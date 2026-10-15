@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 remains gated on human Windows check W9, so Phase 3 is not closed. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. D9's approved backup/recovery features are implemented and Linux-tested; its D9-specific Windows W8 scenario remains unverified, and no real-profile backup or restore was performed. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design direction is approved, but runtime recovery remains unapproved. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D5, D11 implementation, and D17 remain open or gated; all W1–W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains a separate owner action. D2, D3, D4, D6, D8, D10, D13, D14, and D18 are resolved; D15 is implemented; D16 is closed. F1b remains gated on W1–W3.
+- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 remains gated on human Windows check W9, so Phase 3 is not closed. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. D9's approved backup/recovery features are implemented and Linux-tested; its D9-specific Windows W8 scenario remains unverified, and no real-profile backup or restore was performed. D5/F1b is closed with no packaging change; W14 is not applicable. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design direction is approved, but runtime recovery remains unapproved. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D17/F27 remains unresolved pending a decision on whether to test the current SelectorProvider flag; W1–W13 and W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains a separate owner action. D2, D3, D4, D5, D6, D8, D10, D13, D14, and D18 are resolved; D15 is implemented; D16 is closed.
 
 ## Tracking rules
 
@@ -272,7 +272,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D2 | Crash-report consent default: opt-in or opt-out | **Resolved 2026-10-14:** opt-in; no report before explicit consent. |
 | D3 | Final consent dialog and Store privacy wording | **Resolved 2026-10-14:** use factual wording that the receiving service sees the sender IP and diagnostic text may contain local paths. |
 | D4 | Uninstall outcome when DB state is unreadable | **Resolved 2026-10-15: A — allow after typed confirmation for failures other than BUSY/LOCKED. F5.** |
-| D5 | Ship SQLite DLL inside installation | F1b; wait for W1–W3. |
+| D5 | Ship SQLite DLL inside installation | **Closed 2026-10-15:** leave current packaging unchanged; do not pursue optional F1b. W1–W3 remain F1 checks, not F1b prerequisites. |
 | D6 | sqlite-jdbc upgrade timing | **Resolved 2026-10-15: no upgrade in this work.** |
 | D7 | Whether to offer deletion of recurring-task duplicates | **Closed 2026-10-15:** leave recurring-task duplicates as-is; no delete option or cleanup is requested. |
 | D8 | End-time rule for orphan focus sessions | **Resolved 2026-10-15:** mark interrupted and set `end_time = start_time`. Applied repairs now require a verified F15 backup; no real-profile repair has been run. |
@@ -290,7 +290,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 
 ## Windows verification matrix — human only
 
-All items stay unchecked until a human runs the named scenario on Windows and records build, OS, result, and evidence. Use a throw-away VM/profile for destructive environment scenarios. Never run W2/W3/W8 against a user's normal environment.
+All applicable test items stay unchecked until a human runs the named scenario on Windows and records build, OS, result, and evidence. W14 is not applicable because D5/F1b is closed. Use a throw-away VM/profile for destructive environment scenarios. Never run W2/W3/W8 against a user's normal environment.
 
 - [ ] **W1:** Clean per-user EXE install loads DB/native DLL in the expected location without temp extraction.
 - [ ] **W2:** Broken `%TEMP%`/`%TMP%`: compare released and fixed builds; establish whether the reported failure reproduces.
@@ -305,7 +305,7 @@ All items stay unchecked until a human runs the named scenario on Windows and re
 - [ ] **W11:** 24-hour memory soak before/after F7.
 - [ ] **W12:** Recurring-task behavior and dry-run repair on a copy of a polluted DB.
 - [ ] **W13:** Crash-log destination with Desktop redirected through OneDrive.
-- [ ] **W14:** Installed packaged layout and Compose resource directory for F1b.
+- [x] **W14 — Not applicable:** No F1b packaging change; closed under D5.
 - [ ] **W15:** CSV row counts above 1,000 and clear-activity atomicity.
 
 ## Cross-cutting completion checks

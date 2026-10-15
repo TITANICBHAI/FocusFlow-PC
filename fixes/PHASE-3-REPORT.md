@@ -65,7 +65,7 @@ The builds emitted existing Compose icon deprecation and coroutine opt-in warnin
 - No live user profile or database was read or changed, and no evidence script was run.
 - D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 was resolved on 2026-10-15: new crash reports go to `~/.focusflow/logs`; legacy reports remain searchable and no Desktop report is moved or deleted.
 - D18 was resolved on 2026-10-15: the 90-day current-streak cap was not intentional. F30 is complete; its implementation and passing tests are recorded below.
-- W1–W15 remain human-only and unverified. F27 awaits W9; D5/F1b awaits W1–W3. D9's approved runtime features are implemented and Linux-tested, but its D9-specific W8 scenario remains pending; no real-profile backup or restore was performed. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design is approved only, with runtime implementation still unapproved. F6/F9 repairs have not been run against a real profile.
+- Applicable Windows checks remain human-only and unverified. F27/D17 is unresolved pending whether to run W9; D5/F1b is closed with no packaging change, and W14 is not applicable. W1–W3 still verify the F1 fallback. D9's approved runtime features are implemented and Linux-tested, but its D9-specific W8 scenario remains pending; no real-profile backup or restore was performed. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design is approved only, with runtime implementation still unapproved. F6/F9 repairs have not been run against a real profile.
 
 ## D9 — Backup and recovery status
 

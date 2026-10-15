@@ -17,4 +17,4 @@
 - [Language market prioritization](language-market-prioritization.md) — For India, don't infer Hindi preference from install location; most users prefer reading in English.
 - [Gradle test completion evidence](gradle-test-completion.md) — Require a final `:test` result and XML reports; partial `testClasses` output is not test evidence.
 - [Gradle JVM selection](gradle-jvm-selection.md) — Gradle launcher, daemon, test worker, and app process may use different JVMs; verify the one under test.
-- [Database owner decisions](database-owner-decisions.md) — D1, D7, D9, D12, and D19 are settled or underway; don't repeat stale tracker gates.
+- [Database owner decisions](database-owner-decisions.md) — D1, D5, D7, D9, D12, and D19 are settled or underway; don't repeat stale tracker gates.
