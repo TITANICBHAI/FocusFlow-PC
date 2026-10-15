@@ -3,12 +3,17 @@ package com.focusflow.services
 import com.focusflow.data.Database
 import com.focusflow.data.models.FocusSession
 import com.focusflow.data.models.SessionState
+import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.NetworkBlocker
 import com.focusflow.enforcement.ProcessMonitor
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.awt.EventQueue
 import java.time.LocalDateTime
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 
 /** Summary data emitted once at the end of every focus session. */
@@ -22,11 +27,14 @@ data class SessionSummary(
 object FocusSessionService {
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private const val END_WRITE_DISPOSE_TIMEOUT_MILLIS = 2_000L
     // @Volatile: timerJob is written in startTimer() (called from @Synchronized start()
     // and resume()) and read in end() (which can be called from the "FocusFlow-Shutdown"
     // daemon thread via doShutdown). Without @Volatile the shutdown thread may read a
     // stale reference and fail to cancel the in-flight timer coroutine.
     @Volatile private var timerJob: Job? = null
+    @Volatile private var startWriteJob: Job? = null
+    private val pendingSessionWrites = ConcurrentHashMap.newKeySet<Job>()
 
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state
@@ -50,6 +58,18 @@ object FocusSessionService {
     /** Notes entered by the user during the active session; flushed to DB on end(). */
     @Volatile private var currentNotes: String = ""
     fun setNotes(notes: String) { currentNotes = notes }
+
+    @Volatile
+    internal var sessionWriterForTest: suspend (FocusSession) -> Unit = { Database.insertSession(it) }
+
+    @Volatile
+    internal var sessionWriteFailureLoggerForTest: (String, Throwable) -> Unit = { operation, failure ->
+        EnforcementLog.warn(
+            "FocusSessionService",
+            "Could not persist $operation focus session",
+            failure
+        )
+    }
 
     /**
      * Start a new focus session.
@@ -95,25 +115,27 @@ object FocusSessionService {
 
         startTimer()
 
-        // DB write on IO — never block the UI or enforcement thread
-        val capturedTid = tid
-        scope.launch(Dispatchers.IO) {
-            try {
-                Database.insertSession(
-                    FocusSession(
-                        id             = newSessionId,
-                        taskId         = capturedTid,
-                        taskName       = name,
-                        startTime      = newStartTime,
-                        endTime        = null,
-                        plannedMinutes = minutes,
-                        actualMinutes  = 0,
-                        completed      = false,
-                        interrupted    = false
-                    )
+        // DB write on IO — never block the UI or enforcement thread.
+        val writer = sessionWriterForTest
+        val failureLogger = sessionWriteFailureLoggerForTest
+        startWriteJob = trackSessionWrite(scope.launch(Dispatchers.IO) {
+            persistSession(
+                operation = "start",
+                writer = writer,
+                failureLogger = failureLogger,
+                session = FocusSession(
+                    id             = newSessionId,
+                    taskId         = tid,
+                    taskName       = name,
+                    startTime      = newStartTime,
+                    endTime        = null,
+                    plannedMinutes = minutes,
+                    actualMinutes  = 0,
+                    completed      = false,
+                    interrupted    = false
                 )
-            } catch (_: Exception) {}
-        }
+            )
+        })
     }
 
     fun pause() {
@@ -155,6 +177,9 @@ object FocusSessionService {
         val tid          = taskId
         val planned      = plannedMinutes
         val startT       = sessionStartTime ?: endTime
+        val pendingStartWrite = startWriteJob
+        val writer = sessionWriterForTest
+        val failureLogger = sessionWriteFailureLoggerForTest
 
         // Clear state immediately — UI reflects session end without waiting for DB
         _state.value = SessionState()
@@ -165,27 +190,30 @@ object FocusSessionService {
         // lock or blocking the EDT.
         scope.launch(Dispatchers.IO) { try { NetworkBlocker.removeAllRules() } catch (_: Exception) {} }
 
-        // DB write on IO — never block UI or enforcement thread
-        scope.launch(Dispatchers.IO) {
-            try {
-                sid?.let { id ->
-                    Database.insertSession(
-                        FocusSession(
-                            id             = id,
-                            taskId         = tid,
-                            taskName       = name,
-                            startTime      = startT,
-                            endTime        = endTime,
-                            plannedMinutes = planned,
-                            actualMinutes  = elapsed / 60,
-                            completed      = completed,
-                            interrupted    = !completed,
-                            notes          = notesToSave
-                        )
+        // Serialize persistence so INSERT OR REPLACE cannot let the start row
+        // overwrite the final end time.
+        trackSessionWrite(scope.launch(Dispatchers.IO) {
+            pendingStartWrite?.join()
+            sid?.let { id ->
+                persistSession(
+                    operation = "end",
+                    writer = writer,
+                    failureLogger = failureLogger,
+                    session = FocusSession(
+                        id             = id,
+                        taskId         = tid,
+                        taskName       = name,
+                        startTime      = startT,
+                        endTime        = endTime,
+                        plannedMinutes = planned,
+                        actualMinutes  = elapsed / 60,
+                        completed      = completed,
+                        interrupted    = !completed,
+                        notes          = notesToSave
                     )
-                }
-            } catch (_: Exception) {}
-        }
+                )
+            }
+        })
 
         if (name.isNotBlank()) NotificationService.sessionEnded(name, completed)
         if (completed && pomodoroMode) BreakEnforcer.onSessionCompleted()
@@ -211,6 +239,29 @@ object FocusSessionService {
 
     /** Call from UI after showing the summary dialog. */
     fun clearSummary() { _lastSummary.value = null }
+
+    private suspend fun persistSession(
+        operation: String,
+        writer: suspend (FocusSession) -> Unit,
+        failureLogger: (String, Throwable) -> Unit,
+        session: FocusSession
+    ) {
+        try {
+            writer(session)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            failureLogger(operation, failure)
+        }
+    }
+
+    private fun trackSessionWrite(job: Job): Job {
+        pendingSessionWrites.add(job)
+        job.invokeOnCompletion { pendingSessionWrites.remove(job) }
+        return job
+    }
 
     private fun startTimer() {
         timerJob = scope.launch {
@@ -250,12 +301,51 @@ object FocusSessionService {
         }
     }
 
+    @Synchronized
     fun dispose() {
         // End any active session before tearing down the scope so that
         // ProcessMonitor.sessionActive is cleared and NetworkBlocker rules are removed.
         // Without this, a hard app close (e.g. window X button) leaves enforcement
         // state permanently dirty — ProcessMonitor keeps killing processes on the next launch.
         if (_state.value.isActive) end(completed = false)
+        if (EventQueue.isDispatchThread()) {
+            Thread(
+                { awaitPendingSessionWritesAndCancelScope() },
+                "FocusSessionService-Dispose"
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        } else {
+            awaitPendingSessionWritesAndCancelScope()
+        }
+    }
+
+    private fun awaitPendingSessionWritesAndCancelScope() {
+        val pendingWrites = synchronized(this) { pendingSessionWrites.toList() }
+        if (pendingWrites.isNotEmpty()) {
+            val finished = CountDownLatch(pendingWrites.size)
+            pendingWrites.forEach { writeJob ->
+                writeJob.invokeOnCompletion { finished.countDown() }
+            }
+            val completedWithinBound = try {
+                finished.await(END_WRITE_DISPOSE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                EnforcementLog.warn(
+                    "FocusSessionService",
+                    "Interrupted while waiting for the focus-session end write",
+                    interrupted
+                )
+                false
+            }
+            if (!completedWithinBound) {
+                EnforcementLog.warn(
+                    "FocusSessionService",
+                    "Timed out waiting for the focus-session end write during dispose"
+                )
+            }
+        }
         scope.cancel()
     }
 }
