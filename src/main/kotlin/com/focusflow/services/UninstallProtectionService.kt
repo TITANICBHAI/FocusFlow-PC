@@ -2,11 +2,14 @@ package com.focusflow.services
 
 import com.focusflow.data.Database
 import com.focusflow.data.DbInitResult
+import com.focusflow.data.SqliteFailureKind
 import com.focusflow.data.Database.SettingRead
+import com.focusflow.data.classifySqliteFailure
 import com.focusflow.enforcement.InstallVariant
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
 import java.awt.GraphicsEnvironment
+import java.sql.SQLException
 import javax.swing.JOptionPane
 import java.util.concurrent.atomic.AtomicLong
 
@@ -20,20 +23,45 @@ import java.util.concurrent.atomic.AtomicLong
 object UninstallProtectionService {
 
     private const val AUTHORIZATION_WINDOW_MS = 30_000L
+    internal const val UNREADABLE_DB_CONFIRMATION_PHRASE = "UNINSTALL FOCUSFLOW"
+    private val WIZARD_BUSY_RETRY_DELAYS_MS = listOf(1_000L, 2_000L)
     private val authorizedUninstallUntilMs = AtomicLong(0L)
     private val uninstallPromptLock = Any()
     internal enum class Action { QUIT, UNINSTALL }
+    internal enum class WizardDatabaseDecision {
+        READABLE,
+        MISSING,
+        REQUIRE_CONFIRMATION,
+        BLOCK
+    }
+
     @Volatile
     internal var isDirectInstallForTest: Boolean? = null
     @Volatile
+    internal var wizardDatabaseOpenForTest: (() -> DbInitResult)? = null
+    @Volatile
+    internal var wizardBusyRetryDelaysForTest: List<Long>? = null
+    @Volatile
+    internal var unreadableDbPhrasePromptForTest: (() -> String?)? = null
+    @Volatile
+    internal var pinPromptForTest: ((Requirement.Pin) -> String?)? = null
+    @Volatile
+    internal var messageDialogForTest: ((String, String) -> Unit)? = null
+    @Volatile
     private var wizardDatabaseMissing = false
+    @Volatile
+    private var wizardDatabaseUnreadable = false
 
     private val isDirectInstall: Boolean
         get() = isDirectInstallForTest ?: InstallVariant.isWindowsDirectInstall
 
     internal sealed interface Requirement {
         data class WaitForStandalone(val remainingMs: Long) : Requirement
-        data class Blocked(val feature: String, val message: String) : Requirement
+        data class Blocked(
+            val feature: String,
+            val message: String,
+            val databaseFailure: Throwable? = null
+        ) : Requirement
         data class Pin(
             val feature: String,
             val prompt: String,
@@ -51,37 +79,70 @@ object UninstallProtectionService {
      */
     fun prepareForUninstallWizard(): Boolean {
         wizardDatabaseMissing = false
+        wizardDatabaseUnreadable = false
         if (!isDirectInstall) return true
 
         return runCatching {
-            val result = Database.initReadOnlyForWizard()
-            if (result !is DbInitResult.Ready) return false
-            if (!Database.isReady) {
-                // A missing database contains no persisted protection state.
-                wizardDatabaseMissing = true
-                ProcessMonitor.alwaysOnEnabled = false
-                return true
-            }
-
-            when (val setting = Database.readSetting("always_on_enforcement")) {
-                is SettingRead.Present -> when (setting.value) {
-                    "true" -> {
-                        ProcessMonitor.alwaysOnEnabled = true
-                        true
-                    }
-                    "false" -> {
-                        ProcessMonitor.alwaysOnEnabled = false
-                        true
-                    }
-                    else -> false
+            val result = openWizardDatabaseWithBusyRetries()
+            when (decideWizardDatabaseOutcome(result, Database.isReady)) {
+                WizardDatabaseDecision.BLOCK -> false
+                WizardDatabaseDecision.REQUIRE_CONFIRMATION -> {
+                    wizardDatabaseUnreadable = true
+                    true
                 }
-                SettingRead.Absent -> {
+                WizardDatabaseDecision.MISSING -> {
+                    // A missing database contains no persisted protection state.
+                    wizardDatabaseMissing = true
                     ProcessMonitor.alwaysOnEnabled = false
                     true
                 }
-                is SettingRead.Unreadable -> false
+                WizardDatabaseDecision.READABLE -> when (val setting =
+                    Database.readSetting("always_on_enforcement")
+                ) {
+                    is SettingRead.Present -> when (setting.value) {
+                        "true" -> {
+                            ProcessMonitor.alwaysOnEnabled = true
+                            true
+                        }
+                        "false" -> {
+                            ProcessMonitor.alwaysOnEnabled = false
+                            true
+                        }
+                        else -> {
+                            wizardDatabaseUnreadable = true
+                            true
+                        }
+                    }
+                    SettingRead.Absent -> {
+                        ProcessMonitor.alwaysOnEnabled = false
+                        true
+                    }
+                    is SettingRead.Unreadable -> {
+                        if (isBusyOrLocked(setting.cause)) {
+                            false
+                        } else {
+                            wizardDatabaseUnreadable = true
+                            true
+                        }
+                    }
+                }
             }
         }.getOrDefault(false)
+    }
+
+    internal fun decideWizardDatabaseOutcome(
+        result: DbInitResult,
+        databaseReady: Boolean
+    ): WizardDatabaseDecision = when (result) {
+        DbInitResult.Ready ->
+            if (databaseReady) WizardDatabaseDecision.READABLE else WizardDatabaseDecision.MISSING
+        is DbInitResult.Busy -> WizardDatabaseDecision.BLOCK
+        is DbInitResult.Failed ->
+            if (isBusyOrLocked(result.cause)) {
+                WizardDatabaseDecision.BLOCK
+            } else {
+                WizardDatabaseDecision.REQUIRE_CONFIRMATION
+            }
     }
 
     /**
@@ -106,11 +167,15 @@ object UninstallProtectionService {
      */
     fun authorizeUninstallWizard(): Boolean {
         if (!isDirectInstall) return true
+        if (wizardDatabaseMissing) {
+            wizardDatabaseMissing = false
+            return true
+        }
+        if (wizardDatabaseUnreadable) {
+            wizardDatabaseUnreadable = false
+            return confirmUnreadableDatabase()
+        }
         if (!Database.isReady) {
-            if (wizardDatabaseMissing) {
-                wizardDatabaseMissing = false
-                return true
-            }
             showMessage(
                 "Uninstall protection unavailable",
                 "FocusFlow could not read its protection state safely. " +
@@ -119,7 +184,17 @@ object UninstallProtectionService {
             return false
         }
         wizardDatabaseMissing = false
-        return authorizeRequirements(activeRequirements(Action.UNINSTALL))
+        val requirements = activeRequirements(Action.UNINSTALL)
+        val unreadableDatabase = requirements
+            .filterIsInstance<Requirement.Blocked>()
+            .mapNotNull { it.databaseFailure }
+        if (unreadableDatabase.any(::isBusyOrLocked)) {
+            return authorizeRequirements(requirements)
+        }
+        if (unreadableDatabase.isNotEmpty()) {
+            return confirmUnreadableDatabase()
+        }
+        return authorizeRequirements(requirements)
     }
 
     /**
@@ -170,6 +245,25 @@ object UninstallProtectionService {
         }
     }
 
+    private fun openWizardDatabaseWithBusyRetries(): DbInitResult {
+        val retryDelays = wizardBusyRetryDelaysForTest ?: WIZARD_BUSY_RETRY_DELAYS_MS
+        var retryIndex = 0
+        while (true) {
+            val result = wizardDatabaseOpenForTest?.invoke()
+                ?: Database.initReadOnlyForWizard()
+            if (result !is DbInitResult.Busy) return result
+
+            val delayMs = retryDelays.getOrNull(retryIndex++) ?: return result
+            if (delayMs <= 0L) continue
+            try {
+                Thread.sleep(delayMs)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return result
+            }
+        }
+    }
+
     internal fun activeRequirements(action: Action): List<Requirement> {
         val result = mutableListOf<Requirement>()
 
@@ -182,7 +276,7 @@ object UninstallProtectionService {
             .filterIsInstance<SettingRead.Unreadable>()
             .firstOrNull()
         if (unreadableStandalone != null) {
-            result += unreadableRequirement("Standalone Block")
+            result += unreadableRequirement("Standalone Block", unreadableStandalone.cause)
         } else {
             val untilRead = standaloneReads[0] as? SettingRead.Present
             val startRead = standaloneReads[1] as? SettingRead.Present
@@ -194,7 +288,12 @@ object UninstallProtectionService {
                 (startRead != null && persistedStart == null) ||
                 (persistedProcesses.isNotBlank() && persistedUntil == null) ||
                 (persistedUntil != null && persistedUntil > now && persistedProcesses.isBlank())
-            if (malformed) result += unreadableRequirement("Standalone Block")
+            if (malformed) {
+                result += unreadableRequirement(
+                    "Standalone Block",
+                    IllegalArgumentException("Malformed persisted Standalone Block settings.")
+                )
+            }
             val persistedActive = persistedProcesses.isNotBlank() &&
                 (persistedUntil ?: 0L) > now &&
                 (persistedStart == null || persistedStart == 0L || persistedStart <= now)
@@ -210,10 +309,14 @@ object UninstallProtectionService {
         }
 
         when (val setting = Database.readSetting("always_on_enforcement")) {
-            is SettingRead.Unreadable -> result += unreadableRequirement("Always-On enforcement")
+            is SettingRead.Unreadable ->
+                result += unreadableRequirement("Always-On enforcement", setting.cause)
             is SettingRead.Present -> {
                 if (setting.value != "true" && setting.value != "false") {
-                    result += unreadableRequirement("Always-On enforcement")
+                    result += unreadableRequirement(
+                        "Always-On enforcement",
+                        IllegalArgumentException("Malformed Always-On setting.")
+                    )
                 }
                 if ((ProcessMonitor.alwaysOnEnabled || setting.value == "true") && GlobalPin.isSet()) {
                     result += Requirement.Pin(
@@ -279,7 +382,8 @@ object UninstallProtectionService {
         }
 
         when (val setting = Database.readSetting("nuclear_mode")) {
-            is SettingRead.Unreadable -> result += unreadableRequirement("Nuclear Mode")
+            is SettingRead.Unreadable ->
+                result += unreadableRequirement("Nuclear Mode", setting.cause)
             is SettingRead.Present -> when (setting.value) {
                 "true" -> {
                     if (NuclearMode.isActive) addNuclearModeRequirement()
@@ -297,7 +401,10 @@ object UninstallProtectionService {
                     }
                 }
                 "false" -> addNuclearModeRequirement()
-                else -> result += unreadableRequirement("Nuclear Mode")
+                else -> result += unreadableRequirement(
+                    "Nuclear Mode",
+                    IllegalArgumentException("Malformed Nuclear Mode setting.")
+                )
             }
             SettingRead.Absent -> addNuclearModeRequirement()
         }
@@ -305,12 +412,63 @@ object UninstallProtectionService {
         return result
     }
 
-    private fun unreadableRequirement(feature: String) =
+    private fun unreadableRequirement(feature: String, cause: Throwable? = null) =
         Requirement.Blocked(
             feature = feature,
             message = "FocusFlow could not read the $feature protection settings safely. " +
-                "Try again when the database is available."
+                "Try again when the database is available.",
+            databaseFailure = cause
         )
+
+    private fun confirmUnreadableDatabase(): Boolean {
+        val promptForTest = unreadableDbPhrasePromptForTest
+        val enteredPhrase = if (promptForTest != null) {
+            promptForTest()
+        } else {
+            if (GraphicsEnvironment.isHeadless()) return false
+            JOptionPane.showInputDialog(
+                null,
+                "FocusFlow cannot read its protection settings, so it cannot verify any PIN or block.\n\n" +
+                    "To continue anyway, type $UNREADABLE_DB_CONFIRMATION_PHRASE exactly.",
+                "Protection settings unavailable",
+                JOptionPane.WARNING_MESSAGE
+            )
+        } ?: return false
+
+        if (enteredPhrase.trim() == UNREADABLE_DB_CONFIRMATION_PHRASE) return true
+        showMessage(
+            "Confirmation did not match",
+            "The confirmation phrase did not match. The application was not removed."
+        )
+        return false
+    }
+
+    private fun isBusyOrLocked(failure: Throwable): Boolean {
+        var current: Throwable? = failure
+        var depth = 0
+        while (current != null && depth++ < 16) {
+            if (current is SQLException) {
+                when (classifySqliteFailure(current)) {
+                    SqliteFailureKind.BUSY, SqliteFailureKind.LOCKED -> return true
+                    else -> Unit
+                }
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    internal fun resetForTest() {
+        wizardDatabaseMissing = false
+        wizardDatabaseUnreadable = false
+        isDirectInstallForTest = null
+        wizardDatabaseOpenForTest = null
+        wizardBusyRetryDelaysForTest = null
+        unreadableDbPhrasePromptForTest = null
+        pinPromptForTest = null
+        messageDialogForTest = null
+        authorizedUninstallUntilMs.set(0L)
+    }
 
     private fun authorizeRequirements(
         requirements: List<Requirement>
@@ -350,14 +508,18 @@ object UninstallProtectionService {
     }
 
     private fun promptForPin(requirement: Requirement.Pin): Boolean {
-        if (GraphicsEnvironment.isHeadless()) return false
-
-        val entered = JOptionPane.showInputDialog(
-            null,
-            requirement.prompt,
-            "${requirement.feature} protection",
-            JOptionPane.WARNING_MESSAGE
-        ) ?: return false
+        val promptForTest = pinPromptForTest
+        val entered = if (promptForTest != null) {
+            promptForTest(requirement)
+        } else {
+            if (GraphicsEnvironment.isHeadless()) return false
+            JOptionPane.showInputDialog(
+                null,
+                requirement.prompt,
+                "${requirement.feature} protection",
+                JOptionPane.WARNING_MESSAGE
+            )
+        } ?: return false
 
         return when (requirement.verify(entered)) {
             PinVerificationResult.ACCEPTED -> true
@@ -376,6 +538,11 @@ object UninstallProtectionService {
     }
 
     private fun showMessage(title: String, message: String) {
+        val dialogForTest = messageDialogForTest
+        if (dialogForTest != null) {
+            dialogForTest(title, message)
+            return
+        }
         if (GraphicsEnvironment.isHeadless()) return
         JOptionPane.showMessageDialog(null, message, title, JOptionPane.WARNING_MESSAGE)
     }

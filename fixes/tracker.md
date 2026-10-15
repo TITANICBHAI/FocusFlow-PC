@@ -48,7 +48,7 @@
 | F2 — Throwable-safe startup | P0 | **Implemented; Phase 1 Linux tests pass.** Database and startup callers now produce a stable failed state for nonfatal `Throwable`s and rethrow cancellation/fatal VM errors. |
 | F3 — Root cause | P0 | **Implemented and Linux-tested.** Local full cause-chain reporting remains intact; remote critical/fatal telemetry now uses only bounded root-cause-first summaries, with JSON-safe fields and F4 redaction applied before the sink. Windows remains unverified. |
 | F4 — Consent, PII, endpoints | P0 | **Implemented and Linux-tested.** Consent remains DB-independent, opt-in and fail-closed; the one-time legacy migration is covered, and serialized Windows paths plus current home/user/host values are redacted before the sink. D1’s delivery choice and exposure risk remain open; Windows W10 remains unverified. |
-| F5 — Uninstall on DB failure | P0 | **Open; owner-gated.** F11's read-only path is implemented. Decide D4 before changing behavior when protection state is unreadable; BUSY/LOCKED must still block. |
+| F5 — Uninstall on DB failure | P0 | **In progress; D4 resolved to option A.** Non-BUSY/LOCKED database read failures will allow uninstall only after a typed confirmation phrase; BUSY/LOCKED remain blocked. |
 | F6 — Recurring task multiplication | P1 | **Implemented and Linux-tested.** Schema v10 tracks template parents, generated copies are excluded from templates, and daily generation is idempotent. The legacy repair defaults to dry-run and only marks duplicates; live repair waits for F15 backup verification. |
 | F7 — JDBC statement closure | P1 | **Open.** Many query sites close the result set but not the owning statement; the enabled-block-process query is reached from the two-second cache refresh. Recount exact sites against current code. |
 | F8 — PIN fail-open | P1 | **Partially mitigated by F12; remaining work is open.** Unavailable lookups now fail closed; F8 still covers UI tri-state/read-back behavior and generated-PIN verification. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, and F11 complete; F5 remains owner-gated on D4).
+- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, and F11 complete; F5 is in progress after D4 option A was selected).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -185,7 +185,9 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F11 implementation:** Added a separate SQLite read-only open with a short busy timeout. It does not create missing paths, snapshot/restore sidecars, migrate, recover, or checkpoint; BUSY/LOCKED still block. The wizard carries the missing-DB/no-protection result through final authorization. Tests cover file/sidecar byte and timestamp stability, 300 opens during concurrent writes, protection/PIN reads from a version-9-marked fixture without migration, and missing DB without profile creation.
 - **2026-10-15 F11 verification:** The focused database and wizard-policy suites passed 5 tests, 0 failures/errors/skips. `gradle :test --no-daemon --console=plain` passed 190 tests, 0 failures/errors/skips across 49 JUnit XML reports. Windows W6 was not run.
 - [x] **F11 — Read-only uninstall wizard:** The wizard open is read-only and separate from normal startup; missing DB means no saved protection state, while unreadable/BUSY/LOCKED remain blocking. F11-a…d pass; W6 remains human-only.
-- [ ] **F5 — Safe uninstall when DB is unavailable:** After F11 and owner decision D4, implement only the selected policy; BUSY/LOCKED must continue to block. Tests F5-a…c; W6 remains human-only.
+- **2026-10-15 D4 resolution:** Owner selected option A: for database failures other than BUSY/LOCKED, warn that PINs and blocks cannot be verified and allow uninstall only after a typed confirmation phrase.
+- **2026-10-15 F5 start:** Implementing the selected phrase override in the wizard while preserving BUSY/LOCKED blocking and readable-database protections. The wizard runs outside the app's single-instance path; no cross-process IPC or external authorization flag is being added.
+- [ ] **F5 — Safe uninstall when DB is unavailable:** D4 option A selected; allow non-BUSY/LOCKED read failures only after typed confirmation. BUSY/LOCKED must continue to block. Tests F5-a…c; W6 remains human-only.
 - [ ] **F17 — Recover VPN settings after read failures:** Keep last-known-good volatile state, refresh outside the enforcement hot path, and report failed writes. Tests F17-a…c.
 - [ ] **F15 — Verifiable backups:** Keep the existing `VACUUM INTO` snapshot and hash checks; add SQLite `quick_check`, distinguish unverified backups, report failures, correct sidecar naming, and make the unused unsafe `restoreBackup` uncallable. Complete this before any F6/F9 live repair. Real restore, second destination, and post-recovery UI require owner approval (D9). Tests F15-a…d.
 - [ ] **F14b — Legacy schema audit (after F15):** Verify required schema state and audit swallowed legacy migration errors without editing v1–v9. Tests F14-a…b.
@@ -220,7 +222,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D1 | Rotate exposed Discord webhooks and move delivery behind an owner-provided relay | F4. Owner performs rotation; never request, inspect, or write secret values into files/chat. |
 | D2 | Crash-report consent default: opt-in or opt-out | F4. |
 | D3 | Final consent dialog and Store privacy wording | F4. Owner/legal wording decision. |
-| D4 | Uninstall outcome when DB state is unreadable: confirmation phrase, manual path, or external flag | F5. |
+| D4 | Uninstall outcome when DB state is unreadable: confirmation phrase, manual path, or external flag | **Resolved 2026-10-15: A — allow after typed confirmation for failures other than BUSY/LOCKED.** | F5. |
 | D5 | Ship SQLite DLL inside installation | F1b; wait for W1–W3. |
 | D6 | sqlite-jdbc upgrade timing | No version bump without explicit approval; separate change. |
 | D7 | Whether to offer deletion of recurring-task duplicates | F6 repair defaults to mark-only; never delete user rows without approval. |
