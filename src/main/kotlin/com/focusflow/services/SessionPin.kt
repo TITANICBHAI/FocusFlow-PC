@@ -49,11 +49,17 @@ object SessionPin {
     fun verify(rawPin: String): Boolean =
         verifyResult(rawPin) == PinVerificationResult.ACCEPTED
 
-    fun clear(rawPin: String): Boolean {
-        if (!verify(rawPin)) return false
-        Database.writeSetting(KEY, "").requireSuccess("clear Session PIN")
-        return true
-    }
+    fun clearResult(rawPin: String): PinVerificationResult =
+        when (val result = verifyResult(rawPin)) {
+            PinVerificationResult.ACCEPTED -> {
+                Database.writeSetting(KEY, "").requireSuccess("clear Session PIN")
+                PinVerificationResult.ACCEPTED
+            }
+            else -> result
+        }
+
+    fun clear(rawPin: String): Boolean =
+        clearResult(rawPin) == PinVerificationResult.ACCEPTED
 
     /** Clear PIN unconditionally (called when a session ends naturally). */
     fun clearForced() {

@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.data.SettingWriteException
 import com.focusflow.data.models.BlockRule
 import com.focusflow.data.models.DailyAllowance
 import com.focusflow.enforcement.*
@@ -35,6 +36,7 @@ import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.NuclearPin
 import com.focusflow.services.PinPolicy
+import com.focusflow.services.PinVerificationResult
 import com.focusflow.services.SessionPin
 import com.focusflow.ui.components.NuclearPinGateDialog
 import com.focusflow.ui.components.NuclearPinSetupDialog
@@ -968,14 +970,19 @@ fun SettingsScreen() {
             pinAlreadySet = pinSet,
             onDismiss     = { showPinDialog = false },
             onSave        = { pin ->
-                val success = withContext(Dispatchers.IO) {
-                    if (pinSet) SessionPin.clear(pin) else { SessionPin.set(pin); true }
+                val result = withContext(Dispatchers.IO) {
+                    if (pinSet) {
+                        SessionPin.clearResult(pin)
+                    } else {
+                        SessionPin.set(pin)
+                        PinVerificationResult.ACCEPTED
+                    }
                 }
-                if (success) {
+                if (result == PinVerificationResult.ACCEPTED) {
                     showPinDialog = false
                     reload()
                 }
-                success
+                result
             }
         )
     }
@@ -1292,9 +1299,13 @@ private fun AddRuleDialog(onDismiss: () -> Unit, onSave: (BlockRule) -> Unit) {
 }
 
 @Composable
-private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: suspend (String) -> Boolean) {
+private fun PinDialog(
+    pinAlreadySet: Boolean,
+    onDismiss: () -> Unit,
+    onSave: suspend (String) -> PinVerificationResult
+) {
     var pin   by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1306,16 +1317,17 @@ private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: sus
                     value         = pin,
                     onValueChange = {
                         pin = if (pinAlreadySet) it else it.take(PinPolicy.MAX_LENGTH)
-                        error = false
+                        error = ""
                     },
                     label         = {
                         Text(if (pinAlreadySet) "Current PIN"
                              else "New PIN (${PinPolicy.MIN_LENGTH}–${PinPolicy.MAX_LENGTH} chars)")
                     },
-                    isError       = error || (!pinAlreadySet && pin.isNotBlank() && pin.length < PinPolicy.MIN_LENGTH),
+                    isError       = error.isNotEmpty() ||
+                        (!pinAlreadySet && pin.isNotBlank() && pin.length < PinPolicy.MIN_LENGTH),
                     supportingText = when {
-                        error ->
-                            { { Text(LocalizationManager.strings.settingsIncorrectPin, color = Error) } }
+                        error.isNotEmpty() ->
+                            { { Text(error, color = Error) } }
                         !pinAlreadySet && pin.isNotBlank() && pin.length < PinPolicy.MIN_LENGTH ->
                             { {
                                 Text(
@@ -1335,7 +1347,7 @@ private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: sus
                         color = OnSurface2
                     )
                     TextButton(
-                        onClick = { pin = PinPolicy.generate(); error = false },
+                        onClick = { pin = PinPolicy.generate(); error = "" },
                         contentPadding = PaddingValues(0.dp)
                     ) {
                         Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(16.dp))
@@ -1350,8 +1362,17 @@ private fun PinDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onSave: sus
                 onClick = {
                     if (pin.isNotBlank()) {
                         scope.launch {
-                            val success = onSave(pin)
-                            if (!success) error = true
+                            try {
+                                when (onSave(pin)) {
+                                    PinVerificationResult.ACCEPTED -> Unit
+                                    PinVerificationResult.INCORRECT ->
+                                        error = LocalizationManager.strings.settingsIncorrectPin
+                                    PinVerificationResult.UNAVAILABLE ->
+                                        error = PinPolicy.SETTINGS_READ_ERROR
+                                }
+                            } catch (failure: SettingWriteException) {
+                                error = PinPolicy.SETTINGS_WRITE_ERROR
+                            }
                         }
                     }
                 },
@@ -1454,21 +1475,29 @@ private fun SessionPinChangeDialog(onDismiss: () -> Unit, onChanged: () -> Unit)
             Button(
                 onClick = {
                     scope.launch {
-                        if (step == 0) {
-                            val ok = withContext(Dispatchers.IO) { SessionPin.verify(currentPin) }
-                            if (ok) { step = 1; error = "" } else error = "Incorrect PIN."
-                        } else {
-                            when {
-                                newPin.length < PinPolicy.MIN_LENGTH ->
-                                    error = "PIN must be at least ${PinPolicy.MIN_LENGTH} characters."
-                                newPin.length > PinPolicy.MAX_LENGTH ->
-                                    error = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters."
-                                newPin != confirmPin -> error = "PINs do not match."
-                                else -> {
-                                    withContext(Dispatchers.IO) { SessionPin.set(newPin) }
-                                    onChanged()
+                        try {
+                            if (step == 0) {
+                                when (withContext(Dispatchers.IO) { SessionPin.verifyResult(currentPin) }) {
+                                    PinVerificationResult.ACCEPTED -> { step = 1; error = "" }
+                                    PinVerificationResult.INCORRECT -> error = "Incorrect PIN."
+                                    PinVerificationResult.UNAVAILABLE ->
+                                        error = PinPolicy.SETTINGS_READ_ERROR
+                                }
+                            } else {
+                                when {
+                                    newPin.length < PinPolicy.MIN_LENGTH ->
+                                        error = "PIN must be at least ${PinPolicy.MIN_LENGTH} characters."
+                                    newPin.length > PinPolicy.MAX_LENGTH ->
+                                        error = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters."
+                                    newPin != confirmPin -> error = "PINs do not match."
+                                    else -> {
+                                        withContext(Dispatchers.IO) { SessionPin.set(newPin) }
+                                        onChanged()
+                                    }
                                 }
                             }
+                        } catch (failure: SettingWriteException) {
+                            error = PinPolicy.SETTINGS_WRITE_ERROR
                         }
                     }
                 },
@@ -1596,26 +1625,37 @@ fun GlobalPinManageDialog(
             Button(
                 onClick = {
                     scope.launch {
-                        when (step) {
-                            0 -> {
-                                val ok = withContext(Dispatchers.IO) { GlobalPin.verify(currentPin) }
-                                if (ok) { step = 1; error = "" } else error = "Incorrect PIN."
-                            }
-                            1 -> {
-                                if (clearing) {
-                                    withContext(Dispatchers.IO) { GlobalPin.resetWithoutPin() }
-                                    onChanged()
-                                } else {
-                                    when {
-                                         newPin.length < PinPolicy.MIN_LENGTH ->
-                                             error = "PIN must be at least ${PinPolicy.MIN_LENGTH} characters."
-                                         newPin.length > PinPolicy.MAX_LENGTH ->
-                                             error = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters."
-                                        newPin != confirmPin -> error = "PINs do not match."
-                                        else -> { withContext(Dispatchers.IO) { GlobalPin.set(newPin) }; onChanged() }
+                        try {
+                            when (step) {
+                                0 -> {
+                                    when (withContext(Dispatchers.IO) { GlobalPin.verifyResult(currentPin) }) {
+                                        PinVerificationResult.ACCEPTED -> { step = 1; error = "" }
+                                        PinVerificationResult.INCORRECT -> error = "Incorrect PIN."
+                                        PinVerificationResult.UNAVAILABLE ->
+                                            error = PinPolicy.SETTINGS_READ_ERROR
+                                    }
+                                }
+                                1 -> {
+                                    if (clearing) {
+                                        withContext(Dispatchers.IO) { GlobalPin.resetWithoutPin() }
+                                        onChanged()
+                                    } else {
+                                        when {
+                                            newPin.length < PinPolicy.MIN_LENGTH ->
+                                                error = "PIN must be at least ${PinPolicy.MIN_LENGTH} characters."
+                                            newPin.length > PinPolicy.MAX_LENGTH ->
+                                                error = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters."
+                                            newPin != confirmPin -> error = "PINs do not match."
+                                            else -> {
+                                                withContext(Dispatchers.IO) { GlobalPin.set(newPin) }
+                                                onChanged()
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        } catch (failure: SettingWriteException) {
+                            error = PinPolicy.SETTINGS_WRITE_ERROR
                         }
                     }
                 },
@@ -1637,7 +1677,8 @@ fun GlobalPinManageDialog(
 @Composable
 private fun AlwaysOnPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
     var pin   by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1652,17 +1693,32 @@ private fun AlwaysOnPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Enter your Global PIN to disable Always-On Enforcement.", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 OutlinedTextField(
-                    value = pin, onValueChange = { pin = it; error = false },
+                    value = pin, onValueChange = { pin = it; error = "" },
                     label = { Text("Global PIN") }, modifier = Modifier.fillMaxWidth(),
-                    isError = error, singleLine = true,
+                    isError = error.isNotEmpty(), singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error)
                 )
-                if (error) Text(LocalizationManager.strings.settingsIncorrectPin, color = Error, style = MaterialTheme.typography.bodySmall)
+                if (error.isNotEmpty()) {
+                    Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (GlobalPin.verify(pin)) onVerified() else error = true },
+                onClick = {
+                    scope.launch {
+                        error = when (withContext(Dispatchers.IO) { GlobalPin.verifyResult(pin) }) {
+                            PinVerificationResult.ACCEPTED -> {
+                                onVerified()
+                                ""
+                            }
+                            PinVerificationResult.INCORRECT ->
+                                LocalizationManager.strings.settingsIncorrectPin
+                            PinVerificationResult.UNAVAILABLE ->
+                                PinPolicy.SETTINGS_READ_ERROR
+                        }
+                    }
+                },
                 colors  = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text(LocalizationManager.strings.settingsConfirm) }
         },

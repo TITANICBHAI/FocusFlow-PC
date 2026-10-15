@@ -10,7 +10,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.focusflow.data.SettingWriteException
 import com.focusflow.services.NuclearPin
+import com.focusflow.services.PinPolicy
+import com.focusflow.services.PinVerificationResult
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,7 +25,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun NuclearPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
     var pin   by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -44,10 +47,10 @@ fun NuclearPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
                 )
                 OutlinedTextField(
                     value         = pin,
-                    onValueChange = { pin = it; error = false },
+                    onValueChange = { pin = it; error = "" },
                     label         = { Text("Nuclear Mode PIN") },
                     singleLine    = true,
-                    isError       = error,
+                    isError       = error.isNotEmpty(),
                     modifier      = Modifier.fillMaxWidth(),
                     colors        = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor   = Purple80,
@@ -55,15 +58,24 @@ fun NuclearPinGateDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
                         errorBorderColor     = Error
                     )
                 )
-                if (error) Text("Incorrect PIN.", color = Error, style = MaterialTheme.typography.bodySmall)
+                if (error.isNotEmpty()) {
+                    Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     scope.launch {
-                        val ok = withContext(Dispatchers.IO) { NuclearPin.verify(pin) }
-                        if (ok) onVerified() else { error = true; pin = "" }
+                        when (withContext(Dispatchers.IO) { NuclearPin.verifyResult(pin) }) {
+                            PinVerificationResult.ACCEPTED -> onVerified()
+                            PinVerificationResult.INCORRECT -> {
+                                error = "Incorrect PIN."
+                                pin = ""
+                            }
+                            PinVerificationResult.UNAVAILABLE ->
+                                error = PinPolicy.SETTINGS_READ_ERROR
+                        }
                     }
                 },
                 enabled = pin.isNotBlank(),
@@ -186,11 +198,15 @@ fun NuclearPinSetupDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onChang
             Button(
                 onClick = {
                     scope.launch {
+                        try {
                         when (step) {
                             0 -> {
-                                val ok = withContext(Dispatchers.IO) { NuclearPin.verify(currentPin) }
-                                if (ok) { step = 1; error = "" }
-                                else   { error = "Incorrect PIN." }
+                                when (withContext(Dispatchers.IO) { NuclearPin.verifyResult(currentPin) }) {
+                                    PinVerificationResult.ACCEPTED -> { step = 1; error = "" }
+                                    PinVerificationResult.INCORRECT -> error = "Incorrect PIN."
+                                    PinVerificationResult.UNAVAILABLE ->
+                                        error = PinPolicy.SETTINGS_READ_ERROR
+                                }
                             }
                             1 -> {
                                 if (clearing) {
@@ -207,6 +223,9 @@ fun NuclearPinSetupDialog(pinAlreadySet: Boolean, onDismiss: () -> Unit, onChang
                                     }
                                 }
                             }
+                        }
+                        } catch (failure: SettingWriteException) {
+                            error = PinPolicy.SETTINGS_WRITE_ERROR
                         }
                     }
                 },

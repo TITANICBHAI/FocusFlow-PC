@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.text.style.TextAlign
 import com.focusflow.data.Database
+import com.focusflow.data.SettingWriteException
 import com.focusflow.data.models.Task
 import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.NuclearMode
@@ -94,6 +95,7 @@ fun FocusScreen(
     var showEndPinDialog     by remember { mutableStateOf(false) }
     var showPinRevealDialog  by remember { mutableStateOf(false) }
     var generatedPinText     by remember { mutableStateOf("") }
+    var showPinSettingsWriteError by remember { mutableStateOf(false) }
     var pendingStartMins     by remember { mutableStateOf(0) }
     var pendingStartApps     by remember { mutableStateOf(listOf<String>()) }
     var pendingStartTaskId   by remember { mutableStateOf<String?>(null) }
@@ -202,9 +204,16 @@ fun FocusScreen(
             Key.Enter -> {
                 if (!sessionState.isActive && !focusModeRequirePin) {
                     val mins = if (pomodoroMode) pomodoroState.workMinutes else customMinutes.toIntOrNull() ?: 25
-                    SessionPin.clearForced()
-                    FocusSessionService.start(customTaskName.ifBlank { "Focus Session" }, mins, tid = selectedTaskId)
-                    TemptationLogger.clearSession()
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { SessionPin.clearForced() }
+                        } catch (failure: SettingWriteException) {
+                            showPinSettingsWriteError = true
+                            return@launch
+                        }
+                        FocusSessionService.start(customTaskName.ifBlank { "Focus Session" }, mins, tid = selectedTaskId)
+                        TemptationLogger.clearSession()
+                    }
                 }
                 true
             }
@@ -349,12 +358,27 @@ fun FocusScreen(
                                 pendingStartMins   = mins
                                 pendingStartApps   = extraApps
                                 pendingStartTaskId = selectedTaskId
-                                generatedPinText   = SessionPin.autoGenerate()
-                                showPinRevealDialog = true
+                                scope.launch {
+                                    try {
+                                        generatedPinText = withContext(Dispatchers.IO) {
+                                            SessionPin.autoGenerate()
+                                        }
+                                        showPinRevealDialog = true
+                                    } catch (failure: SettingWriteException) {
+                                        showPinSettingsWriteError = true
+                                    }
+                                }
                             } else {
-                                SessionPin.clearForced()
-                                FocusSessionService.start(customTaskName.ifBlank { "Focus Session" }, mins, tid = selectedTaskId, blockedProcesses = extraApps)
-                                TemptationLogger.clearSession()
+                                scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { SessionPin.clearForced() }
+                                    } catch (failure: SettingWriteException) {
+                                        showPinSettingsWriteError = true
+                                        return@launch
+                                    }
+                                    FocusSessionService.start(customTaskName.ifBlank { "Focus Session" }, mins, tid = selectedTaskId, blockedProcesses = extraApps)
+                                    TemptationLogger.clearSession()
+                                }
                             }
                         },
                         modifier = Modifier.height(56.dp),
@@ -786,9 +810,15 @@ fun FocusScreen(
             onDismiss  = { showEndPinDialog = false },
             onVerified = {
                 showEndPinDialog = false
-                SessionPin.clearForced()
-                FocusSessionService.end(completed = false)
-                if (pomodoroMode) BreakEnforcer.reset()
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { SessionPin.clearForced() }
+                    } catch (failure: SettingWriteException) {
+                        showPinSettingsWriteError = true
+                    }
+                    FocusSessionService.end(completed = false)
+                    if (pomodoroMode) BreakEnforcer.reset()
+                }
             }
         )
     }
@@ -803,7 +833,27 @@ fun FocusScreen(
             },
             onDismiss = {
                 showPinRevealDialog = false
-                SessionPin.clearForced()
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { SessionPin.clearForced() }
+                    } catch (failure: SettingWriteException) {
+                        showPinSettingsWriteError = true
+                    }
+                }
+            }
+        )
+    }
+
+    if (showPinSettingsWriteError) {
+        AlertDialog(
+            onDismissRequest = { showPinSettingsWriteError = false },
+            containerColor = Surface2,
+            title = { Text("PIN settings could not be saved", color = OnSurface) },
+            text = { Text(PinPolicy.SETTINGS_WRITE_ERROR, color = OnSurface2) },
+            confirmButton = {
+                TextButton(onClick = { showPinSettingsWriteError = false }) {
+                    Text("OK", color = Purple80)
+                }
             }
         )
     }
@@ -1208,7 +1258,8 @@ private fun StartStandaloneBlockDialog(onDismiss: () -> Unit, onStart: (String, 
 private fun EndSessionPinDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
     val strings = LocalizationManager.strings
     var pin   by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1224,10 +1275,10 @@ private fun EndSessionPinDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
                 Text(strings.dashEnterPinEarly, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 OutlinedTextField(
                     value         = pin,
-                    onValueChange = { pin = it; error = false },
+                    onValueChange = { pin = it; error = "" },
                     label         = { Text(strings.defPinLabel) },
                     modifier      = Modifier.fillMaxWidth(),
-                    isError       = error,
+                    isError       = error.isNotEmpty(),
                     singleLine    = true,
                     colors        = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor   = Purple80,
@@ -1235,16 +1286,25 @@ private fun EndSessionPinDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
                         errorBorderColor     = Error
                     )
                 )
-                if (error) {
-                    Text(strings.dashIncorrectPinRetry, color = Error, style = MaterialTheme.typography.bodySmall)
+                if (error.isNotEmpty()) {
+                    Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (SessionPin.verify(pin)) onVerified()
-                    else error = true
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { SessionPin.verifyResult(pin) }
+                        error = when (result) {
+                            PinVerificationResult.ACCEPTED -> {
+                                onVerified()
+                                ""
+                            }
+                            PinVerificationResult.INCORRECT -> strings.dashIncorrectPinRetry
+                            PinVerificationResult.UNAVAILABLE -> PinPolicy.SETTINGS_READ_ERROR
+                        }
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Error.copy(alpha = 0.85f))
             ) { Text(strings.focusEndBtn) }

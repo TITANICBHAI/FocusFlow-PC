@@ -20,8 +20,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.focusflow.data.SettingWriteException
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.GlobalPin
+import com.focusflow.services.PinPolicy
+import com.focusflow.services.PinState
+import com.focusflow.services.PinVerificationResult
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -53,9 +57,13 @@ fun PinGateDialog(
     var error       by remember { mutableStateOf(false) }
     var attempts    by remember { mutableStateOf(0) }
     var resetPhrase by remember { mutableStateOf("") }
+    var resetWriteError by remember { mutableStateOf("") }
+    var pinState     by remember { mutableStateOf<PinState?>(null) }
     val scope       = rememberCoroutineScope()
-    val noPinSet    = remember { !GlobalPin.isSet() }
 
+    LaunchedEffect(Unit) {
+        pinState = withContext(Dispatchers.IO) { GlobalPin.state() }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor   = Surface2,
@@ -97,11 +105,16 @@ fun PinGateDialog(
                 PinGateStep.ENTER_PIN -> {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            if (noPinSet) s.pinGateNoPinSet else resolvedSubtitle,
+                            when (pinState) {
+                                null -> "Reading PIN settings…"
+                                PinState.UNKNOWN -> PinPolicy.SETTINGS_READ_ERROR
+                                PinState.NOT_SET -> s.pinGateNoPinSet
+                                PinState.SET -> resolvedSubtitle
+                            },
                             color = OnSurface2,
                             style = MaterialTheme.typography.bodySmall
                         )
-                        if (!noPinSet) {
+                        if (pinState == PinState.SET) {
                             OutlinedTextField(
                                 value          = pin,
                                 onValueChange  = { pin = it; error = false },
@@ -171,6 +184,9 @@ fun PinGateDialog(
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
+                        if (resetWriteError.isNotEmpty()) {
+                            Text(resetWriteError, color = Error, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
 
@@ -186,24 +202,50 @@ fun PinGateDialog(
                 PinGateStep.ENTER_PIN -> {
                     Button(
                         onClick = {
-                            if (noPinSet || GlobalPin.verify(pin)) {
-                                onSuccess()
-                            } else {
-                                error = true
-                                attempts++
-                                pin   = ""
+                            scope.launch {
+                                var currentState = pinState
+                                if (currentState == null || currentState == PinState.UNKNOWN) {
+                                    currentState = withContext(Dispatchers.IO) { GlobalPin.state() }
+                                    pinState = currentState
+                                }
+
+                                when (currentState) {
+                                    PinState.NOT_SET -> onSuccess()
+                                    PinState.UNKNOWN,
+                                    null -> Unit
+                                    PinState.SET -> when (
+                                        withContext(Dispatchers.IO) { GlobalPin.verifyResult(pin) }
+                                    ) {
+                                        PinVerificationResult.ACCEPTED -> onSuccess()
+                                        PinVerificationResult.INCORRECT -> {
+                                            error = true
+                                            attempts++
+                                            pin = ""
+                                        }
+                                        PinVerificationResult.UNAVAILABLE -> {
+                                            pinState = PinState.UNKNOWN
+                                            error = false
+                                        }
+                                    }
+                                }
                             }
                         },
                         colors  = ButtonDefaults.buttonColors(containerColor = Purple80),
-                        enabled = noPinSet || pin.isNotBlank()
+                        enabled = pinState != null &&
+                            (pinState != PinState.SET || pin.isNotBlank())
                     ) { Text(s.pinGateConfirm) }
                 }
                 PinGateStep.FORGOT_CONFIRM -> {
                     Button(
                         onClick = {
                             scope.launch {
-                                withContext(Dispatchers.IO) { GlobalPin.resetWithoutPin() }
-                                step = PinGateStep.FORGOT_DONE
+                                try {
+                                    withContext(Dispatchers.IO) { GlobalPin.resetWithoutPin() }
+                                    resetWriteError = ""
+                                    step = PinGateStep.FORGOT_DONE
+                                } catch (failure: SettingWriteException) {
+                                    resetWriteError = PinPolicy.SETTINGS_WRITE_ERROR
+                                }
                             }
                         },
                         colors  = ButtonDefaults.buttonColors(containerColor = Warning),

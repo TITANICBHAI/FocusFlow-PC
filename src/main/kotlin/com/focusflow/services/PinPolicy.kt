@@ -35,6 +35,15 @@ object PinPolicy {
     private const val ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
     private val random = SecureRandom()
 
+    fun errorMessage(
+        result: PinVerificationResult,
+        incorrectPinMessage: String
+    ): String? = when (result) {
+        PinVerificationResult.ACCEPTED -> null
+        PinVerificationResult.INCORRECT -> incorrectPinMessage
+        PinVerificationResult.UNAVAILABLE -> SETTINGS_READ_ERROR
+    }
+
     internal fun stateOf(read: Database.SettingRead): PinState = when (read) {
         is Database.SettingRead.Present ->
             if (read.value.isBlank()) PinState.NOT_SET else PinState.SET

@@ -47,6 +47,8 @@ import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.FocusInsightsService
 import com.focusflow.services.FocusSessionService
 import com.focusflow.services.SessionPin
+import com.focusflow.services.PinPolicy
+import com.focusflow.services.PinVerificationResult
 import com.focusflow.enforcement.InstallVariant
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.ui.components.ShortcutTooltip
@@ -558,7 +560,8 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
 private fun DashboardEndSessionPinDialog(onDismiss: () -> Unit, onVerified: () -> Unit) {
     val strings = LocalizationManager.strings
     var pin   by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -574,10 +577,10 @@ private fun DashboardEndSessionPinDialog(onDismiss: () -> Unit, onVerified: () -
                 Text(strings.dashEnterPinEarly, style = MaterialTheme.typography.bodySmall, color = OnSurface2)
                 OutlinedTextField(
                     value         = pin,
-                    onValueChange = { pin = it; error = false },
+                    onValueChange = { pin = it; error = "" },
                     label         = { Text(strings.defPinLabel) },
                     modifier      = Modifier.fillMaxWidth(),
-                    isError       = error,
+                    isError       = error.isNotEmpty(),
                     singleLine    = true,
                     colors        = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor   = Purple80,
@@ -585,12 +588,26 @@ private fun DashboardEndSessionPinDialog(onDismiss: () -> Unit, onVerified: () -
                         errorBorderColor     = Error
                     )
                 )
-                if (error) Text(strings.dashIncorrectPinRetry, color = Error, style = MaterialTheme.typography.bodySmall)
+                if (error.isNotEmpty()) {
+                    Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (SessionPin.verify(pin)) onVerified() else error = true },
+                onClick = {
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { SessionPin.verifyResult(pin) }
+                        error = when (result) {
+                            PinVerificationResult.ACCEPTED -> {
+                                onVerified()
+                                ""
+                            }
+                            PinVerificationResult.INCORRECT -> strings.dashIncorrectPinRetry
+                            PinVerificationResult.UNAVAILABLE -> PinPolicy.SETTINGS_READ_ERROR
+                        }
+                    }
+                },
                 colors  = ButtonDefaults.buttonColors(containerColor = Error.copy(alpha = 0.85f))
             ) { Text(strings.focusEndBtn) }
         },

@@ -49,11 +49,17 @@ object NuclearPin {
      * Clear the PIN after verifying the current one.
      * Returns false if verification fails (caller should show an error).
      */
-    fun clear(rawPin: String): Boolean {
-        if (!verify(rawPin)) return false
-        Database.writeSetting(KEY, "").requireSuccess("clear Nuclear Mode PIN")
-        return true
-    }
+    fun clearResult(rawPin: String): PinVerificationResult =
+        when (val result = verifyResult(rawPin)) {
+            PinVerificationResult.ACCEPTED -> {
+                Database.writeSetting(KEY, "").requireSuccess("clear Nuclear Mode PIN")
+                PinVerificationResult.ACCEPTED
+            }
+            else -> result
+        }
+
+    fun clear(rawPin: String): Boolean =
+        clearResult(rawPin) == PinVerificationResult.ACCEPTED
 
     /** Clear the PIN unconditionally (emergency recovery path only). */
     fun clearForced() {

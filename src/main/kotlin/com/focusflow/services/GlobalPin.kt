@@ -62,11 +62,17 @@ object GlobalPin {
     fun verify(rawPin: String): Boolean =
         verifyResult(rawPin) == PinVerificationResult.ACCEPTED
 
-    fun clear(rawPin: String): Boolean {
-        if (!verify(rawPin)) return false
-        Database.writeSetting(KEY, "").requireSuccess("clear Global PIN")
-        return true
-    }
+    fun clearResult(rawPin: String): PinVerificationResult =
+        when (val result = verifyResult(rawPin)) {
+            PinVerificationResult.ACCEPTED -> {
+                Database.writeSetting(KEY, "").requireSuccess("clear Global PIN")
+                PinVerificationResult.ACCEPTED
+            }
+            else -> result
+        }
+
+    fun clear(rawPin: String): Boolean =
+        clearResult(rawPin) == PinVerificationResult.ACCEPTED
 
     /**
      * Emergency recovery reset — clears the PIN hash without requiring the old PIN.

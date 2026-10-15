@@ -19,10 +19,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.focusflow.data.SettingWriteException
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.PinPolicy
 import com.focusflow.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class PinSetupStep { CHOOSE, SET_CUSTOM, SHOW_GENERATED }
 
@@ -39,6 +43,7 @@ fun GlobalPinSetupDialog(
     var pinError      by remember { mutableStateOf("") }
     var generatedPin  by remember { mutableStateOf("") }
     var savedConfirm  by remember { mutableStateOf(false) }
+    val scope         = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = { },
@@ -113,6 +118,9 @@ fun GlobalPinSetupDialog(
                                 }
                                 Icon(Icons.Default.ChevronRight, contentDescription = null, tint = OnSurface2, modifier = Modifier.size(18.dp))
                             }
+                        }
+                        if (pinError.isNotEmpty()) {
+                            Text(pinError, color = Error, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -210,13 +218,31 @@ fun GlobalPinSetupDialog(
                             ) { Text(s.pinSetupSetMyOwn) }
                             Button(
                                 onClick = {
-                                    generatedPin = GlobalPin.autoGenerate()
-                                    step = PinSetupStep.SHOW_GENERATED
+                                    pinError = ""
+                                    scope.launch {
+                                        try {
+                                            generatedPin = withContext(Dispatchers.IO) {
+                                                GlobalPin.autoGenerate()
+                                            }
+                                            step = PinSetupStep.SHOW_GENERATED
+                                        } catch (failure: SettingWriteException) {
+                                            pinError = PinPolicy.SETTINGS_WRITE_ERROR
+                                        }
+                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Surface3)
                             ) { Text(s.pinSetupAutoLabel, color = OnSurface) }
                         }
-                        TextButton(onClick = { GlobalPin.setDeclined(); onDismiss() }) {
+                        TextButton(onClick = {
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { GlobalPin.setDeclined() }
+                                    onDismiss()
+                                } catch (failure: SettingWriteException) {
+                                    pinError = PinPolicy.SETTINGS_WRITE_ERROR
+                                }
+                            }
+                        }) {
                             Text(s.pinSetupNoThanks, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -230,7 +256,14 @@ fun GlobalPinSetupDialog(
                                      customPin.length < PinPolicy.MIN_LENGTH -> pinError = s.pinSetupMinChars
                                      customPin.length > PinPolicy.MAX_LENGTH -> pinError = "PIN must be at most ${PinPolicy.MAX_LENGTH} characters"
                                     customPin != confirmPin -> pinError = s.pinSetupNoMatch
-                                    else -> { GlobalPin.set(customPin); onComplete() }
+                                     else -> scope.launch {
+                                         try {
+                                             withContext(Dispatchers.IO) { GlobalPin.set(customPin) }
+                                             onComplete()
+                                         } catch (failure: SettingWriteException) {
+                                             pinError = PinPolicy.SETTINGS_WRITE_ERROR
+                                         }
+                                     }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Purple80)

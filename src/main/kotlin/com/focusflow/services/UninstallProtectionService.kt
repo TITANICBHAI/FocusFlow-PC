@@ -30,7 +30,7 @@ object UninstallProtectionService {
         data class Pin(
             val feature: String,
             val prompt: String,
-            val verify: (String) -> Boolean
+            val verify: (String) -> PinVerificationResult
         ) : Requirement
     }
 
@@ -204,7 +204,7 @@ object UninstallProtectionService {
                     result += Requirement.Pin(
                         feature = "Always-On enforcement",
                         prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
-                        verify = GlobalPin::verify
+                        verify = GlobalPin::verifyResult
                     )
                 }
             }
@@ -212,7 +212,7 @@ object UninstallProtectionService {
                 result += Requirement.Pin(
                     feature = "Always-On enforcement",
                     prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
-                    verify = GlobalPin::verify
+                    verify = GlobalPin::verifyResult
                 )
             }
         }
@@ -227,14 +227,14 @@ object UninstallProtectionService {
                     result += Requirement.Pin(
                         feature = "Focus session",
                         prompt = "Enter the Session PIN to quit during the active focus session:",
-                        verify = SessionPin::verify
+                        verify = SessionPin::verifyResult
                     )
                 } else if (action == Action.UNINSTALL) {
                     if (GlobalPin.isSet()) {
                         result += Requirement.Pin(
                             feature = "Global PIN",
                             prompt = "Enter the Global PIN to uninstall while a focus session is active:",
-                            verify = GlobalPin::verify
+                            verify = GlobalPin::verifyResult
                         )
                     } else {
                         result += Requirement.Blocked(
@@ -253,7 +253,7 @@ object UninstallProtectionService {
                 result += Requirement.Pin(
                     feature = "Nuclear Mode",
                     prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
-                    verify = NuclearPin::verify
+                    verify = NuclearPin::verifyResult
                 )
             } else {
                 result += Requirement.Blocked(
@@ -272,7 +272,7 @@ object UninstallProtectionService {
                         result += Requirement.Pin(
                             feature = "Nuclear Mode",
                             prompt = "Enter the Nuclear Mode PIN to quit or uninstall while Nuclear Mode is active:",
-                            verify = NuclearPin::verify
+                            verify = NuclearPin::verifyResult
                         )
                     } else {
                         result += Requirement.Blocked(
@@ -344,13 +344,20 @@ object UninstallProtectionService {
             JOptionPane.WARNING_MESSAGE
         ) ?: return false
 
-        if (requirement.verify(entered)) return true
-
-        showMessage(
-            "Incorrect PIN",
-            "The ${requirement.feature} PIN was incorrect. FocusFlow will keep running."
-        )
-        return false
+        return when (requirement.verify(entered)) {
+            PinVerificationResult.ACCEPTED -> true
+            PinVerificationResult.INCORRECT -> {
+                showMessage(
+                    "Incorrect PIN",
+                    "The ${requirement.feature} PIN was incorrect. FocusFlow will keep running."
+                )
+                false
+            }
+            PinVerificationResult.UNAVAILABLE -> {
+                showMessage("PIN settings unavailable", PinPolicy.SETTINGS_READ_ERROR)
+                false
+            }
+        }
     }
 
     private fun showMessage(title: String, message: String) {

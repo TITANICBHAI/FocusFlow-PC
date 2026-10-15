@@ -27,6 +27,8 @@ import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BlockScheduleService
 import com.focusflow.services.GlobalPin
+import com.focusflow.services.PinPolicy
+import com.focusflow.services.PinVerificationResult
 import com.focusflow.services.SessionPin
 import com.focusflow.ui.components.BlockScheduleEditorDialog
 import com.focusflow.ui.theme.*
@@ -480,7 +482,7 @@ private fun DefToggleRow(
 @Composable
 private fun PinGateDialog(title: String, subtitle: String, onDismiss: () -> Unit, onVerified: () -> Unit) {
     var pin   by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -496,22 +498,31 @@ private fun PinGateDialog(title: String, subtitle: String, onDismiss: () -> Unit
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(subtitle, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
-                    value = pin, onValueChange = { pin = it; error = false },
+                    value = pin, onValueChange = { pin = it; error = "" },
                     label = { Text(LocalizationManager.strings.defPinLabel) }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    isError = error,
+                    isError = error.isNotEmpty(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2, errorBorderColor = Error
                     )
                 )
-                if (error) Text(LocalizationManager.strings.defIncorrectPin, color = Error, style = MaterialTheme.typography.bodySmall)
+                if (error.isNotEmpty()) {
+                    Text(error, color = Error, style = MaterialTheme.typography.bodySmall)
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     scope.launch {
-                        val ok = withContext(Dispatchers.IO) { GlobalPin.verify(pin) }
-                        if (ok) onVerified() else error = true
+                        val result = withContext(Dispatchers.IO) { GlobalPin.verifyResult(pin) }
+                        error = when (result) {
+                            PinVerificationResult.ACCEPTED -> {
+                                onVerified()
+                                ""
+                            }
+                            PinVerificationResult.INCORRECT -> LocalizationManager.strings.defIncorrectPin
+                            PinVerificationResult.UNAVAILABLE -> PinPolicy.SETTINGS_READ_ERROR
+                        }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Purple80)
