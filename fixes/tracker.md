@@ -219,7 +219,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 3 — P3 hardening and cleanup
 
-**Status:** In progress — 2026-10-15 (F22). Phase 2 non-owner-gated exit criteria were met; F20 and F21 are implemented and verified, and D13 is approved.
+**Status:** In progress — 2026-10-15 (F23). Phase 2 non-owner-gated exit criteria were met; F20–F23 are implemented and verified, and D13/D14 are resolved.
 
 - **2026-10-15 F20 start:** Replacing date-wrapped indexed-column filters and per-day reads only. Preserve returned values, timestamp storage, and schema; use isolated temporary databases for verification.
 - **2026-10-15 F20 verification:** The implementation has no `DATE(...)` predicates in `Database.kt`; `DayQueriesTest` passed 4/4 focused tests, and the final root suite passed 213/213 tests with 0 failures/errors/skips. XML: `build/test-results/test/TEST-com.focusflow.data.DayQueriesTest.xml`.
@@ -237,7 +237,11 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F22 pre-fix characterization:** `gradle :test --no-daemon --console=plain --tests com.focusflow.data.DatabaseUserActivityClearTest --rerun-tasks` ran 2 tests: F22-a failed as expected because the injected last-delete failure left `focus_sessions` empty; F22-b passed and confirmed the old sequence did not delete seeded settings, rules, habits, allowances, or presets. XML: `build/test-results/test/TEST-com.focusflow.data.DatabaseUserActivityClearTest.xml`.
 - [x] **F22 — Atomic activity clear:** Clear only the four approved activity areas in one transaction; require a verified backup before deletion and a configured Global PIN; preserve settings, rules, habits, allowances, PINs, and presets. Tests F22-a…e.
 - **2026-10-15 F22 final verification:** Focused suite passed all 5 tests. Root `gradle :test --no-daemon --console=plain --rerun-tasks` passed all 218 tests (55 JUnit XML files; 0 failures, errors, or skips), with `user.home` redirected to a fresh temporary directory. No live profile/database or evidence script was used; no Windows runtime verification was performed.
-- [ ] **F23 — Consistent CSV exports:** Use RFC-4180 quoting, correct row counts, and distinct saved/cancelled/failed results across export paths. Ask owner about formula-prefix protection and UTF-8 BOM (D14). Tests F23-a…c.
+- **2026-10-15 D14 resolution:** Owner selected formula-prefix protection for formula-like text cells and no UTF-8 BOM.
+- **2026-10-15 F23 start:** Implement one RFC-4180 CSV writer across session and task exports, export all rows, and show saved/cancelled/failed outcomes distinctly. Formula protection is approved; UTF-8 BOM is not.
+- **2026-10-15 F23 pre-fix characterization:** `gradle :test --no-daemon --console=plain --tests com.focusflow.services.CsvExportTest --rerun-tasks` failed at test compilation because the shared `CsvExport` implementation and `BackupService.exportSessionsTo` were missing.
+- [x] **F23 — Consistent CSV exports:** Use RFC-4180 quoting, correct row counts, and distinct saved/cancelled/failed results across export paths. Apply D14: formula-prefix protection on text cells and no UTF-8 BOM. Tests F23-a…c.
+- **2026-10-15 F23 verification:** `CsvExportTest` passed 3/3 (F23-a…c). Root `gradle :test --no-daemon --console=plain --rerun-tasks` passed 221 tests across 56 JUnit XML files, with 0 failures, errors, or skips; `user.home` was redirected to a fresh temporary directory. `git diff --check` passed. Windows/Excel verification W15 remains pending.
 - [ ] **F24 — Bounded crash reports:** De-duplicate matching reports and cap only the specified app-owned locations; do not delete Desktop reports. Ask owner before changing the Desktop-first policy (D15). Tests F24-a…b.
 - [ ] **F25 — Central application paths:** Add getter-based `AppPaths` that honors changing `user.home`, replace the four DB path computations, and keep other replacements limited to trivial cases. Tests F25-a…b.
 - [x] **F26 — Closed as stale:** Current checkout includes `recovery/` and its Gradle build file; no code change or removal is warranted. Evidence is recorded in root `AUDIT-ADDENDUM.md`.

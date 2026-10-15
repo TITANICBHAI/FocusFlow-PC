@@ -29,6 +29,7 @@ import com.focusflow.data.models.DailyAllowance
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BackupService
 import com.focusflow.services.ClearUserActivityService
+import com.focusflow.services.CsvExportResult
 import com.focusflow.services.DailyAllowanceTracker
 import com.focusflow.services.GlobalPin
 import com.focusflow.services.PinState
@@ -58,6 +59,24 @@ fun ProfileScreen() {
     var clearActivityMessage by remember { mutableStateOf("") }
     var clearActivityMessageIsError by remember { mutableStateOf(false) }
     var exportMsg       by remember { mutableStateOf("") }
+    var exportMsgColor  by remember { mutableStateOf(OnSurface2) }
+
+    fun showExportResult(label: String, result: CsvExportResult) {
+        when (result) {
+            is CsvExportResult.Saved -> {
+                exportMsg = "$label saved (${result.rows} rows) to ${result.file.absolutePath}"
+                exportMsgColor = Success
+            }
+            CsvExportResult.Cancelled -> {
+                exportMsg = "Export cancelled"
+                exportMsgColor = OnSurface2
+            }
+            is CsvExportResult.Failed -> {
+                exportMsg = "$label export failed: ${result.message}"
+                exportMsgColor = Error
+            }
+        }
+    }
 
     // All-time stats
     var allTimeMins by remember { mutableStateOf(0) }
@@ -479,8 +498,8 @@ fun ProfileScreen() {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = {
                     scope.launch {
-                        val path = withContext(Dispatchers.IO) { BackupService.exportToCsv() }
-                        exportMsg = if (path != null) "Sessions saved to $path" else "Export cancelled"
+                        val result = withContext(Dispatchers.IO) { BackupService.exportToCsv() }
+                        showExportResult("Sessions", result)
                     }
                 }) {
                     Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
@@ -488,8 +507,8 @@ fun ProfileScreen() {
                 }
                 OutlinedButton(onClick = {
                     scope.launch {
-                        val path = withContext(Dispatchers.IO) { BackupService.exportTasksToCsv() }
-                        exportMsg = if (path != null) "Tasks saved to $path" else "Export cancelled"
+                        val result = withContext(Dispatchers.IO) { BackupService.exportTasksToCsv() }
+                        showExportResult("Tasks", result)
                     }
                 }) {
                     Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
@@ -497,7 +516,7 @@ fun ProfileScreen() {
                 }
             }
             if (exportMsg.isNotBlank()) {
-                Text(exportMsg, style = MaterialTheme.typography.bodySmall, color = Success)
+                Text(exportMsg, style = MaterialTheme.typography.bodySmall, color = exportMsgColor)
             }
         }
 

@@ -1,7 +1,7 @@
-# Phase 3 Report — F22 Atomic Activity Clear
+# Phase 3 Report — F22 and F23
 
 Date: 2026-10-15
-Status: F22 complete locally on branch `F22-atomic-activity-clear`; not pushed.
+Status: F22 and F23 complete locally on branch `F23-consistent-csv-exports`; not pushed.
 
 ## Approved scope
 
@@ -57,4 +57,32 @@ The builds emitted existing Compose icon deprecation and coroutine opt-in warnin
 
 - Tests ran on Linux only. Windows behavior and the interactive desktop UI were not verified; the desktop application workflow was not started.
 - No live user profile or database was read or changed, and no evidence script was run.
-- D14 (CSV formula-prefix protection and UTF-8 BOM) and D15 (Desktop-first crash-report policy) remain owner decisions. F23 and F24 were not changed.
+- D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 remains open only if the Desktop-first crash-report policy is to change; no F24 change has been made yet.
+
+## F23 — Consistent CSV exports
+
+### Approved scope and implementation
+
+- Applied D14: formula-like free-text cells are prefixed with an apostrophe (including values with leading whitespace/control characters); numeric fields remain unchanged. CSV output is UTF-8 without a BOM.
+- Added one shared writer for session and task exports. It quotes each field, doubles embedded quotes, writes RFC-4180 CRLF record separators, and normalizes embedded CR/LF to spaces to preserve the existing export convention.
+- Profile session export, Profile task export, and Stats all-time session export now use the shared writer. Session exports use the same headers, include notes, read all available sessions, and report data-row counts (excluding the header).
+- Save, cancellation, and failure are distinct typed results; the Profile UI displays each separately, while Stats reports the saved row count or failure.
+- Writes use a temporary file beside the target and replace the destination only after the complete CSV is written. No live profile/database data was read or changed; all database test state was isolated under a fresh temporary `user.home`.
+
+### Verification
+
+1. **Pre-fix characterization:** the focused test command failed at test compilation because the shared writer and session export API were absent; this baseline is recorded in `fixes/tracker.md`.
+2. **Focused F23 suite:** `gradle :test --no-daemon --console=plain --tests com.focusflow.services.CsvExportTest --rerun-tasks` passed 3 tests (F23-a…c), with 0 failures, errors, or skips. XML: `build/test-results/test/TEST-com.focusflow.services.CsvExportTest.xml`.
+3. **Root suite:** `gradle :test --no-daemon --console=plain --rerun-tasks`, with `JAVA_TOOL_OPTIONS=-Duser.home=<fresh temporary directory>`, completed with `BUILD SUCCESSFUL`; 221 tests across 56 JUnit XML files, 0 failures, 0 errors, and 0 skipped.
+4. `git diff --check` passed.
+
+The build reported one non-failing warning in `CsvExport.kt` about the temporary-path value used for failure cleanup, plus existing Compose icon deprecation and coroutine opt-in warnings. W15 (Windows/Excel export verification) was not performed; the desktop workflow was not started.
+
+### Files read
+
+- `attached_assets/Pasted-You-are-the-implementation-agent-for-the-database-relia_1792051251414.txt`
+- `fixes/preagent-prompt.md`, `fixes/plan.md`, `fixes/tracker.md`, and this report
+- `src/main/kotlin/com/focusflow/data/Database.kt`
+- `src/main/kotlin/com/focusflow/services/BackupService.kt` and `src/main/kotlin/com/focusflow/services/CsvExport.kt`
+- `src/main/kotlin/com/focusflow/ui/screens/ProfileScreen.kt` and `src/main/kotlin/com/focusflow/ui/screens/StatsScreen.kt`
+- `src/test/kotlin/com/focusflow/services/CsvExportTest.kt`

@@ -7,27 +7,32 @@ import java.nio.file.Files
 import java.time.LocalDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class CsvExportTest {
 
     @Test
-    fun f23a_quotesCsvFieldsAndRoundTripsUnicodeCommasAndQuotes() {
+    fun f23aQuotesCsvFieldsProtectsFormulaTextAndRoundTripsUnicodeCommasAndQuotes() {
         val value = "Deep, \"focus\"\r\ncafé"
         val csv = CsvExport.encode(
             headers = listOf("text"),
-            rows = listOf(listOf(value))
+            rows = listOf(listOf(value), listOf(" \t=2+2")),
+            formulaProtectedColumns = setOf(0)
         )
 
         assertEquals(
             listOf(
                 listOf("text"),
-                listOf("Deep, \"focus\" café")
+                listOf("Deep, \"focus\" café"),
+                listOf("' \t=2+2")
             ),
             parseRfc4180(csv)
         )
         assertTrue(csv.contains("\"Deep, \"\"focus\"\" café\""))
+        assertTrue(csv.startsWith("\"text\"\r\n"))
+        assertFalse(csv.startsWith("\uFEFF"))
     }
 
     @Test
@@ -58,6 +63,8 @@ class CsvExportTest {
             val saved = assertIs<CsvExportResult.Saved>(result)
             assertEquals(1500, saved.rows)
             assertEquals(1501, parseRfc4180(Files.readString(target.toPath())).size)
+            val bytes = Files.readAllBytes(target.toPath())
+            assertFalse(bytes.take(3).toByteArray().contentEquals(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())))
         }
     }
 

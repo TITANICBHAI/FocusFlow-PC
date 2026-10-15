@@ -39,7 +39,10 @@ import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
 import com.focusflow.data.models.*
 import com.focusflow.i18n.LocalizationManager
+import com.focusflow.services.BackupService
+import com.focusflow.services.CsvExportResult
 import com.focusflow.ui.theme.*
+import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
@@ -436,25 +439,20 @@ private fun AllTimeTab() {
                     onClick = {
                         scope.launch {
                             exportMsg = "Exporting…"
-                            exportMsg = withContext(Dispatchers.IO) {
-                                try {
-                                    val sessions = Database.getRecentSessions(9999)
-                                    val dateSuffix = java.time.LocalDate.now().toString()
-                                    val file = java.io.File(
-                                        System.getProperty("user.home") + "/.focusflow/sessions_$dateSuffix.csv"
-                                    )
-                                    file.parentFile.mkdirs()
-                                    val sb = StringBuilder()
-                                    sb.appendLine("id,task_name,start_time,end_time,planned_min,actual_min,completed,interrupted,notes")
-                                    sessions.forEach { s ->
-                                        sb.appendLine("\"${s.id}\",\"${s.taskName.replace("\"","'")}\",${s.startTime},${s.endTime ?: ""},${s.plannedMinutes},${s.actualMinutes},${s.completed},${s.interrupted},\"${s.notes.replace("\"","'")}\"")
-                                    }
-                                    file.writeText(sb.toString())
-                                    "✓ ${sessions.size} sessions → ${file.name}"
-                                } catch (e: Exception) {
-                                    "Export failed: ${e.message?.take(60)}"
-                                }
+                            val dateSuffix = LocalDate.now().toString()
+                            val file = File(
+                                System.getProperty("user.home") + "/.focusflow/sessions_$dateSuffix.csv"
+                            )
+                            val result = withContext(Dispatchers.IO) {
+                                BackupService.exportSessionsTo(file)
                             }
+                            exportMsg = when (result) {
+                                is CsvExportResult.Saved ->
+                                    "✓ ${result.rows} sessions → ${result.file.name}"
+                                CsvExportResult.Cancelled -> "Export cancelled"
+                                is CsvExportResult.Failed ->
+                                    "Export failed: ${result.message.take(60)}"
+                                }
                         }
                     },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Purple80)
