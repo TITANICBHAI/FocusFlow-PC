@@ -194,11 +194,19 @@ object CrashReporter {
             val tsHuman = ts.format(TIMESTAMP_HUMAN)
 
             val reportText = buildReport(thread, throwable, source, tsHuman)
-            val logFile    = writeLog(reportText, tsFile)
+            val logResult  = writeLog(reportText, tsFile, throwable)
 
-            // Always emit at least the exception type + message to stderr
-            System.err.println("[FocusFlow] CRASH [$source] ${throwable.javaClass.name}: ${throwable.message}")
-            logFile?.let { System.err.println("[FocusFlow] Log: ${it.absolutePath}") }
+            if (logResult !is CrashReportRetention.WriteResult.Duplicate) {
+                // Always emit at least the exception type + message to stderr
+                System.err.println("[FocusFlow] CRASH [$source] ${throwable.javaClass.name}: ${throwable.message}")
+                when (logResult) {
+                    is CrashReportRetention.WriteResult.Written ->
+                        System.err.println("[FocusFlow] Log: ${logResult.file.absolutePath}")
+                    is CrashReportRetention.WriteResult.Failed ->
+                        System.err.println("[FocusFlow] Crash report write failed: ${logResult.reason}")
+                    CrashReportRetention.WriteResult.Duplicate -> Unit
+                }
+            }
 
             // Safety cleanup: restore Windows state
             safetyCleanup()
@@ -496,44 +504,58 @@ object CrashReporter {
      * Also always writes the first ~4 KB of the report to stderr so there's
      * always a record even if all file paths fail.
      */
-    private fun writeLog(content: String, tsFile: String): File? {
+    private fun writeLog(
+        content: String,
+        tsFile: String,
+        throwable: Throwable
+    ): CrashReportRetention.WriteResult {
         val filename = "FocusFlow-crash-$tsFile.log"
+        val userHome = File(System.getProperty("user.home", "."))
+        val desktop = File(userHome, "Desktop")
+        val appData = File(userHome, ".focusflow")
+        val temporary = File(
+            System.getProperty("java.io.tmpdir", userHome.absolutePath)
+        )
+        val retention = CrashReportRetention(appData, temporary, desktop)
 
-        // Always write header to stderr regardless of file success
-        content.lines().take(30).forEach { System.err.println(it) }
+        return retention.write(CrashReportRetention.signatureFor(throwable)) {
+            // Always write the report header unless this signature was suppressed.
+            content.lines().take(30).forEach { System.err.println(it) }
 
-        val candidates = buildList<File> {
-            // 1. Desktop
+            val candidates = mutableListOf<File>()
             try {
-                val desktop = File(System.getProperty("user.home"), "Desktop")
-                if (desktop.isDirectory) add(File(desktop, filename))
-            } catch (_: Throwable) {}
-
-            // 2. ~/.focusflow/
-            try {
-                add(File(System.getProperty("user.home") + "/.focusflow/$filename"))
-            } catch (_: Throwable) {}
-
-            // 3. System temp
-            try {
-                add(File(System.getProperty("java.io.tmpdir", System.getProperty("user.home")), filename))
-            } catch (_: Throwable) {}
-        }
-
-        for (candidate in candidates) {
-            try {
-                candidate.parentFile?.mkdirs()
-                candidate.writeText(content, Charsets.UTF_8)
-                return candidate
-            } catch (_: Throwable) {
-                // Try next destination
+                if (desktop.isDirectory) candidates.add(File(desktop, filename))
+            } catch (failure: Throwable) {
+                System.err.println(
+                    "[FocusFlow] Could not inspect Desktop for crash reporting: " +
+                        "${failure.javaClass.name}: ${failure.message}"
+                )
             }
-        }
+            candidates.add(File(appData, filename))
+            candidates.add(File(temporary, filename))
 
-        // All destinations failed — full content to stderr
-        System.err.println("[FocusFlow] All log destinations failed. Full crash report:")
-        System.err.println(content)
-        return null
+            var written: File? = null
+            for (candidate in candidates) {
+                try {
+                    candidate.parentFile?.mkdirs()
+                    candidate.writeText(content, Charsets.UTF_8)
+                    written = candidate
+                    break
+                } catch (failure: Throwable) {
+                    System.err.println(
+                        "[FocusFlow] Could not write crash report to ${candidate.absolutePath}: " +
+                            "${failure.javaClass.name}: ${failure.message}"
+                    )
+                }
+            }
+
+            if (written == null) {
+                // All destinations failed — full content to stderr.
+                System.err.println("[FocusFlow] All log destinations failed. Full crash report:")
+                System.err.println(content)
+            }
+            written
+        }
     }
 
     // ── Safety cleanup ─────────────────────────────────────────────────────────
@@ -650,7 +672,12 @@ object CrashReporter {
                 tsHuman = now.format(TIMESTAMP_HUMAN),
                 title = "FOCUSFLOW STARTUP ISSUE REPORT"
             )
-            writeLog(reportText, now.format(TIMESTAMP_STARTUP_FILE))
+            val result = writeLog(
+                reportText,
+                now.format(TIMESTAMP_STARTUP_FILE),
+                reportThrowable
+            )
+            (result as? CrashReportRetention.WriteResult.Written)?.file
         } catch (failure: Throwable) {
             System.err.println(
                 "[FocusFlow] Could not create startup diagnostic [$source]: " +
