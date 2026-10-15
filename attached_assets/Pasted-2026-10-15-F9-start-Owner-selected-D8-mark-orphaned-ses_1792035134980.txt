@@ -1,0 +1,13 @@
+2026-10-15 F9 start: Owner selected D8: mark orphaned sessions interrupted with end_time = start_time. Implementing the 12-hour session gate and dry-run/idempotent reconciliation using temporary test databases only. Do not wire automatic reconciliation into startup or apply it to a real profile until F15 backup verification is complete.
+
+2026-10-15 F9 verification attempts: The first gradle :test --no-daemon --console=plain --tests com.focusflow.data.OrphanFocusSessionReconciliationTest invocation hit the 300-second shell limit during :compileKotlin; it produced no final test result or XML. The background rerun of the same command completed successfully in 2m29s. Its JUnit XML records 4 tests, 0 failures/errors/skips. Full root-suite acceptance is still pending.
+
+ F9 — Reconcile orphan sessions: Add the 12-hour gate and dry-run/idempotent reconciliation. Do not apply the repair to a real DB until F15 has verified backup support and the owner approves the end-time policy (D8). Tests F9-a…d.
+
+2026-10-15 F13 start: Implementing ordered start/end persistence and bounded shutdown completion. The existing shutdown caller invokes end() then dispose() from the dedicated FocusFlow-Shutdown daemon thread.
+
+2026-10-15 F13 pre-fix characterization: The first FocusSessionPersistenceTest run had 2 expected failures: end could write before start, and failed start writes were not logged. Its fast-write dispose case passed. Re-running F13-c with both writes held pending failed before the fix. Therefore the dispose race passed only in the fast timing case; pending writes were not reliably preserved.
+
+2026-10-15 F13 focused verification: After the fix, gradle :test --no-daemon --console=plain --tests com.focusflow.services.FocusSessionPersistenceTest passed 3 tests, 0 failures/errors/skips. Full root-suite acceptance is still pending.
+
+ F13 — Order focus-session writes: Ensure end waits for start, log failed writes, and allow bounded completion on dispose. Tests F13-a…c; note whether the dispose race already passes before changes.
