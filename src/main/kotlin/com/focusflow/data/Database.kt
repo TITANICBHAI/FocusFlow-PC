@@ -1964,7 +1964,7 @@ object Database {
     @Synchronized fun getCurrentStreak(): Int {
         val rows = connection.createStatement().use { statement ->
             statement.executeQuery(
-                "SELECT date FROM daily_completions WHERE completed_count > 0 ORDER BY date DESC LIMIT 90"
+                "SELECT date FROM daily_completions WHERE completed_count > 0 ORDER BY date DESC"
             ).use { rs ->
                 val l = mutableListOf<LocalDate>()
                 while (rs.next()) l.add(LocalDate.parse(rs.getString("date"), dateFmt))

@@ -213,6 +213,39 @@ class DayQueriesTest {
         assertEquals(0, Database.getTotalFocusMinutesToday())
     }
 
+    @Test
+    fun f30aCurrentStreakCountsMoreThan90ConsecutiveDays() {
+        val today = LocalDate.now()
+        insertCompletionDates((0 until 120).map { today.minusDays(it.toLong()) })
+
+        assertEquals(120, Database.getCurrentStreak())
+        assertEquals(120, Database.getBestStreak())
+    }
+
+    @Test
+    fun f30bGapYesterdayEndsCurrentStreakUnlessTodayIsCompleted() {
+        val today = LocalDate.now()
+        insertCompletionDates(listOf(today, today.minusDays(2), today.minusDays(3)))
+
+        assertEquals(1, Database.getCurrentStreak())
+
+        withWritableDatabase { connection ->
+            connection.createStatement().use {
+                it.executeUpdate("DELETE FROM daily_completions WHERE date = '${today}'")
+            }
+        }
+
+        assertEquals(0, Database.getCurrentStreak())
+    }
+
+    @Test
+    fun f30cYesterdayCompletionKeepsTheStreakWhenTodayIsEmpty() {
+        val yesterday = LocalDate.now().minusDays(1)
+        insertCompletionDates((0 until 7).map { yesterday.minusDays(it.toLong()) })
+
+        assertEquals(7, Database.getCurrentStreak())
+    }
+
     private data class SessionFixture(
         val id: String,
         val startTime: LocalDateTime,
@@ -274,6 +307,23 @@ class DayQueriesTest {
                     statement.setString(1, "process-$index.exe")
                     statement.setString(2, listOf("Alpha", "Beta", "Gamma", "Delta")[index % 4])
                     statement.setString(3, time.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                    statement.addBatch()
+                }
+                statement.executeBatch()
+            }
+        }
+    }
+
+    private fun insertCompletionDates(dates: List<LocalDate>) {
+        withWritableDatabase { connection ->
+            connection.prepareStatement(
+                """
+                INSERT INTO daily_completions(date, completed_count, total_count, focus_minutes)
+                VALUES (?, 1, 1, 0)
+                """.trimIndent()
+            ).use { statement ->
+                dates.forEach { date ->
+                    statement.setString(1, date.toString())
                     statement.addBatch()
                 }
                 statement.executeBatch()
