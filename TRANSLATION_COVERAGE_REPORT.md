@@ -1,117 +1,66 @@
 # Translation Coverage Report
 
-**Date:** 2026-10-07  
-**English source:** `src/main/kotlin/com/focusflow/i18n/Translations.kt`
+**Audit date:** 2026-10-15
+**Scope:** Public website pages and the Kotlin/Compose app's localization catalog and UI call sites.
 
 ## Summary
 
-The translation catalog contains **652 string fields** in English and in each of the seven non-English locales. Every non-English locale has the same set of fields as English: **no missing or extra keys were found**.
+- The website has home, features, and blog pages in all eight supported locales, but legal and data-help pages are available in fewer languages, and some homepage content is omitted.
+- The app's translation catalog has all **652 fields populated in all eight locales**. That does not mean every rendered screen is translated: the UI mixes localized fields with hardcoded English text.
+- English and Brazilian Portuguese Terms pages now describe the current consent, report contents, redaction limits, Discord/IP visibility, and separate user-submitted feedback behavior.
 
-Coverage here is measured by comparing each locale's displayed string with the English string for the same key. A string that differs from English is counted as translated; an identical string is counted as unchanged and listed below for review.
+## Website coverage
 
-| Language | Locale | Different from English | Identical to English | Text-difference coverage |
+| Locale | Home / features / blog | Privacy policy | Terms | Data & backups |
 |---|---:|---:|---:|---:|
-| Spanish | `es` | 647 / 652 | 5 | **99.2%** |
-| Chinese (Simplified) | `zh` | 652 / 652 | 0 | **100.0%** |
-| Japanese | `ja` | 652 / 652 | 0 | **100.0%** |
-| Korean | `ko` | 650 / 652 | 2 | **99.7%** |
-| German | `de` | 644 / 652 | 8 | **98.8%** |
-| French | `fr` | 628 / 652 | 24 | **96.3%** |
-| Brazilian Portuguese | `pt-BR` | 640 / 652 | 12 | **98.2%** |
-| **All non-English locales** | — | **4,513 / 4,564** | **51** | **98.9%** |
+| English (`en`) | 3/3 | Yes | Yes | Yes |
+| Spanish (`es`) | 3/3 | No — footer links to English | No — footer links to English | No |
+| French (`fr`) | 3/3 | No — footer links to English | No — footer links to English | No |
+| German (`de`) | 3/3 | No — footer links to English | No — footer links to English | No |
+| Japanese (`ja`) | 3/3 | No — footer links to English | No — footer links to English | No |
+| Simplified Chinese (`zh`) | 3/3 | No — footer links to English | No — footer links to English | No |
+| Korean (`ko`) | 3/3 | No — footer links to English | No — footer links to English | No |
+| Brazilian Portuguese (`pt-BR`) | 3/3 | Yes | Yes | No |
 
-## Strings identical to English
+All eight locales have localized titles and main headings on the three core marketing pages. Page availability is not the same as complete content parity:
 
-These entries are exact text matches to their English source. They are review candidates, not confirmed errors: product names, abbreviations, app names, time placeholders, and borrowed terms may appropriately remain unchanged.
+- The English homepage has a technology/packaging section about Kotlin, Compose Desktop, and the standalone Windows installer. It is present in Brazilian Portuguese but absent from the Spanish, French, German, Japanese, Chinese, and Korean homepages.
+- The Brazilian Portuguese homepage uses a different heading structure from English. Its lower heading count alone does not establish whether text is missing, so it needs a content-level comparison before being called complete.
+- Chinese has inconsistent HTML language tags: the homepage uses `zh-Hans`, while its features and blog pages use `zh`.
+- The English data-and-backups guide has no localized counterpart.
 
-### Spanish (`es`) — 5
+## Kotlin app coverage
 
-| Key | English text |
-|---|---|
-| `focusPomodoroLabel` | Pomodoro |
-| `focusNuclearLabel` | Nuclear |
-| `statsTotal` | Total |
-| `blockerHour` | HH |
-| `blockerMinute` | MM |
+The app supports English (`en`), Spanish (`es`), Simplified Chinese (`zh`), Japanese (`ja`), Korean (`ko`), German (`de`), French (`fr`), and Brazilian Portuguese (`pt-BR`).
 
-### Chinese (Simplified) (`zh`) — 0
+| Locale | Populated fields | Exact text matches to English | Raw text-difference ratio |
+|---|---:|---:|---:|
+| Spanish (`es`) | 652/652 | 5 | 99.2% |
+| Simplified Chinese (`zh`) | 652/652 | 0 | 100.0% |
+| Japanese (`ja`) | 652/652 | 0 | 100.0% |
+| Korean (`ko`) | 652/652 | 2 | 99.7% |
+| German (`de`) | 652/652 | 8 | 98.8% |
+| French (`fr`) | 652/652 | 24 | 96.3% |
+| Brazilian Portuguese (`pt-BR`) | 652/652 | 12 | 98.2% |
+| **All non-English locales** | **4,564/4,564** | **51** | **98.9%** |
 
-No exact English matches remain.
+Every locale has the same 652 keys as English, with no missing or blank values. The match count is only an exact-text comparison: names, abbreviations, units, and borrowed terms can correctly remain in English; a different string can still be mistranslated.
 
-### Japanese (`ja`) — 0
+### Rendered screen caveat
 
-No exact English matches remain.
+The complete catalog does not translate all visible UI. A static scan found **430 direct string-literal `Text(...)` arguments across 35 UI files**; many are English labels or explanatory copy, while some are units, formats, or dynamic values. English literals remain in major screens and dialogs such as Settings, Contact & Bug Reports, Focus Launcher, App Blocker, Windows Setup, VPN & Network, onboarding, and the crash-consent dialog. The same literals appear regardless of the selected locale. The scan is not a screen-by-screen percentage, but no main screen can be certified fully localized end to end from this source audit.
 
-### Korean (`ko`) — 2
+There is also a consent-copy mismatch across all app locales: the localized privacy strings still call reports “anonymous” and say file paths are not included. The current consent explanation says Discord receives the sender's IP address and that diagnostic text may still contain paths or other context after redaction. These strings need a separate localization/content update.
 
-| Key | English text |
-|---|---|
-| `goalGamingSub` | Steam, Twitch, Netflix… |
-| `goalWebSub` | Chrome, Firefox, Edge… |
+## Terms and related privacy copy
 
-### German (`de`) — 8
+The English and Brazilian Portuguese Terms pages were updated on 2026-10-15. They now say that reports require granted consent; explain the bounded exception/cause details and up to three stack-frame entries; distinguish the remote summary from the full local crash report; describe the limits of redaction; disclose Discord's visibility of the sender IP; and separate automatic diagnostics from a user-submitted issue message.
 
-| Key | English text |
-|---|---|
-| `sectionLive` | LIVE |
-| `goalSocialSub` | Discord, Instagram, WhatsApp… |
-| `goalGamingSub` | Steam, Twitch, Netflix… |
-| `goalWebSub` | Chrome, Firefox, Edge… |
-| `focusPomodoroLabel` | Pomodoro |
-| `focusStandardLabel` | Standard |
-| `blockerStart` | Start |
-| `blockerMonth` | Mo |
-
-### French (`fr`) — 24
-
-| Key | English text |
-|---|---|
-| `navFocus` | Focus |
-| `goalSocialSub` | Discord, Instagram, WhatsApp… |
-| `goalGamingSub` | Steam, Twitch, Netflix… |
-| `goalWebSub` | Chrome, Firefox, Edge… |
-| `duration25Label` | 25 minutes |
-| `duration45Label` | 45 minutes |
-| `duration60Label` | 60 minutes |
-| `duration90Label` | 90 minutes |
-| `focusTitle` | Focus |
-| `focusPomodoroLabel` | Pomodoro |
-| `focusStandardLabel` | Standard |
-| `focusPause` | Pause |
-| `statsTotal` | Total |
-| `statsSessions` | Sessions |
-| `reportsSessions` | Sessions |
-| `reportsFocusLabel` | Focus |
-| `activeSessions` | Sessions |
-| `notesSection` | Notes |
-| `profileWeeklySessions` | Sessions |
-| `blockerHour` | HH |
-| `blockerMinute` | MM |
-| `tasksFieldDesc` | Description |
-| `tasksFieldDateShort` | Date |
-| `focusCycleLabel` | Cycle |
-
-### Brazilian Portuguese (`pt-BR`) — 12
-
-| Key | English text |
-|---|---|
-| `focusPomodoroLabel` | Pomodoro |
-| `focusNuclearLabel` | Nuclear |
-| `statsTotal` | Total |
-| `settingsPinLabel` | PIN |
-| `launcherTitle` | Focus Launcher |
-| `launcherOverlayFocusLauncher` | FOCUS LAUNCHER |
-| `navFocusLauncher` | Focus Launcher |
-| `defPinLabel` | PIN |
-| `blockerHour` | HH |
-| `blockerMinute` | MM |
-| `blockerApp` | app |
-| `blockerApps` | apps |
+The Brazilian Portuguese Privacy Policy still contains older crash-report wording, including the outdated anonymous/default-on description. It was not changed in this Terms-only update and should be reconciled separately.
 
 ## Method and limitations
 
-- Each of the 652 string fields in a locale is compared with the English value for the same key.
-- Coverage is the number of values that differ from English divided by 652. The overall figure is weighted by the same 652 fields in each of seven locales.
-- This is a source-text comparison, not a translation-quality score. It does not detect partially English strings, assess translation accuracy or fluency, or decide whether identical terms should be localized.
-- Brazilian Portuguese received an AI-assisted editorial pass for fluency and terminology, but has not been verified by a native speaker.
-- Exact English matches can be valid in context. Review the unchanged-string lists before treating any entry as missing a translation.
+- Website coverage means the page exists and has localized page-level headings; it does not certify every paragraph's fluency or accuracy.
+- The app catalog was compared by locale and key, including blank/missing checks. Exact English equality is a review signal, not an error by itself.
+- The UI scan looks for direct string arguments in Compose `Text(...)` calls. It does not cover every UI API, inspect screenshots at every interaction state, or produce a semantic translation score.
+- This is a static source audit, not native-speaker proofreading.

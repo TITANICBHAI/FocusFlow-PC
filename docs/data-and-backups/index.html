@@ -75,13 +75,15 @@
 
   <h2>Your live database</h2>
   <p>FocusFlow keeps its active SQLite database on your PC at <code>%USERPROFILE%\.focusflow\focusflow.db</code>. It contains app data such as tasks, focus history, settings, protection rules, and PIN settings. The database is local; FocusFlow does not sync it to a FocusFlow cloud account.</p>
+  <p>This is the one live database FocusFlow uses. A secondary backup folder is not a second live database and does not mirror every change in real time; it stores separate verified snapshots when backups are created.</p>
   <p>The app uses this database while it is running. Do not move or delete <code>focusflow.db</code> while FocusFlow is open.</p>
 
   <h2>Where backups are stored</h2>
   <ul>
     <li><strong>Primary app-data backups:</strong> <code>%USERPROFILE%\.focusflow\backups\</code>. These are database snapshots with matching <code>.sha256</code> and <code>.meta.json</code> files.</li>
     <li><strong>Optional secondary backups:</strong> You can choose another folder in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>. Verified snapshots are copied there. It may be on another drive or network location; FocusFlow does not host this as a cloud backup.</li>
-    <li><strong>Restore recovery files:</strong> Safety backups and preserved pre-restore files are kept in FocusFlow's app-data backup area so a restore can be recovered if needed.</li>
+    <li><strong>Safety backups:</strong> A verified snapshot of the current live database, created immediately before a staged restore is applied. It is separate from the older backup being restored and is kept in the primary backup folder.</li>
+    <li><strong>Pre-restore archives:</strong> Before replacing the live database, FocusFlow preserves the current <code>focusflow.db</code> and any active SQLite WAL/SHM files in <code>%USERPROFILE%\.focusflow\backups\restore-archives\</code>, with a verification manifest. If applying the selected backup fails, FocusFlow uses this preserved set to attempt a rollback. Recovery archives remain available in the app for review or manual deletion.</li>
   </ul>
 
   <h2>Creating and verifying backups</h2>
@@ -96,7 +98,7 @@
   <ol>
     <li>Open <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong> and choose a backup marked <strong>Verified</strong>.</li>
     <li>Review the confirmation and choose <strong>Stage restore</strong>. The current database keeps running; it is not replaced immediately.</li>
-    <li>Quit and reopen FocusFlow. Before applying the restore, FocusFlow creates and verifies a safety backup of the current database and preserves the current database files. If the restored database fails to initialize, FocusFlow attempts to put the preserved files back.</li>
+    <li>Quit and reopen FocusFlow. Before applying the restore, FocusFlow creates and verifies a safety backup, then preserves the current database files in a pre-restore archive. If the restored database fails to initialize, FocusFlow attempts to reinstate the preserved files. The safety backup and archive are distinct recovery points; the previous database files remain available after a successful restore too.</li>
   </ol>
   <div class="warning">
     <strong>A restore replaces the whole database; it does not merge data.</strong> It restores the selected snapshot, including its rules, settings, and PIN state. The restore flow checks that the snapshot is verified and asks for confirmation, but it does not ask for the current Global PIN or judge whether the snapshot has fewer restrictions. A verified older snapshot with fewer rules or no PIN can therefore restore that older state at the next launch.
