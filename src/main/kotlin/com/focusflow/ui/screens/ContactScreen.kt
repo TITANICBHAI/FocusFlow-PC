@@ -24,6 +24,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.services.CrashReporter
 import com.focusflow.services.ReviewPromptService
+import com.focusflow.services.AppLifecycle
+import com.focusflow.services.AutoBackupService
+import com.focusflow.services.BackupEntry
+import com.focusflow.services.BackupLocation
+import com.focusflow.services.BackupRecoveryService
+import com.focusflow.services.RestoreArchiveDeleteResult
+import com.focusflow.services.RestoreArchiveEntry
+import com.focusflow.services.RestoreScheduleResult
+import com.focusflow.services.SafetyBackupDeleteResult
+import com.focusflow.services.SecondaryBackupDeleteResult
+import com.focusflow.services.SecondaryCopyStatus
+import com.focusflow.services.SecondaryLocationUpdate
 import com.focusflow.ui.components.openUrl
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +45,7 @@ import java.io.File
 import java.text.DecimalFormat
 import java.awt.Desktop
 import java.net.URI
+import javax.swing.JFileChooser
 
 @Composable
 fun ContactScreen() {
@@ -161,6 +174,8 @@ fun ContactScreen() {
                     )
                 }
             }
+
+            BackupRecoverySection()
 
             if (showForgottenPinNotice) {
                 SectionCard(
@@ -445,6 +460,517 @@ fun ContactScreen() {
             containerColor = Surface2,
             titleContentColor = OnSurface
         )
+    }
+}
+
+@Composable
+private fun BackupRecoverySection() {
+    val scope = rememberCoroutineScope()
+    var entries by remember { mutableStateOf<List<BackupEntry>>(emptyList()) }
+    var restoreArchives by remember { mutableStateOf<List<RestoreArchiveEntry>>(emptyList()) }
+    var secondaryDirectory by remember { mutableStateOf<File?>(null) }
+    var statusMessage by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var working by remember { mutableStateOf(false) }
+    var pendingRestore by remember { mutableStateOf(false) }
+    var restoreSource by remember { mutableStateOf<BackupEntry?>(null) }
+    var deleteSource by remember { mutableStateOf<BackupEntry?>(null) }
+    var deleteArchive by remember { mutableStateOf<RestoreArchiveEntry?>(null) }
+
+    fun refresh() {
+        scope.launch {
+            loading = true
+            try {
+                val state = withContext(Dispatchers.IO) {
+                    BackupRecoverySnapshot(
+                        secondaryDirectory = BackupRecoveryService.secondaryBackupDirectory(),
+                        backups = BackupRecoveryService.listBackupEntries(),
+                        pendingRestore = BackupRecoveryService.hasPendingRestore(),
+                        restoreArchives = BackupRecoveryService.listRestoreArchives()
+                    )
+                }
+                secondaryDirectory = state.secondaryDirectory
+                entries = state.backups
+                pendingRestore = state.pendingRestore
+                restoreArchives = state.restoreArchives
+            } catch (failure: Exception) {
+                statusMessage = "Could not load backup status: ${failure.message ?: failure.javaClass.simpleName}"
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+
+    fun chooseSecondaryFolder() {
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Choose a secondary FocusFlow backup folder"
+            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+            isAcceptAllFileFilterUsed = false
+        }
+        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return
+        val selected = chooser.selectedFile ?: return
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) {
+                BackupRecoveryService.configureSecondaryBackupDirectory(selected)
+            }
+            when (result) {
+                is SecondaryLocationUpdate.Saved -> {
+                    secondaryDirectory = result.directory
+                    statusMessage = "Secondary backups will be copied to ${result.directory.absolutePath}. Existing files are kept."
+                }
+                SecondaryLocationUpdate.Removed -> {
+                    secondaryDirectory = null
+                    statusMessage = "Secondary backup folder removed. Existing backup files were left untouched."
+                }
+                is SecondaryLocationUpdate.Failed -> statusMessage = result.reason
+            }
+            refresh()
+            working = false
+        }
+    }
+
+    fun saveBackupNow() {
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) { AutoBackupService.runBackupNow() }
+            statusMessage = when (result) {
+                is AutoBackupService.BackupResult.Success -> when (val secondary = result.secondaryCopy) {
+                    SecondaryCopyStatus.NotConfigured ->
+                        "Verified backup saved to FocusFlow's app-data folder."
+                    is SecondaryCopyStatus.Copied ->
+                        "Verified backup saved to app data and copied to ${secondary.file.parent}."
+                    is SecondaryCopyStatus.AlreadyPresent ->
+                        "Verified app-data backup is current; its secondary copy is already present."
+                    is SecondaryCopyStatus.Failed ->
+                        "Primary backup is verified, but the secondary copy failed: ${secondary.reason}"
+                }
+                AutoBackupService.BackupResult.NoDatabase ->
+                    "No open database is available to back up."
+                AutoBackupService.BackupResult.VerificationFailed ->
+                    "The backup did not pass verification. The current database was not changed."
+                is AutoBackupService.BackupResult.Error ->
+                    "Backup failed: ${result.reason}"
+            }
+            refresh()
+            working = false
+        }
+    }
+
+    fun stageRestore(entry: BackupEntry) {
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) {
+                BackupRecoveryService.scheduleRestore(entry.file)
+            }
+            when (result) {
+                is RestoreScheduleResult.Scheduled ->
+                    statusMessage = "Restore of ${result.sourceName} is staged. FocusFlow will make and verify a fresh safety backup before applying it on the next launch."
+                RestoreScheduleResult.AlreadyPending ->
+                    statusMessage = "A restore is already staged. Quit and reopen FocusFlow to apply it."
+                is RestoreScheduleResult.Rejected ->
+                    statusMessage = result.reason
+                is RestoreScheduleResult.Failed ->
+                    statusMessage = result.reason
+            }
+            refresh()
+            working = false
+        }
+    }
+
+    fun deleteSecondaryBackup(entry: BackupEntry) {
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) {
+                BackupRecoveryService.deleteSecondaryBackup(entry.file)
+            }
+            statusMessage = when (result) {
+                SecondaryBackupDeleteResult.Deleted ->
+                    "Secondary backup and its FocusFlow sidecars were removed. No other folder contents were touched."
+                SecondaryBackupDeleteResult.NotInSecondaryFolder ->
+                    "That file is not a removable FocusFlow backup in the selected secondary folder."
+                is SecondaryBackupDeleteResult.Failed ->
+                    result.reason
+            }
+            deleteSource = null
+            refresh()
+            working = false
+        }
+    }
+
+    fun deleteSafetyBackup(entry: BackupEntry) {
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) {
+                BackupRecoveryService.deleteSafetyBackup(entry.file)
+            }
+            statusMessage = when (result) {
+                SafetyBackupDeleteResult.Deleted ->
+                    "The selected safety backup and its sidecars were removed. The live database was not changed."
+                SafetyBackupDeleteResult.NotSafetyBackup ->
+                    "That file is not a FocusFlow safety backup."
+                is SafetyBackupDeleteResult.Failed -> result.reason
+            }
+            deleteSource = null
+            refresh()
+            working = false
+        }
+    }
+
+    fun deleteRestoreArchive(archive: RestoreArchiveEntry) {
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) {
+                BackupRecoveryService.deleteRestoreArchive(archive.directory)
+            }
+            statusMessage = when (result) {
+                RestoreArchiveDeleteResult.Deleted ->
+                    "The selected recovery archive was removed. No active database or secondary backup was changed."
+                RestoreArchiveDeleteResult.NotManagedArchive ->
+                    "That folder is not a FocusFlow recovery archive."
+                is RestoreArchiveDeleteResult.Failed -> result.reason
+            }
+            deleteArchive = null
+            refresh()
+            working = false
+        }
+    }
+
+    SectionCard(title = "Backup & Recovery", icon = Icons.Default.Storage) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "Regular app-data backups keep the latest 7 snapshots. Safety backups, pre-restore archives, and secondary-folder backups are never deleted automatically. Use a delete button to remove a specific saved copy.",
+                style = MaterialTheme.typography.bodySmall,
+                color = OnSurface2,
+                lineHeight = 18.sp
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Secondary folder",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = OnSurface,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    secondaryDirectory?.absolutePath ?: "Not configured",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface2,
+                    maxLines = 2
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(onClick = ::chooseSecondaryFolder, enabled = !working) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (secondaryDirectory == null) "Choose folder" else "Change folder")
+                }
+                if (secondaryDirectory != null) {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                working = true
+                                val result = withContext(Dispatchers.IO) {
+                                    BackupRecoveryService.configureSecondaryBackupDirectory(null)
+                                }
+                                when (result) {
+                                    SecondaryLocationUpdate.Removed -> {
+                                        secondaryDirectory = null
+                                        statusMessage = "Secondary folder removed. Existing backups were left untouched."
+                                    }
+                                    is SecondaryLocationUpdate.Failed -> statusMessage = result.reason
+                                    is SecondaryLocationUpdate.Saved -> Unit
+                                }
+                                refresh()
+                                working = false
+                            }
+                        },
+                        enabled = !working
+                    ) { Text("Remove folder") }
+                }
+                Spacer(Modifier.weight(1f))
+                Button(onClick = ::saveBackupNow, enabled = !working) {
+                    Text("Back up now")
+                }
+            }
+
+            if (pendingRestore) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Purple80.copy(alpha = 0.10f))
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Purple80, modifier = Modifier.size(18.dp))
+                    Text(
+                        "A verified restore is staged. Quit and reopen FocusFlow to apply it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            val shutdown = AppLifecycle.shutdown
+                            if (shutdown == null) {
+                                statusMessage = "The app's safe shutdown handler is not available. Quit FocusFlow normally, then reopen it."
+                            } else {
+                                shutdown(false, false)
+                            }
+                        },
+                        enabled = !working,
+                        colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                    ) {
+                        Text("Quit to apply")
+                    }
+                }
+            }
+
+            if (statusMessage.isNotBlank()) {
+                Text(
+                    statusMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (statusMessage.contains("failed", ignoreCase = true)) MaterialTheme.colorScheme.error else Success,
+                    lineHeight = 18.sp
+                )
+            }
+
+            if (loading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else if (entries.isEmpty()) {
+                Text("No backup files found.", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    entries.forEach { entry ->
+                        BackupEntryRow(
+                            entry = entry,
+                            enabled = !working && !pendingRestore,
+                            onRestore = { restoreSource = entry },
+                            onDelete = { deleteSource = entry }
+                        )
+                    }
+                }
+            }
+
+            if (restoreArchives.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Preserved restore archives",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = OnSurface,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "These contain the database files saved before or during a restore. Delete only when you no longer need that recovery point.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurface2,
+                        lineHeight = 18.sp
+                    )
+                    restoreArchives.forEach { archive ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Surface3)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    archive.directory.name,
+                                    color = OnSurface,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    "${archive.sizeBytes / 1024} KB • ${if (archive.directory.name.startsWith("failed-")) "failed restore" else "pre-restore"}",
+                                    color = OnSurface2,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            IconButton(
+                                onClick = { deleteArchive = archive },
+                                enabled = !working && !pendingRestore,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete preserved recovery archive", tint = OnSurface2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    restoreSource?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { if (!working) restoreSource = null },
+            containerColor = Surface2,
+            titleContentColor = OnSurface,
+            textContentColor = OnSurface2,
+            title = { Text("Stage this restore?") },
+            text = {
+                Text(
+                    "FocusFlow will use ${entry.file.name} (${entry.file.parent}) on the next launch. Before replacing the current database, it will create and verify a fresh safety backup and preserve the current database plus any WAL/SHM files. If the restored database fails initialization, FocusFlow will restore those preserved files. The source backup remains in place."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val selected = restoreSource
+                        restoreSource = null
+                        if (selected != null) stageRestore(selected)
+                    },
+                    enabled = !working
+                ) { Text("Stage restore") }
+            },
+            dismissButton = {
+                TextButton(onClick = { restoreSource = null }, enabled = !working) { Text("Cancel") }
+            }
+        )
+    }
+
+    deleteSource?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { if (!working) deleteSource = null },
+            containerColor = Surface2,
+            titleContentColor = OnSurface,
+            textContentColor = OnSurface2,
+            title = {
+                Text(
+                    if (entry.location == BackupLocation.SECONDARY) {
+                        "Delete this secondary backup?"
+                    } else {
+                        "Delete this safety backup?"
+                    }
+                )
+            },
+            text = {
+                Text(
+                    if (entry.location == BackupLocation.SECONDARY) {
+                        "This removes only ${entry.file.name} and its matching FocusFlow hash/metadata sidecars from the selected secondary folder. It cannot be undone; no other files will be touched."
+                    } else {
+                        "This permanently removes ${entry.file.name} and its hash/metadata sidecars from FocusFlow's safety-backup folder. It reduces restore options; the active database is not changed."
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (entry.location == BackupLocation.SECONDARY) {
+                            deleteSecondaryBackup(entry)
+                        } else {
+                            deleteSafetyBackup(entry)
+                        }
+                    },
+                    enabled = !working,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete copy") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteSource = null }, enabled = !working) { Text("Keep backup") }
+            }
+        )
+    }
+
+    deleteArchive?.let { archive ->
+        AlertDialog(
+            onDismissRequest = { if (!working) deleteArchive = null },
+            containerColor = Surface2,
+            titleContentColor = OnSurface,
+            textContentColor = OnSurface2,
+            title = { Text("Delete this recovery archive?") },
+            text = {
+                Text(
+                    "This permanently deletes ${archive.directory.name} and all database/WAL/SHM files stored inside it. If the files are needed for recovery, they cannot be recreated. The active database and other backups will not be touched."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { deleteRestoreArchive(archive) },
+                    enabled = !working,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Delete archive") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteArchive = null }, enabled = !working) { Text("Keep archive") }
+            }
+        )
+    }
+}
+
+private data class BackupRecoverySnapshot(
+    val secondaryDirectory: File?,
+    val backups: List<BackupEntry>,
+    val pendingRestore: Boolean,
+    val restoreArchives: List<RestoreArchiveEntry>
+)
+
+@Composable
+private fun BackupEntryRow(
+    entry: BackupEntry,
+    enabled: Boolean,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val (verificationLabel, isVerified) = when (val verification = entry.verification) {
+        is AutoBackupService.BackupVerification.Verified -> "Verified" to true
+        AutoBackupService.BackupVerification.Unverified -> "Unverified — restore disabled" to false
+        is AutoBackupService.BackupVerification.Invalid -> "Invalid — ${verification.reason}" to false
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Surface3)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                entry.file.name,
+                color = OnSurface,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
+            Text(
+                "${when {
+                    entry.location == BackupLocation.SECONDARY -> "Secondary"
+                    entry.file.name.startsWith("focusflow_safety_") -> "Safety copy"
+                    else -> "App data"
+                }} • $verificationLabel • ${entry.file.length() / 1024} KB",
+                color = if (isVerified) Success else OnSurface2,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2
+            )
+        }
+        if (isVerified) {
+            OutlinedButton(onClick = onRestore, enabled = enabled) { Text("Restore") }
+        }
+        if (entry.location == BackupLocation.SECONDARY || entry.file.name.startsWith("focusflow_safety_")) {
+            IconButton(onClick = onDelete, enabled = enabled, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = if (entry.location == BackupLocation.SECONDARY) {
+                        "Delete secondary backup"
+                    } else {
+                        "Delete safety backup"
+                    },
+                    tint = OnSurface2
+                )
+            }
+        }
     }
 }
 

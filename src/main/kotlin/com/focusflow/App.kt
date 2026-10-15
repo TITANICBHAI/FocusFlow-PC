@@ -44,6 +44,8 @@ import com.focusflow.enforcement.VpnBlocker
 import com.focusflow.services.HostsBlocker
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.FocusSessionService
+import com.focusflow.services.RecoveryNotice
+import com.focusflow.services.RecoveryNoticeService
 import com.focusflow.ui.components.AndroidPromoDialog
 import com.focusflow.ui.components.BlockOverlay
 import com.focusflow.ui.components.EdgeExtensionPromoDialog
@@ -174,6 +176,8 @@ fun App() {
     var telemetryConsentError by remember { mutableStateOf<String?>(null) }
     var telemetryConsentSaving by remember { mutableStateOf(false) }
     var showRegistryOrphanDialog by remember { mutableStateOf(false) }
+    var startupNotice by remember { mutableStateOf<RecoveryNotice?>(null) }
+    var appLaunchDialogsResolved by remember { mutableStateOf(false) }
     var sidebarCollapsed    by remember { mutableStateOf(false) }
     val isAdmin = remember { ElevationManager.isElevated }
     // Admin-requiring features that are currently active — drives urgent button styling.
@@ -343,6 +347,13 @@ fun App() {
         if (androidPromo) showAndroidPromo = true
         if (needsConsent) showTelemetryConsent = true
         if (edgeExtensionPromo) showEdgeExtensionPromo = true
+        appLaunchDialogsResolved = true
+    }
+
+    LaunchedEffect(Unit) {
+        startupNotice = withContext(Dispatchers.IO) {
+            RecoveryNoticeService.pendingNotice()
+        }
     }
 
     // Remind on the third launch, but wait until startup/security/consent dialogs
@@ -685,6 +696,54 @@ fun App() {
                 dismissButton = {
                     TextButton(onClick = { showRegistryOrphanDialog = false }) {
                         Text("Dismiss", color = OnSurface2)
+                    }
+                }
+            )
+        }
+
+        val anotherDialogIsOpen =
+            showOnboarding ||
+                showGlobalPinSetup ||
+                showPostPinRecommendations ||
+                showAndroidPromo ||
+                showEdgeExtensionPromo ||
+                showTelemetryConsent ||
+                showWindowsStartupPrompt ||
+                showRegistryOrphanDialog ||
+                showReviewPrompt
+        startupNotice?.takeIf { appLaunchDialogsResolved && !anotherDialogIsOpen }?.let { notice ->
+            fun acknowledgeNotice(openBackups: Boolean) {
+                startupNotice = null
+                if (openBackups) navigate(Screen.CONTACT)
+                scope.launch(Dispatchers.IO) {
+                    RecoveryNoticeService.acknowledge(notice)
+                }
+            }
+
+            AlertDialog(
+                onDismissRequest = { acknowledgeNotice(openBackups = false) },
+                containerColor = Surface2,
+                titleContentColor = OnSurface,
+                textContentColor = OnSurface2,
+                title = { Text(notice.title, fontWeight = FontWeight.SemiBold) },
+                text = {
+                    Text(
+                        notice.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        lineHeight = 20.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { acknowledgeNotice(openBackups = true) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                    ) {
+                        Text("Review backups")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { acknowledgeNotice(openBackups = false) }) {
+                        Text("Continue")
                     }
                 }
             )

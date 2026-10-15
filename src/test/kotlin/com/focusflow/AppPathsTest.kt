@@ -33,6 +33,12 @@ class AppPathsTest {
                 assertEquals(File(expectedDataDir, "backups"), AppPaths.backupDir)
                 assertEquals(expectedDataDir, AppPaths.logDir)
                 assertEquals(File(expectedDataDir, "logs"), AppPaths.crashReportDir)
+                assertEquals(File(expectedDataDir, "secondary-backup-location"), AppPaths.secondaryBackupLocationFile)
+                assertEquals(File(expectedDataDir, "restore-staging"), AppPaths.restoreStagingDir)
+                assertEquals(File(expectedDataDir, "backups/restore-archives"), AppPaths.restoreArchiveDir)
+                assertEquals(File(expectedDataDir, "pending-restore.properties"), AppPaths.pendingRestoreFile)
+                assertEquals(File(expectedDataDir, "restore-notice.properties"), AppPaths.restoreNoticeFile)
+                assertEquals(File(expectedDataDir, "recovery-notice-seen"), AppPaths.recoveryNoticeSeenFile)
                 assertEquals(File(expectedDataDir, "telemetry-consent"), AppPaths.consentFile)
                 assertEquals(File(expectedDataDir, "native"), AppPaths.nativeDir)
             }

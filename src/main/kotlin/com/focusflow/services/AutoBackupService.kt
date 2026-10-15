@@ -22,8 +22,8 @@ import java.time.format.DateTimeFormatter
  * A metadata sidecar records timestamp, size, and hash.
  *
  * Direct restore is intentionally unavailable: [restoreBackup] is retained
- * only as a legacy API guarded by a compile-time deprecation error. A supported
- * recovery workflow requires separate owner approval.
+ * only as a legacy API guarded by a compile-time deprecation error. Approved
+ * restores use BackupRecoveryService's staged, restart-only workflow.
  */
 object AutoBackupService {
 
@@ -51,7 +51,12 @@ object AutoBackupService {
     // ── Public API ────────────────────────────────────────────────────────────
 
     sealed class BackupResult {
-        data class Success(val file: File, val hash: String, val sizeBytes: Long) : BackupResult()
+        data class Success(
+            val file: File,
+            val hash: String,
+            val sizeBytes: Long,
+            val secondaryCopy: SecondaryCopyStatus = SecondaryCopyStatus.NotConfigured
+        ) : BackupResult()
         object NoDatabase          : BackupResult()
         object VerificationFailed  : BackupResult()
         data class Error(val reason: String) : BackupResult()
@@ -93,14 +98,24 @@ object AutoBackupService {
      * Perform a full backup right now regardless of schedule.
      * Returns a [BackupResult] that callers can inspect or surface in the UI.
      */
+    fun runBackupNow(): BackupResult = runBackupNowPreserving(null)
+
     @Synchronized
-    fun runBackupNow(): BackupResult {
+    internal fun runBackupNowPreserving(
+        preserveBackup: File?,
+        safetyBackup: Boolean = false
+    ): BackupResult {
         val src = File(dbPath)
         if (!src.exists()) return completeBackup(BackupResult.NoDatabase)
 
         val dir = backupDir
-        val timestamp = uniqueTimestamp(LocalDateTime.now().format(TIMESTAMP_FORMAT), dir)
-        val destDb = File(dir, "focusflow_$timestamp.db")
+        val safetyPrefix = if (safetyBackup) "safety_" else ""
+        val timestamp = uniqueTimestamp(
+            LocalDateTime.now().format(TIMESTAMP_FORMAT),
+            dir,
+            "focusflow_$safetyPrefix"
+        )
+        val destDb = File(dir, "focusflow_${safetyPrefix}$timestamp.db")
         val destHash = sidecarFile(destDb, "sha256")
         val destMeta = sidecarFile(destDb, "meta.json")
 
@@ -145,8 +160,12 @@ object AutoBackupService {
             // Write human-readable metadata
             destMeta.writeText(buildMetaJson(timestamp, destDb.length(), hash))
 
-            pruneOldBackups()
-            completeBackup(BackupResult.Success(destDb, hash, destDb.length()))
+            val secondaryCopy = BackupRecoveryService.mirrorVerifiedBackup(destDb)
+            if (secondaryCopy is SecondaryCopyStatus.Failed) {
+                warn("Primary backup verified, but its secondary copy failed: ${secondaryCopy.reason}")
+            }
+            pruneOldBackups(preserveBackup)
+            completeBackup(BackupResult.Success(destDb, hash, destDb.length(), secondaryCopy))
         } catch (cancelled: CancellationException) {
             deleteBackupArtifacts(destDb)
             throw cancelled
@@ -171,7 +190,14 @@ object AutoBackupService {
             // Keep any unverified/corrupt file for inspection; make a fresh
             // verified snapshot rather than silently deleting an existing backup.
             when (val verification = verifyBackup(todayBackup)) {
-                is BackupVerification.Verified -> persistBackupStatus("success")
+                is BackupVerification.Verified -> {
+                    persistBackupStatus("success")
+                    when (val secondary = BackupRecoveryService.mirrorVerifiedBackup(todayBackup)) {
+                        is SecondaryCopyStatus.Failed ->
+                            warn("Primary backup verified, but its secondary copy failed: ${secondary.reason}")
+                        else -> Unit
+                    }
+                }
                 BackupVerification.Unverified -> {
                     warn("Today's backup has no hash sidecar; creating a verified backup.")
                     runBackupNow()
@@ -279,7 +305,7 @@ object AutoBackupService {
     // ── Listing ───────────────────────────────────────────────────────────────
 
     fun listBackups(): List<File> =
-        (backupDir.listFiles { f -> f.name.endsWith(".db") && !f.name.contains("safety") }
+        (backupDir.listFiles { f -> f.name.endsWith(".db") }
             ?.sortedByDescending { it.lastModified() } ?: emptyList())
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -324,11 +350,11 @@ object AutoBackupService {
         }
     }
 
-    private fun uniqueTimestamp(base: String, dir: File): String {
+    private fun uniqueTimestamp(base: String, dir: File, filePrefix: String): String {
         var candidate = base
         var suffix = 1
         while (listOf("db", "sha256", "meta.json").any { extension ->
-                File(dir, "focusflow_$candidate.$extension").exists()
+                File(dir, "$filePrefix$candidate.$extension").exists()
             }) {
             candidate = "${base}_${suffix.toString().padStart(2, '0')}"
             suffix++
@@ -339,7 +365,7 @@ object AutoBackupService {
     private fun sidecarFile(file: File, extension: String): File =
         File(file.parentFile, "${file.nameWithoutExtension}.$extension")
 
-    private fun sqliteQuickCheckFailure(file: File): String? {
+    internal fun sqliteQuickCheckFailureForRecovery(file: File): String? {
         return try {
             val config = SQLiteConfig().apply {
                 setBusyTimeout(1_000)
@@ -373,6 +399,9 @@ object AutoBackupService {
             "SQLite quick_check failed: ${failure.message ?: failure.javaClass.simpleName}"
         }
     }
+
+    private fun sqliteQuickCheckFailure(file: File): String? =
+        sqliteQuickCheckFailureForRecovery(file)
 
     private fun deleteBackupArtifacts(file: File) {
         listOf(file, sidecarFile(file, "sha256"), sidecarFile(file, "meta.json"))
@@ -412,12 +441,23 @@ object AutoBackupService {
     private fun buildMetaJson(timestamp: String, sizeBytes: Long, hash: String): String =
         """{"timestamp":"$timestamp","sizeBytes":$sizeBytes,"sha256":"$hash","dbPath":"$dbPath"}"""
 
-    private fun pruneOldBackups() {
+    private fun pruneOldBackups(preserveBackup: File? = null) {
         val files = backupDir.listFiles { f ->
             f.name.endsWith(".db") && !f.name.contains("safety")
         }?.sortedByDescending { it.lastModified() } ?: return
 
-        files.drop(MAX_BACKUPS).forEach { db ->
+        val keep = files.take(MAX_BACKUPS).toMutableSet()
+        val protected = preserveBackup?.let { requested ->
+            files.firstOrNull { file ->
+                runCatching { file.canonicalFile == requested.canonicalFile }.getOrDefault(false)
+            }
+        }
+        if (protected != null && protected !in keep) {
+            keep.remove(files.lastOrNull { it in keep && it != protected })
+            keep += protected
+        }
+
+        files.filterNot { it in keep }.forEach { db ->
             db.delete()
             File(db.parent, db.nameWithoutExtension + ".sha256").delete()
             File(db.parent, db.nameWithoutExtension + ".meta.json").delete()

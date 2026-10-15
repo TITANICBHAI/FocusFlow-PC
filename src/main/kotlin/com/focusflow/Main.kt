@@ -17,6 +17,7 @@ import com.focusflow.enforcement.RegistryLockdown
 import com.focusflow.services.CrashReporter
 import com.focusflow.services.FocusSessionService
 import com.focusflow.services.AppLifecycle
+import com.focusflow.services.BackupRecoveryService
 import com.focusflow.services.InstanceAcquireResult
 import com.focusflow.services.RelaunchHandoff
 import com.focusflow.services.SingleInstanceGuard
@@ -385,7 +386,9 @@ private fun FocusFlowDesktop(
             startupAttemptInProgress = true
             val (result, initThrew) = try {
                 withContext(Dispatchers.IO) {
-                    initDatabaseSafely(databaseFile) { Database.init() }
+                    initDatabaseSafely(databaseFile) {
+                        BackupRecoveryService.initializeDatabaseForStartup()
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 startupAttemptInProgress = false

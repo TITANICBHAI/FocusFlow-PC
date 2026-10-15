@@ -22,6 +22,24 @@ object AppPaths {
     val backupDir: File
         get() = File(dataDir, "backups")
 
+    val secondaryBackupLocationFile: File
+        get() = File(dataDir, "secondary-backup-location")
+
+    val restoreStagingDir: File
+        get() = File(dataDir, "restore-staging")
+
+    val restoreArchiveDir: File
+        get() = File(backupDir, "restore-archives")
+
+    val pendingRestoreFile: File
+        get() = File(dataDir, "pending-restore.properties")
+
+    val restoreNoticeFile: File
+        get() = File(dataDir, "restore-notice.properties")
+
+    val recoveryNoticeSeenFile: File
+        get() = File(dataDir, "recovery-notice-seen")
+
     val logDir: File
         get() = dataDir
 
