@@ -278,6 +278,9 @@ object ProcessMonitor {
         // NOTE: cacheLastRefreshMs is stamped AFTER all reads succeed so that a DB
         // exception does not lock out the cache for a full TTL window with stale data.
 
+        // Refresh VPN settings only from this Dispatchers.IO cache path. The
+        // WinEventHook callback uses VpnBlocker's volatile cache-only accessors.
+        VpnBlocker.refreshSettingsFromDatabase()
         cachedEnabledProcesses  = Database.getEnabledBlockProcesses()
         cachedKeywordEnabled    = Database.isKeywordBlockerEnabled()
         cachedKeywords          = Database.getBlockedKeywords()
@@ -367,7 +370,7 @@ object ProcessMonitor {
             dailyAllowanceBlockedProcesses.isNotEmpty() ||
             launcherAllowedProcesses.isNotEmpty() ||
             cachedKeywordEnabled ||
-            VpnBlocker.isEnabled ||
+            VpnBlocker.isEnabledForEnforcement ||
             networkCutoffKeywordEnabled
     }
 
@@ -762,7 +765,7 @@ object ProcessMonitor {
         if (sessionActive) addAll(sessionExtraBlockedProcesses)
         // VPN clients also need background enforcement. Checking only the
         // foreground process lets VPN services/daemons keep running silently.
-        if (VpnBlocker.isEnabled) addAll(VpnBlocker.getAllBlockedProcesses())
+        if (VpnBlocker.isEnabledForEnforcement) addAll(VpnBlocker.getAllBlockedProcesses())
     }
 
     private data class ProcessTarget(val name: String, val pid: Long)

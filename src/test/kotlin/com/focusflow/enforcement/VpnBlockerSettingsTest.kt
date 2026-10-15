@@ -53,13 +53,54 @@ class VpnBlockerSettingsTest {
         assertEquals(listOf("saved-vpn.exe"), VpnBlocker.getCustomProcesses())
     }
 
+    @Test
+    fun backgroundRefreshRecoversAfterUnreadableReadsAndKeepsLastKnownGoodValues() {
+        VpnBlocker.refreshSettingsFromDatabase()
+        assertTrue(VpnBlocker.isEnabledForEnforcement)
+        assertFalse(VpnBlocker.isVpnProcess("saved-vpn.exe"))
+
+        store.reads["vpn_block_enabled"] = Database.SettingRead.Present("true")
+        store.reads["vpn_custom_processes"] =
+            Database.SettingRead.Present("saved-vpn.exe")
+        VpnBlocker.refreshSettingsFromDatabase()
+        assertTrue(VpnBlocker.isVpnProcess("saved-vpn.exe"))
+
+        store.reads.clear()
+        VpnBlocker.refreshSettingsFromDatabase()
+        assertTrue(VpnBlocker.isVpnProcess("saved-vpn.exe"))
+    }
+
+    @Test
+    fun failedEnableWriteIsReportedWithoutReplacingTheCachedValue() {
+        store.reads["vpn_block_enabled"] = Database.SettingRead.Present("true")
+        VpnBlocker.refreshSettingsFromDatabase()
+        assertTrue(VpnBlocker.isEnabled)
+
+        assertFailsWith<SettingWriteException> {
+            VpnBlocker.isEnabled = false
+        }
+
+        assertTrue(VpnBlocker.isEnabled)
+    }
+
+    @Test
+    fun enforcementHotPathDoesNotReadDatabaseWhenCacheIsUninitialized() {
+        assertTrue(VpnBlocker.isVpnProcess("openvpn.exe"))
+        assertFalse(VpnBlocker.isVpnProcess("custom-vpn.exe"))
+
+        assertEquals(0, store.readCalls)
+    }
+
     private class MutableSettingsStore : SettingsStore {
         private val failure = IllegalStateException("injected settings store unavailable")
         val reads = mutableMapOf<String, Database.SettingRead>()
         var writeCalls = 0
+        var readCalls = 0
 
-        override fun readSetting(key: String): Database.SettingRead =
-            reads[key] ?: Database.SettingRead.Unreadable(failure)
+        override fun readSetting(key: String): Database.SettingRead {
+            readCalls++
+            return reads[key] ?: Database.SettingRead.Unreadable(failure)
+        }
 
         override fun writeSetting(key: String, value: String): Database.SettingWrite {
             writeCalls++

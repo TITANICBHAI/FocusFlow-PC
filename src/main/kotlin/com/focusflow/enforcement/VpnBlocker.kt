@@ -97,13 +97,21 @@ object VpnBlocker {
 
     // ── Hot-path caches — never hit the DB on the WinEventHook foreground callback ──
 
-    /** Null = not loaded yet; set lazily on first read, cleared on write. */
+    /** Null = not loaded yet; populated by the background refresh or management UI. */
     @Volatile private var _cachedEnabled: Boolean? = null
 
-    /** Null = not loaded yet; updated atomically on add/remove. */
+    /** Null = not loaded yet; populated by the background refresh or management UI. */
     @Volatile private var _cachedCustomProcesses: List<String>? = null
 
+    /**
+     * Enforcement callers use this cache-only view. Unknown enable state fails
+     * closed, so the foreground hook never has to read SQLite.
+     */
+    internal val isEnabledForEnforcement: Boolean
+        get() = _cachedEnabled ?: true
+
     var isEnabled: Boolean
+        @Synchronized
         get() = _cachedEnabled ?: when (val stored = Database.readSetting(ENABLED_KEY)) {
             is Database.SettingRead.Present ->
                 (stored.value == "true").also { _cachedEnabled = it }
@@ -117,12 +125,43 @@ object VpnBlocker {
                 true
             }
         }
+        @Synchronized
         set(value) {
             Database.writeSetting(ENABLED_KEY, if (value) "true" else "false")
                 .requireSuccess("update VPN blocker state")
             _cachedEnabled = value
         }
 
+    /**
+     * Refresh persisted VPN settings from a background thread. Failed reads do
+     * not replace a last-known-good cache; an unknown enable value remains
+     * fail-closed through [isEnabledForEnforcement].
+     */
+    @Synchronized
+    internal fun refreshSettingsFromDatabase() {
+        when (val stored = Database.readSetting(ENABLED_KEY)) {
+            is Database.SettingRead.Present -> _cachedEnabled = stored.value == "true"
+            Database.SettingRead.Absent -> _cachedEnabled = false
+            is Database.SettingRead.Unreadable -> logger.log(
+                Level.WARNING,
+                "VPN enable state refresh failed; retaining the last known value",
+                stored.cause
+            )
+        }
+
+        when (val stored = Database.readSetting(CUSTOM_PROCESSES_KEY)) {
+            is Database.SettingRead.Present ->
+                _cachedCustomProcesses = parseCustomProcesses(stored.value)
+            Database.SettingRead.Absent -> _cachedCustomProcesses = emptyList()
+            is Database.SettingRead.Unreadable -> logger.log(
+                Level.WARNING,
+                "VPN custom process refresh failed; retaining the last known list",
+                stored.cause
+            )
+        }
+    }
+
+    @Synchronized
     fun getCustomProcesses(): List<String> {
         _cachedCustomProcesses?.let { return it }
         return when (val stored = Database.readSetting(CUSTOM_PROCESSES_KEY)) {
@@ -140,6 +179,7 @@ object VpnBlocker {
         }
     }
 
+    @Synchronized
     fun addCustomProcess(processName: String) {
         val lower = processName.trim().lowercase().let {
             if (!it.endsWith(".exe")) "$it.exe" else it
@@ -153,6 +193,7 @@ object VpnBlocker {
         }
     }
 
+    @Synchronized
     fun removeCustomProcess(processName: String) {
         val lower = processName.trim().lowercase()
         val updated = customProcessesForMutation().filter { it != lower }
@@ -162,12 +203,13 @@ object VpnBlocker {
     }
 
     fun getAllBlockedProcesses(): Set<String> =
-        KNOWN_VPN_PROCESSES + getCustomProcesses().toSet()
+        KNOWN_VPN_PROCESSES + _cachedCustomProcesses.orEmpty().toSet()
 
     fun isVpnProcess(processName: String): Boolean {
-        if (!isEnabled) return false
+        if (!isEnabledForEnforcement) return false
         val lower = processName.lowercase()
-        return KNOWN_VPN_PROCESSES.contains(lower) || getCustomProcesses().contains(lower)
+        return KNOWN_VPN_PROCESSES.contains(lower) ||
+            _cachedCustomProcesses.orEmpty().contains(lower)
     }
 
     private fun customProcessesForMutation(): List<String> {
@@ -191,6 +233,7 @@ object VpnBlocker {
         if (raw.isBlank()) emptyList()
         else raw.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }
 
+    @Synchronized
     internal fun resetForTest() {
         _cachedEnabled = null
         _cachedCustomProcesses = null
