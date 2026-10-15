@@ -48,13 +48,58 @@ class DatabaseSchemaGuardTest {
     }
 
     @Test
-    fun f14bHealthyVersionTenDatabasePassesSchemaGuard() {
-        val dbFile = tempDir.resolve("healthy-v10.db").toFile()
+    fun f14bHealthyVersionNineDatabaseUpgradesAndPassesSchemaGuard() {
+        val dbFile = tempDir.resolve("healthy-v9.db").toFile()
         assertIs<DbInitResult.Ready>(init(dbFile))
         Database.close()
-        assertEquals(10, userVersion(dbFile))
 
+        DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE tasks DROP COLUMN recurring_parent_id")
+                statement.execute("PRAGMA user_version=9")
+            }
+        }
+        assertEquals(9, userVersion(dbFile))
         assertIs<DbInitResult.Ready>(init(dbFile))
+        assertEquals(10, userVersion(dbFile))
+    }
+
+    @Test
+    fun f14bSchemaGuardCoversEveryLegacySwallowedAddColumnTarget() {
+        val legacyTargets = listOf(
+            "tasks" to "skipped",
+            "tasks" to "focus_mode",
+            "tasks" to "focus_intensity",
+            "daily_completions" to "total_count",
+            "daily_completions" to "focus_minutes",
+            "block_rules" to "source",
+            "tasks" to "focus_blocked_apps",
+            "tasks" to "focus_require_pin"
+        )
+
+        legacyTargets.forEachIndexed { index, (table, column) ->
+            Database.resetForTest()
+            val dbFile = tempDir.resolve("missing-legacy-column-$index.db").toFile()
+            try {
+                assertIs<DbInitResult.Ready>(init(dbFile))
+                Database.close()
+
+                DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}").use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.execute(
+                            "ALTER TABLE \"$table\" RENAME COLUMN \"$column\" TO \"${column}_legacy\""
+                        )
+                        statement.execute("PRAGMA user_version=9")
+                    }
+                }
+
+                val failed = assertIs<DbInitResult.Failed>(init(dbFile))
+                val mismatch = assertIs<SchemaMismatchException>(failed.cause)
+                assertEquals("$table.$column", mismatch.missingColumn)
+            } finally {
+                Database.resetForTest()
+            }
+        }
     }
 
     @Test

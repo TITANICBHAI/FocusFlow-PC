@@ -38,3 +38,8 @@ The current test task does not set `focusflow.app.version` or `focusflow.telemet
 - The current `Database.kt` has 43 `createStatement()` calls: 17 are immediately scoped with `.use`, and 26 are not. Of the unscoped calls, 19 execute queries and 7 execute updates.
 - This differs from the plan's 18 query / 7 update estimate. The extra query is the second `PRAGMA user_version` read inside the migration transaction (`lockedVersion`); it is included in F7's closure and scanner acceptance checks.
 
+## F14b legacy migration audit — 2026-10-15
+
+- **Plan/test mismatch:** `fixes/plan.md` specifies a healthy v9 database, but the existing `f14bHealthyVersionTenDatabasePassesSchemaGuard` test only reopens a v10 database. F6 has raised the current schema target to v10, so F14b will add a genuine v9-shaped fixture and verify its upgrade to v10.
+- **Legacy `ALTER TABLE` audit:** `migrateV1` through `migrateV3` contain eight swallowed column-add failures: `tasks.skipped`, `tasks.focus_mode`, `tasks.focus_intensity`, `daily_completions.total_count`, `daily_completions.focus_minutes`, `block_rules.source`, `tasks.focus_blocked_apps`, and `tasks.focus_require_pin`. All eight columns are in `REQUIRED_SCHEMA_COLUMNS`, and `verifySchema()` runs after `migrate()`. A swallowed failure that leaves one of these required columns absent therefore fails initialization with `SchemaMismatchException`. No v1–v9 migration body will be changed; the specific non-duplicate SQLite failure remains un-reproduced, consistent with the source plan marking that risk as inferred.
+
