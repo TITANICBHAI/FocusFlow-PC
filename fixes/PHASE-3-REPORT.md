@@ -127,7 +127,10 @@ The build reported one non-failing warning in `CsvExport.kt` about the temporary
 ### Verification
 
 - Focused command: `gradle :test --no-daemon --console=plain --tests com.focusflow.services.CrashReportLocationTest --tests com.focusflow.AppPathsTest`.
-- Result: recorded after the final test run below.
+- Focused result: **3 tests passed, 0 failures, 0 errors, 0 skipped** across the two targeted test classes.
+- Full root command: `gradle :test --no-daemon --console=plain`, with `JAVA_HOME` set to the configured GraalVM JDK 19 and `JAVA_TOOL_OPTIONS="-Duser.home=<fresh temporary directory> -Dfocusflow.telemetry=off"`.
+- Full root result: **BUILD SUCCESSFUL; 229 tests across 59 JUnit XML files, 0 failures, 0 errors, 0 skipped.**
+- `git diff --check` passed.
 - W13 remains unverified and human-only.
 
 ### Files read and changed

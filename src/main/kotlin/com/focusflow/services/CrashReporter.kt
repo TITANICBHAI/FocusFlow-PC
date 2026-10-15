@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │  REPORT DESTINATIONS (tried in order, first success wins)               │
- * │  1. ~/.focusflow/logs/FocusFlow-crash-<timestamp>.log                   │
+ * │  1. AppPaths.crashReportDir/FocusFlow-crash-<timestamp>.log             │
  * │  2. %TEMP% / java.io.tmpdir / FocusFlow-crash-<timestamp>.log           │
  * │  3. stderr (last resort — always attempted regardless)                  │
  * └─────────────────────────────────────────────────────────────────────────┘
