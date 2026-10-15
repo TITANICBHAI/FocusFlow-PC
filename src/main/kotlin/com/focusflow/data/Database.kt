@@ -124,6 +124,25 @@ object Database {
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
     internal const val UNFINISHED_FOCUS_SESSION_MAX_AGE_HOURS = 12L
 
+    internal const val UPDATE_DAILY_FOCUS_MINUTES_SQL =
+        "SELECT COALESCE(SUM(actual_minutes), 0) FROM focus_sessions WHERE start_time >= ? AND start_time < ? AND completed = 1 AND actual_minutes > 0"
+    internal const val SESSIONS_IN_DATE_RANGE_SQL =
+        "SELECT * FROM focus_sessions WHERE start_time >= ? AND start_time < ? ORDER BY start_time DESC"
+    internal const val TOTAL_FOCUS_MINUTES_TODAY_SQL =
+        "SELECT COALESCE(SUM(actual_minutes), 0) FROM focus_sessions WHERE start_time >= ? AND start_time < ? AND actual_minutes > 0"
+    internal const val FOCUS_MINUTES_BY_DAY_SQL =
+        "SELECT substr(start_time, 1, 10) AS day, COALESCE(SUM(actual_minutes), 0) AS mins, COUNT(*) AS cnt FROM focus_sessions WHERE start_time >= ? AND start_time < ? AND completed = 1 GROUP BY substr(start_time, 1, 10)"
+    internal const val RECENT_DAY_COMPLETIONS_SQL =
+        "SELECT date, completed_count, total_count, focus_minutes FROM daily_completions WHERE date >= ? AND date < ? ORDER BY date ASC"
+    internal const val SESSIONS_IN_RANGE_SQL =
+        "SELECT * FROM focus_sessions WHERE start_time >= ? AND start_time < ? ORDER BY start_time ASC"
+    internal const val COMPLETED_TASKS_IN_RANGE_SQL =
+        "SELECT COUNT(*) FROM tasks WHERE completed = 1 AND completed_at >= ? AND completed_at < ?"
+    internal const val TEMPTATIONS_IN_RANGE_SQL =
+        "SELECT COUNT(*) FROM temptation_log WHERE timestamp >= ? AND timestamp < ?"
+    internal const val TEMPTATION_BREAKDOWN_IN_RANGE_SQL =
+        "SELECT display_name, COUNT(*) AS cnt FROM temptation_log WHERE timestamp >= ? AND timestamp < ? GROUP BY display_name ORDER BY cnt DESC LIMIT ?"
+
     @Volatile private var conn: Connection? = null
     @Volatile private var wizardReadOnlyConnection = false
     @Volatile private var wizardReadOnlyDatabasePath: String? = null
@@ -375,6 +394,9 @@ object Database {
 
     private fun defaultDbFile(): File =
         File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db")
+
+    private fun exclusiveEndDate(date: String): String =
+        LocalDate.parse(date, dateFmt).plusDays(1).format(dateFmt)
 
     private sealed interface OpenResult {
         data object Ready : OpenResult
@@ -1240,16 +1262,15 @@ object Database {
 
     @Synchronized fun updateDailyFocusMinutes(date: LocalDate) {
         val key = date.format(dateFmt)
+        val endExclusive = date.plusDays(1).format(dateFmt)
         // Recalculate the daily total from all completed sessions rather than
         // incrementing. Incrementing causes double-counting when insertSession is
         // called more than once for the same session (e.g. on re-save / retry).
         // The `minutes` parameter was removed: it was declared and passed by the
         // caller but silently discarded here, creating a misleading API contract.
-        val total = connection.prepareStatement(
-            "SELECT COALESCE(SUM(actual_minutes), 0) FROM focus_sessions" +
-            " WHERE DATE(start_time) = ? AND completed = 1 AND actual_minutes > 0"
-        ).use { ps ->
+        val total = connection.prepareStatement(UPDATE_DAILY_FOCUS_MINUTES_SQL).use { ps ->
             ps.setString(1, key)
+            ps.setString(2, endExclusive)
             ps.executeQuery().use { rs -> if (rs.next()) rs.getInt(1) else 0 }
         }
         connection.prepareStatement("""
@@ -1440,10 +1461,9 @@ object Database {
     }
 
     @Synchronized fun getSessionsInDateRange(start: LocalDate, end: LocalDate): List<FocusSession> {
-        return connection.prepareStatement(
-            "SELECT * FROM focus_sessions WHERE DATE(start_time) BETWEEN ? AND ? ORDER BY start_time DESC"
-        ).use { ps ->
-            ps.setString(1, start.format(dateFmt)); ps.setString(2, end.format(dateFmt))
+        return connection.prepareStatement(SESSIONS_IN_DATE_RANGE_SQL).use { ps ->
+            ps.setString(1, start.format(dateFmt))
+            ps.setString(2, end.plusDays(1).format(dateFmt))
             ps.executeQuery().use { rs ->
                 val list = mutableListOf<FocusSession>()
                 while (rs.next()) list.add(rowToSession(rs))
@@ -1453,12 +1473,13 @@ object Database {
     }
 
     @Synchronized fun getTotalFocusMinutesToday(): Int {
-        val today = LocalDate.now().format(dateFmt)
-        return connection.prepareStatement(
-            "SELECT COALESCE(SUM(actual_minutes), 0) FROM focus_sessions WHERE DATE(start_time) = ? AND actual_minutes > 0"
-        ).use { ps ->
-            ps.setString(1, today)
-            ps.executeQuery().use { it.getInt(1) }
+        val today = LocalDate.now()
+        return connection.prepareStatement(TOTAL_FOCUS_MINUTES_TODAY_SQL).use { ps ->
+            ps.setString(1, today.format(dateFmt))
+            ps.setString(2, today.plusDays(1).format(dateFmt))
+            ps.executeQuery().use { rs ->
+                if (rs.next()) rs.getInt(1) else 0
+            }
         }
     }
 
@@ -1480,37 +1501,50 @@ object Database {
 
     @Synchronized fun getFocusMinutesByDay(days: Int = 7): List<DayFocusStats> {
         val today = LocalDate.now()
-        return (days - 1 downTo 0).map { daysAgo ->
-            val date    = today.minusDays(daysAgo.toLong())
-            val dateStr = date.format(dateFmt)
-            val result  = connection.prepareStatement("""
-                SELECT COALESCE(SUM(actual_minutes), 0) AS mins, COUNT(*) AS cnt
-                FROM focus_sessions WHERE DATE(start_time) = ? AND completed = 1
-            """.trimIndent()).use { ps ->
-                ps.setString(1, dateStr)
-                ps.executeQuery().use { rs ->
-                    if (rs.next()) Pair(rs.getInt("mins"), rs.getInt("cnt")) else Pair(0, 0)
+        if (days <= 0) return emptyList()
+        val requestedDates = (days - 1 downTo 0).map { today.minusDays(it.toLong()) }
+        val startDate = requestedDates.first()
+        val totalsByDate = connection.prepareStatement(FOCUS_MINUTES_BY_DAY_SQL).use { ps ->
+            ps.setString(1, startDate.format(dateFmt))
+            ps.setString(2, today.plusDays(1).format(dateFmt))
+            ps.executeQuery().use { rs ->
+                buildMap {
+                    while (rs.next()) {
+                        put(rs.getString("day"), rs.getInt("mins") to rs.getInt("cnt"))
+                    }
                 }
             }
+        }
+        return requestedDates.map { date ->
+            val result = totalsByDate[date.format(dateFmt)] ?: (0 to 0)
             DayFocusStats(date = date, totalMinutes = result.first, sessionsCount = result.second)
         }
     }
 
     @Synchronized fun getRecentDayCompletions(days: Int = 84): List<DayCompletionStats> {
+        if (days <= 0) return emptyList()
         val today = LocalDate.now()
-        return (days - 1 downTo 0).map { d ->
-            val date    = today.minusDays(d.toLong())
-            val dateStr = date.format(dateFmt)
-            val row = connection.prepareStatement(
-                "SELECT completed_count, total_count, focus_minutes FROM daily_completions WHERE date = ?"
-            ).use { ps ->
-                ps.setString(1, dateStr)
-                ps.executeQuery().use { rs ->
-                    if (rs.next())
-                        Triple(rs.getInt("completed_count"), rs.getInt("total_count"), rs.getInt("focus_minutes"))
-                    else Triple(0, 0, 0)
+        val requestedDates = (days - 1 downTo 0).map { today.minusDays(it.toLong()) }
+        val valuesByDate = connection.prepareStatement(RECENT_DAY_COMPLETIONS_SQL).use { ps ->
+            ps.setString(1, requestedDates.first().format(dateFmt))
+            ps.setString(2, today.plusDays(1).format(dateFmt))
+            ps.executeQuery().use { rs ->
+                buildMap {
+                    while (rs.next()) {
+                        put(
+                            rs.getString("date"),
+                            Triple(
+                                rs.getInt("completed_count"),
+                                rs.getInt("total_count"),
+                                rs.getInt("focus_minutes")
+                            )
+                        )
+                    }
                 }
             }
+        }
+        return requestedDates.map { date ->
+            val row = valuesByDate[date.format(dateFmt)] ?: Triple(0, 0, 0)
             DayCompletionStats(date, row.first, row.second, row.third)
         }
     }
@@ -2023,10 +2057,8 @@ object Database {
     // ── Weekly Report ─────────────────────────────────────────────────────────
 
     @Synchronized fun getSessionsInRange(startDate: String, endDate: String): List<FocusSession> {
-        return connection.prepareStatement(
-            "SELECT * FROM focus_sessions WHERE DATE(start_time) BETWEEN ? AND ? ORDER BY start_time ASC"
-        ).use { ps ->
-            ps.setString(1, startDate); ps.setString(2, endDate)
+        return connection.prepareStatement(SESSIONS_IN_RANGE_SQL).use { ps ->
+            ps.setString(1, startDate); ps.setString(2, exclusiveEndDate(endDate))
             ps.executeQuery().use { rs ->
                 val list = mutableListOf<FocusSession>()
                 while (rs.next()) list.add(rowToSession(rs))
@@ -2036,19 +2068,15 @@ object Database {
     }
 
     @Synchronized fun getCompletedTasksInRange(startDate: String, endDate: String): Int {
-        return connection.prepareStatement(
-            "SELECT COUNT(*) FROM tasks WHERE completed = 1 AND DATE(completed_at) BETWEEN ? AND ?"
-        ).use { ps ->
-            ps.setString(1, startDate); ps.setString(2, endDate)
+        return connection.prepareStatement(COMPLETED_TASKS_IN_RANGE_SQL).use { ps ->
+            ps.setString(1, startDate); ps.setString(2, exclusiveEndDate(endDate))
             ps.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
         }
     }
 
     @Synchronized fun getTemptationsInRange(startDate: String, endDate: String): Int {
-        return connection.prepareStatement(
-            "SELECT COUNT(*) FROM temptation_log WHERE DATE(timestamp) BETWEEN ? AND ?"
-        ).use { ps ->
-            ps.setString(1, startDate); ps.setString(2, endDate)
+        return connection.prepareStatement(TEMPTATIONS_IN_RANGE_SQL).use { ps ->
+            ps.setString(1, startDate); ps.setString(2, exclusiveEndDate(endDate))
             ps.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
         }
     }
@@ -2058,16 +2086,9 @@ object Database {
         endDate: String,
         limit: Int = 5
     ): List<Pair<String, Int>> {
-        return connection.prepareStatement(
-            """SELECT display_name, COUNT(*) AS cnt
-               FROM temptation_log
-               WHERE DATE(timestamp) BETWEEN ? AND ?
-               GROUP BY display_name
-               ORDER BY cnt DESC
-               LIMIT ?"""
-        ).use { ps ->
+        return connection.prepareStatement(TEMPTATION_BREAKDOWN_IN_RANGE_SQL).use { ps ->
             ps.setString(1, startDate)
-            ps.setString(2, endDate)
+            ps.setString(2, exclusiveEndDate(endDate))
             ps.setInt(3, limit)
             ps.executeQuery().use { rs ->
                 val list = mutableListOf<Pair<String, Int>>()

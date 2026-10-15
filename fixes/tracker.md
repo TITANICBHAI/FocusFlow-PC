@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 non-owner-gated exit criteria are met as of 2026-10-15. F19's design note is complete; runtime recovery remains gated on D11. Live F6/F9 repairs, D7/D9/D19, and Windows checks remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated.
+- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15; Phase 3 F20 is in progress. F19's design note is complete; runtime recovery remains gated on D11. Live F6/F9 repairs, D7/D9/D19, and Windows checks remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated.
 
 ## Tracking rules
 
@@ -219,8 +219,9 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 3 — P3 hardening and cleanup
 
-**Status:** Not started. Begin only after Phase 2; the plan allows any order here except F28 is already pulled forward.
+**Status:** In progress — 2026-10-15 (F20). Phase 2 non-owner-gated exit criteria were met; the plan allows any Phase 3 order except F28 is already pulled forward.
 
+- **2026-10-15 F20 start:** Replacing date-wrapped indexed-column filters and per-day reads only. Preserve returned values, timestamp storage, and schema; use isolated temporary databases for verification.
 - [ ] **F20 — Index-friendly date queries:** Replace date-wrapped indexed columns and per-day N+1 queries while preserving results/storage; add boundary, query-plan, grouping, and empty-table tests F20-a…d.
 - [ ] **F21 — Idempotent task completion:** Update only incomplete existing tasks and increment daily completion once; add tests F21-a…c.
 - [ ] **F22 — Atomic activity clear:** Clear only the four explicitly listed activity areas in one transaction and take a verified backup first; abort on backup failure. Do not broaden deletion or add a Global PIN gate before owner decisions D13. Tests F22-a…c.
