@@ -1,5 +1,6 @@
 package com.focusflow.data
 
+import com.focusflow.AppPaths
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -161,12 +162,10 @@ internal object NativeSqlite {
                 platformDirectory
             )
         )
+        val profileNativeDir = AppPaths.nativeDir
         val profileCandidate = NativeSqliteCandidate(
-            label = "user.home/.focusflow",
-            directory = File(
-                File(File(System.getProperty("user.home").orEmpty(), ".focusflow"), "native"),
-                "sqlite-$SQLITE_JDBC_VERSION/$platformDirectory"
-            )
+            label = "user.home/${profileNativeDir.parentFile.name}",
+            directory = File(profileNativeDir, "sqlite-$SQLITE_JDBC_VERSION/$platformDirectory")
         )
 
         return listOf(localCandidate, profileCandidate)

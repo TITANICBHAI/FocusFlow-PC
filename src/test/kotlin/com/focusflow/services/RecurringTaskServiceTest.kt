@@ -1,15 +1,18 @@
 package com.focusflow.services
 
+import com.focusflow.AppPaths
 import com.focusflow.data.Database
 import com.focusflow.data.DbInitResult
 import com.focusflow.data.NativeSqlite
 import com.focusflow.data.NativeSqliteTestHooks
 import com.focusflow.data.models.Task
+import com.focusflow.testutil.TempHome
 import java.nio.file.Path
 import java.sql.DriverManager
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -26,6 +29,7 @@ class RecurringTaskServiceTest {
     @BeforeEach
     fun setUp() {
         Database.resetForTest()
+        AutoBackupService.resetForTest()
         NativeSqlite.testHooksForTest = NativeSqliteTestHooks(
             candidates = emptyList(),
             defaultInitialize = { org.sqlite.SQLiteJDBCLoader.initialize() },
@@ -36,6 +40,7 @@ class RecurringTaskServiceTest {
     @AfterEach
     fun tearDown() {
         Database.resetForTest()
+        AutoBackupService.resetForTest()
     }
 
     @Test
@@ -92,68 +97,107 @@ class RecurringTaskServiceTest {
 
     @Test
     fun f6cRepairDryRunIsReadOnlyAndMarkingIsNonDestructiveAndIdempotent() {
-        val dbFile = tempDir.resolve("recurring-repair.db").toFile()
-        init(dbFile)
-        val oldDate = LocalDate.of(2020, 1, 2)
-        val tasks = listOf(
-            recurringTask(
-                "template",
-                "  Reading ",
-                "daily",
-                scheduledDate = null,
-                scheduledTime = "08:00",
-                createdAt = LocalDateTime.of(2020, 1, 1, 8, 0)
-            ),
-            recurringTask(
-                "copy-1",
-                "reading",
-                "DAILY",
-                scheduledDate = oldDate,
-                scheduledTime = "08:00",
-                createdAt = LocalDateTime.of(2020, 1, 2, 8, 0)
-            ),
-            recurringTask(
-                "copy-2",
-                "READING ",
-                "Daily",
-                scheduledDate = oldDate.plusDays(1),
-                scheduledTime = "08:00",
-                createdAt = LocalDateTime.of(2020, 1, 3, 8, 0)
-            ),
-            recurringTask(
-                "separate-template",
-                "Reading",
-                "weekly",
-                scheduledDate = LocalDate.of(2019, 12, 31),
-                scheduledTime = "08:00",
-                createdAt = LocalDateTime.of(2019, 12, 31, 8, 0)
+        TempHome.withHome {
+            AppPaths.dataDir.mkdirs()
+            init(AppPaths.dbFile)
+            val oldDate = LocalDate.of(2020, 1, 2)
+            val tasks = listOf(
+                recurringTask(
+                    "template",
+                    "  Reading ",
+                    "daily",
+                    scheduledDate = null,
+                    scheduledTime = "08:00",
+                    createdAt = LocalDateTime.of(2020, 1, 1, 8, 0)
+                ),
+                recurringTask(
+                    "copy-1",
+                    "reading",
+                    "DAILY",
+                    scheduledDate = oldDate,
+                    scheduledTime = "08:00",
+                    createdAt = LocalDateTime.of(2020, 1, 2, 8, 0)
+                ),
+                recurringTask(
+                    "copy-2",
+                    "READING ",
+                    "Daily",
+                    scheduledDate = oldDate.plusDays(1),
+                    scheduledTime = "08:00",
+                    createdAt = LocalDateTime.of(2020, 1, 3, 8, 0)
+                ),
+                recurringTask(
+                    "separate-template",
+                    "Reading",
+                    "weekly",
+                    scheduledDate = LocalDate.of(2019, 12, 31),
+                    scheduledTime = "08:00",
+                    createdAt = LocalDateTime.of(2019, 12, 31, 8, 0)
+                )
             )
-        )
-        tasks.forEach(Database::upsertTask)
+            tasks.forEach(Database::upsertTask)
 
-        val dryRun = Database.repairRecurringTaskParents()
-        assertEquals(true, dryRun.dryRun)
-        assertEquals(1, dryRun.duplicateGroups)
-        assertEquals(2, dryRun.rowsToMark)
-        assertEquals(0, dryRun.rowsMarked)
-        assertEquals(4, Database.getTasks().size)
-        assertTrue(Database.getTasks().all { it.recurringParentId == null })
+            val dryRun = assertIs<DatabaseRepairService.Outcome.DryRun<*>>(
+                DatabaseRepairService.repairRecurringTaskParents()
+            ).value as Database.RecurringTaskRepairResult
+            assertTrue(dryRun.dryRun)
+            assertEquals(1, dryRun.duplicateGroups)
+            assertEquals(2, dryRun.rowsToMark)
+            assertEquals(0, dryRun.rowsMarked)
+            assertEquals(4, Database.getTasks().size)
+            assertTrue(Database.getTasks().all { it.recurringParentId == null })
+            assertTrue(AutoBackupService.listBackups().isEmpty(), "A dry-run must not create a backup")
 
-        val appliedToScratchDatabase = Database.repairRecurringTaskParents(dryRun = false)
-        assertEquals(2, appliedToScratchDatabase.rowsMarked)
-        val afterRepair = Database.getTasks().associateBy { it.id }
-        assertEquals("template", afterRepair.getValue("copy-1").recurringParentId)
-        assertEquals("template", afterRepair.getValue("copy-2").recurringParentId)
-        assertNull(afterRepair.getValue("template").recurringParentId)
-        assertEquals(4, afterRepair.size, "Repair must mark rows, never delete them")
-        assertEquals(2, Database.getRecurringTemplates().size)
-        assertEquals(0, Database.repairRecurringTaskParents(dryRun = false).rowsMarked)
+            AutoBackupService.snapshotWriterForTest = {
+                throw IOException("injected backup failure")
+            }
+            val blocked = assertIs<DatabaseRepairService.Outcome.BackupFailed>(
+                DatabaseRepairService.repairRecurringTaskParents(dryRun = false)
+            )
+            assertIs<AutoBackupService.BackupResult.Error>(blocked.result)
+            assertTrue(Database.getTasks().all { it.recurringParentId == null })
 
-        val today = LocalDate.of(2026, 4, 8)
-        RecurringTaskService.generateForToday(today)
-        val countAfterGeneration = Database.getTasks().size
-        RecurringTaskService.generateForToday(today)
-        assertEquals(countAfterGeneration, Database.getTasks().size)
+            AutoBackupService.snapshotWriterForTest = null
+            val applied = assertIs<DatabaseRepairService.Outcome.Applied<*>>(
+                DatabaseRepairService.repairRecurringTaskParents(dryRun = false)
+            )
+            val appliedResult = applied.value as Database.RecurringTaskRepairResult
+            assertEquals(2, appliedResult.rowsMarked)
+            assertIs<AutoBackupService.BackupVerification.Verified>(
+                AutoBackupService.verifyBackup(applied.backupFile)
+            )
+            val copiedRowsBeforeRepair = DriverManager.getConnection(
+                "jdbc:sqlite:${applied.backupFile.absolutePath}"
+            ).use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery(
+                        "SELECT COUNT(*) FROM tasks WHERE recurring_parent_id IS NULL"
+                    ).use { resultSet ->
+                        assertTrue(resultSet.next())
+                        resultSet.getInt(1)
+                    }
+                }
+            }
+            assertEquals(4, copiedRowsBeforeRepair, "The verified snapshot must precede the repair")
+
+            val afterRepair = Database.getTasks().associateBy { it.id }
+            assertEquals("template", afterRepair.getValue("copy-1").recurringParentId)
+            assertEquals("template", afterRepair.getValue("copy-2").recurringParentId)
+            assertNull(afterRepair.getValue("template").recurringParentId)
+            assertEquals(4, afterRepair.size, "Repair must mark rows, never delete them")
+            assertEquals(2, Database.getRecurringTemplates().size)
+
+            val repeated = assertIs<DatabaseRepairService.Outcome.Applied<*>>(
+                DatabaseRepairService.repairRecurringTaskParents(dryRun = false)
+            ).value as Database.RecurringTaskRepairResult
+            assertEquals(0, repeated.rowsMarked)
+
+            val today = LocalDate.of(2026, 4, 8)
+            RecurringTaskService.generateForToday(today)
+            val countAfterGeneration = Database.getTasks().size
+            RecurringTaskService.generateForToday(today)
+            assertEquals(countAfterGeneration, Database.getTasks().size)
+        }
     }
 
     @Test

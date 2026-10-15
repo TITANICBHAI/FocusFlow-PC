@@ -1,5 +1,6 @@
 package com.focusflow.data
 
+import com.focusflow.AppPaths
 import com.focusflow.enforcement.EnforcementLog
 import java.io.File
 import java.lang.reflect.InvocationTargetException
@@ -239,7 +240,7 @@ internal object DatabaseMonitorDiagnostics {
                 .forEach { EnforcementLog.info("F16", it) }
             EnforcementLog.info(
                 "F16",
-                "Debug database-monitor measurement ended after $elapsedMillis ms; report saved under .focusflow."
+                "Debug database-monitor measurement ended after $elapsedMillis ms; report saved under ${AppPaths.dataDir.name}."
             )
             println("F16 database-monitor report: ${reportFile.name}")
         } catch (cancelled: CancellationException) {
@@ -255,7 +256,7 @@ internal object DatabaseMonitorDiagnostics {
     }
 
     private fun writeReport(contents: String): File {
-        val outputDirectory = File(System.getProperty("user.home"), ".focusflow").toPath()
+        val outputDirectory = AppPaths.logDir.toPath()
         Files.createDirectories(outputDirectory)
         val reportPath = Files.createTempFile(outputDirectory, "F16-db-contention-", ".txt")
         Files.writeString(

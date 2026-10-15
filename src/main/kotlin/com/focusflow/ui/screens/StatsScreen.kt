@@ -1,5 +1,6 @@
 package com.focusflow.ui.screens
 
+import com.focusflow.AppPaths
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -440,9 +441,7 @@ private fun AllTimeTab() {
                         scope.launch {
                             exportMsg = "Exporting…"
                             val dateSuffix = LocalDate.now().toString()
-                            val file = File(
-                                System.getProperty("user.home") + "/.focusflow/sessions_$dateSuffix.csv"
-                            )
+                            val file = File(AppPaths.dataDir, "sessions_$dateSuffix.csv")
                             val result = withContext(Dispatchers.IO) {
                                 BackupService.exportSessionsTo(file)
                             }

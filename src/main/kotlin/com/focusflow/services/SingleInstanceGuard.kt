@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.AppPaths
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
@@ -167,7 +168,7 @@ object SingleInstanceGuard {
     }
 
     private fun defaultLockFile(): File =
-        File(File(System.getProperty("user.home"), ".focusflow"), "instance.lock")
+        File(AppPaths.dataDir, "instance.lock")
 
     private fun portFileFor(lockFile: File): File =
         File(lockFile.absoluteFile.parentFile ?: File("."), "instance.port")

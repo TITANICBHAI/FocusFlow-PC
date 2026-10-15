@@ -1,5 +1,6 @@
 package com.focusflow.data
 
+import com.focusflow.AppPaths
 import com.focusflow.data.models.*
 import java.io.IOException
 import java.nio.file.Files
@@ -393,7 +394,7 @@ object Database {
     }
 
     private fun defaultDbFile(): File =
-        File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db")
+        AppPaths.dbFile
 
     private fun exclusiveEndDate(date: String): String =
         LocalDate.parse(date, dateFmt).plusDays(1).format(dateFmt)

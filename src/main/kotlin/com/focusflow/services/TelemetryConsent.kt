@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.AppPaths
 import com.focusflow.data.Database
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -159,15 +160,17 @@ internal object TelemetryConsent {
         false
     }
 
-    private fun consentPath(): Path = profileDirectory().resolve(CONSENT_FILE)
+    private fun consentPath(): Path =
+        AppPaths.consentFileForHome(requireUserHome()).toPath()
 
     private fun migrationPath(): Path = profileDirectory().resolve(MIGRATION_FILE)
 
-    private fun profileDirectory(): Path {
-        val home = System.getProperty("user.home")?.takeIf { it.isNotBlank() }
+    private fun profileDirectory(): Path =
+        AppPaths.dataDirForHome(requireUserHome()).toPath()
+
+    private fun requireUserHome(): String =
+        System.getProperty("user.home")?.takeIf { it.isNotBlank() }
             ?: throw IOException("User home is unavailable")
-        return Path.of(home).resolve(".focusflow")
-    }
 
     private fun writeAtomically(destination: Path, contents: String) {
         val directory = destination.parent ?: throw IOException("Consent path has no parent")

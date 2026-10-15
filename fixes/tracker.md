@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15; Phase 3 F20 is in progress. F19's design note is complete; runtime recovery remains gated on D11. Live F6/F9 repairs, D7/D9/D19, and Windows checks remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated.
+- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15; Phase 3 F24, F25, and F29 are complete locally. F19's design note is complete; runtime recovery remains gated on D11. No F6/F9 repair was run against a real profile; their applied-repair entry point now requires a verified backup. D7/D9/D19 and Windows checks remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated.
 
 ## Tracking rules
 
@@ -49,10 +49,10 @@
 | F3 — Root cause | P0 | **Implemented and Linux-tested.** Local full cause-chain reporting remains intact; remote critical/fatal telemetry now uses only bounded root-cause-first summaries, with JSON-safe fields and F4 redaction applied before the sink. Windows remains unverified. |
 | F4 — Consent, PII, endpoints | P0 | **Implemented and Linux-tested.** Consent remains DB-independent, opt-in and fail-closed; the one-time legacy migration is covered, and serialized Windows paths plus current home/user/host values are redacted before the sink. D1’s delivery choice and exposure risk remain open; Windows W10 remains unverified. |
 | F5 — Uninstall on DB failure | P0 | **Implemented and Linux-tested; D4 option A.** Non-BUSY/LOCKED database read failures require a typed confirmation phrase; BUSY/LOCKED remain blocked, and readable-database protections remain enforced. W6 is pending human verification. |
-| F6 — Recurring task multiplication | P1 | **Implemented and Linux-tested.** Schema v10 tracks template parents, generated copies are excluded from templates, and daily generation is idempotent. The legacy repair defaults to dry-run and only marks duplicates; live repair waits for F15 backup verification. |
+| F6 — Recurring task multiplication | P1 | **Implemented and Linux-tested.** Schema v10 tracks template parents, generated copies are excluded from templates, and daily generation is idempotent. The legacy repair defaults to dry-run; applied repairs now pass through a gate that requires a verified F15 backup and blocks on backup failure. No real-profile repair was run; D7 remains mark-only. |
 | F7 — JDBC statement closure | P1 | **Implemented and Linux-tested.** All 43 `createStatement()` sites are `.use`-scoped; the F7-a…c leak and source-hygiene tests passed. |
 | F8 — PIN fail-open | P1 | **Implemented and Linux-tested.** PIN status is tri-state, unavailable reads deny with distinct messaging, failed writes surface, and generated PINs require stored-hash read-back verification. F8-a…e passed; hashing strength and recovery design remain out of scope. |
-| F9 — Orphan focus sessions | P1 | **Implemented and Linux-tested.** The unfinished-session query has a 12-hour age bound; dry-run/idempotent reconciliation marks orphan sessions interrupted with `end_time = start_time`. No startup wiring or live repair; the latter still requires F15 backup verification. |
+| F9 — Orphan focus sessions | P1 | **Implemented and Linux-tested.** The unfinished-session query has a 12-hour age bound; dry-run/idempotent reconciliation marks orphan sessions interrupted with `end_time = start_time`. Applied repairs now pass through a gate that requires a verified F15 backup and blocks on backup failure. No startup wiring or real-profile repair was added. |
 | F10 — Transactions | P1 | **Implemented and tested.** `BEGIN IMMEDIATE` transactions roll back on `Throwable`, preserve rollback failures, and convert the six approved call sites without auto-commit toggling. |
 | F11 — Wizard DB access | P1 | **Implemented and Linux-tested.** The uninstall wizard uses a separate read-only open with no snapshots, migrations, recovery, or checkpoints. Missing DB means no saved protection state; Windows W6 remains human-only. Separate from F5's unreadable-DB policy decision. |
 | F12 — Missing vs. unreadable settings | P1 | **Implemented for the ordered consumers.** Typed reads distinguish absent/unreadable, security consumers fail closed, restore consumers keep known state, and failed writes are logged or surfaced. |
@@ -66,13 +66,13 @@
 | F20 — Date queries/N+1 | P3 | **Implemented and verified on Linux.** Replaced date-wrapped indexed filters and repeated daily reads; focused and root suites pass. |
 | F21 — Task completion idempotence | P3 | **Implemented and verified on Linux.** Only the first completion of an existing incomplete task increments the daily counter; focused and root suites pass. |
 | F22 — Clear activity | P3 / destructive scope | **Complete; D13 approved 2026-10-15.** Clear only sessions/completion stats, tasks, daily notes, and temptation logs after a verified backup; require the Global PIN and preserve all other data. F22-a…e and the 218-test suite passed. |
-| F23 — CSV output | P3 | **Open.** Current paths alter quotes/newlines rather than RFC-4180 escaping and have different row limits. |
-| F24 — Crash-log retention | P3 | **Open.** Reports are written Desktop-first and have no current cap/deduplication. Keep Desktop deletion out of scope; resolve D15 first. |
-| F25 — AppPaths | P3 | **Optional/defer.** No `AppPaths` exists, but no actual path mismatch was found; this is primarily consistency/testability work. |
+| F23 — CSV output | P3 | **Complete and Linux-tested.** All export paths use the shared RFC-4180 writer, export all rows, and distinguish saved/cancelled/failed outcomes. F23-a…c pass; W15 remains unverified. |
+| F24 — Crash-log retention | P3 | **Implemented and Linux-tested.** Root-cause signatures are persisted for the 60-minute window; only matching FocusFlow crash logs in app-data and temp are capped at the newest 20. Desktop-first writes remain unchanged and Desktop files are never pruned. F24-a/b pass; W13 remains unverified. |
+| F25 — AppPaths | P3 | **Implemented and Linux-tested.** Getter-based paths follow the current `user.home`; app-data directory literals are centralized except for the Settings display. F25-a…b and the 225-test root suite passed. Windows W4/W5 remain unverified. |
 | F26 — Recovery module missing | P3 | **Closed—not applicable.** Current `recovery/` directory and Gradle project exist. Do not remove the include or spend implementation time on this finding. |
-| F27 — SelectorProvider | P3 / WIN-VERIFY | **Unverified.** Current build targets JDK 19 and EXE/MSI; no MSIX target is configured. The plan’s JDK 21/MSIX claim does not establish behavior here. Test the actual shipped runtime before any change. |
+| F27 — SelectorProvider | P3 / WIN-VERIFY | **Unverified.** Current build targets JDK 19 and EXE/MSI; the active Microsoft Store MSIX distribution is built manually in CI. The plan’s JDK 21/MSIX claim does not establish behavior here. Test the actual shipped runtime before any change. |
 | F28 — App version property | Test setup | **Narrow.** Normal app launch gets the version from Gradle; `tasks.test` does not. Add test JVM properties, including telemetry-off after F4.0. Do not silently weaken the production fail-fast without approval. |
-| F29 — Test gaps | Cross-cutting | **Open.** Coverage gaps are real, but the plan understated the existing `SqliteJdbcNativeSmokeTest`; add finding-specific tests with fixes. |
+| F29 — Test gaps | Cross-cutting | **Reconciled for non-owner-gated findings.** Planned test classes map to current renamed/split equivalents. Assertion review found the F6/F9 repair tests bypassed the required verified-backup step; a safe repair gate and backup-order/failure tests are now in place. F30-a…c remain gated on D18. |
 | F30 — 90-day streak cap | P3 / owner decision | **Open.** Current streak is capped at 90 while best streak is not. Ask D18 before changing product behavior. |
 
 ## Reconciled execution sequence
@@ -243,12 +243,20 @@ The following dependencies take precedence over conflicting ordering in the atta
 - [x] **F23 — Consistent CSV exports:** Use RFC-4180 quoting, correct row counts, and distinct saved/cancelled/failed results across export paths. Apply D14: formula-prefix protection on text cells and no UTF-8 BOM. Tests F23-a…c.
 - **2026-10-15 F23 verification:** `CsvExportTest` passed 3/3 (F23-a…c). Root `gradle :test --no-daemon --console=plain --rerun-tasks` passed 221 tests across 56 JUnit XML files, with 0 failures, errors, or skips; `user.home` was redirected to a fresh temporary directory. `git diff --check` passed. Windows/Excel verification W15 remains pending.
 - **2026-10-15 F24 start:** Preserve Desktop-first writes and never delete Desktop reports. Persist root-cause signatures for the duplicate window; cap only exact `FocusFlow-crash-*.log` files in `~/.focusflow` and `java.io.tmpdir`. D15 is unchanged.
-- [ ] **F24 — Bounded crash reports:** De-duplicate matching reports and cap only the specified app-owned locations; do not delete Desktop reports. Ask owner before changing the Desktop-first policy (D15). Tests F24-a…b.
-- [ ] **F25 — Central application paths:** Add getter-based `AppPaths` that honors changing `user.home`, replace the four DB path computations, and keep other replacements limited to trivial cases. Tests F25-a…b.
+- **2026-10-15 F24 verification:** Existing `CrashReportRetention` implementation passed F24-a/b (2/2) with a fresh temporary home and telemetry disabled. The full isolated-home root suite passed 225 tests across 58 XML files, 0 failures/errors/skips. No code change was needed; W13 remains a Windows-only check.
+- [x] **F24 — Bounded crash reports:** Persistently deduplicate matching root-cause reports for 60 minutes and cap only matching app-data/temp files at 20; preserve Desktop-first writes and never prune Desktop. F24-a/b pass. D15 remains unresolved; W13 remains unverified.
+- **2026-10-15 F25 start:** Owner explicitly authorized central application paths. Add getter-based `AppPaths` that reads the current `user.home` on each access, replace the four database-path computations, and verify F25-a…b. Scope limited to required path centralization and trivial replacements.
+- **2026-10-15 F25 verification:** F25-a…b passed. The full root suite passed 225 tests across 58 JUnit XML files with 0 failures, errors, or skips, using a fresh temporary `user.home` and telemetry disabled. W4/W5 remain Windows-only and unverified.
+- **2026-10-15 F27 distribution clarification:** Owner confirms MSIX is an active Microsoft Store distribution and must not be abandoned. Include MSIX in W5 and W9; F27's SelectorProvider decision remains blocked on human Windows verification with the actual shipped JDK and package formats.
+- **2026-10-15 F29 start:** Reconcile the plan's required test files and finding-specific cases against the current suite; treat equivalent renamed/split test classes as coverage only when their assertions match, and leave owner-gated behavior unchanged.
+- **2026-10-15 F29 initial map:** Mapped the planned cases to current test classes. A deeper assertion review then found that F6/F9 non-dry-run tests called low-level database repairs directly, without proving the required verified backup preceded mutation.
+- **2026-10-15 F29 correction:** Added `DatabaseRepairService` as the applied-repair entry point. F6/F9 dry-runs remain read-only; failed backups block mutation; successful verified snapshots are asserted to contain the pre-repair rows. Tests use `TempHome`; no real profile was accessed.
+- **2026-10-15 F29 verification:** Focused F6/F9 classes passed 8/8. Final isolated-home root suite: `gradle :test --no-daemon --console=plain --rerun-tasks`, 225 tests across 58 JUnit XML files, 0 failures/errors/skips. F30-a…c remain deferred pending D18; Windows W9/W13/W15 remain unverified.
+- [x] **F25 — Central application paths:** Getter-based `AppPaths` follows changing `user.home`; the four DB-path computations and trivial app-data path uses are centralized. F25-a…b and the isolated-home root suite pass. W4/W5 remain pending on Windows.
 - [x] **F26 — Closed as stale:** Current checkout includes `recovery/` and its Gradle build file; no code change or removal is warranted. Evidence is recorded in root `AUDIT-ADDENDUM.md`.
-- [ ] **F27 — SelectorProvider flag:** No code change until human W9 is complete on the actual shipped JDK (current toolchain JDK 19) and current EXE/MSI formats. Include MSIX only if another active distribution path actually ships it; do not remove the flag based on the audit alone.
-- [ ] **F28 — Test-configuration regression:** Completed earlier in Phase 1; retain its test/configuration coverage in the final audit.
-- [ ] **F29 — Test-gap closure:** Reconcile all required test classes and finding-specific cases against the current tree; do not claim coverage from compilation alone.
+- [ ] **F27 — SelectorProvider flag:** No code change until human W9 is complete on the actual shipped JDK (current toolchain JDK 19) and EXE/MSI/MSIX formats; MSIX is an active Microsoft Store distribution. Do not remove the flag based on the audit alone.
+- [x] **F28 — Test-configuration regression:** Completed earlier in Phase 1; retain its test/configuration coverage in the final audit.
+- [x] **F29 — Test-gap closure:** Reconcile renamed/split test classes and confirm finding-specific assertions. F6/F9 applied repairs require a verified backup; failure blocks mutation. F30 cases remain gated on D18; Windows checks remain human-only.
 - [ ] **F30 — Current streak cap:** Ask whether 90 days is intentional (D18); change only after approval. If approved as a defect, pass F30-a…c.
 - [ ] **Phase 3 exit:** All non-owner-gated acceptance/tests pass; `fixes/PHASE-3-REPORT.md` lists remaining owner choices and Windows checks W9/W15 as applicable.
 
@@ -265,7 +273,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D5 | Ship SQLite DLL inside installation | F1b; wait for W1–W3. |
 | D6 | sqlite-jdbc upgrade timing | No version bump without explicit approval; separate change. |
 | D7 | Whether to offer deletion of recurring-task duplicates | F6 repair defaults to mark-only; never delete user rows without approval. |
-| D8 | End-time rule for orphan focus sessions | **Resolved 2026-10-15:** mark interrupted and set `end_time = start_time`. Real-profile repair remains blocked on F15 backup verification. |
+| D8 | End-time rule for orphan focus sessions | **Resolved 2026-10-15:** mark interrupted and set `end_time = start_time`. Applied repairs now require a verified F15 backup; no real-profile repair has been run. |
 | D9 | Second backup location, restore UI, and recovery notice | F15; separate design/work. |
 | D10 | Behavior while DB is down | **Resolved 2026-10-15: A — show the blocking-off status on the startup gate and tray; no degraded blocker.** |
 | D11 | Mid-run DB-loss design | F19; design note first, implementation only after approval. |
@@ -286,11 +294,11 @@ All items stay unchecked until a human runs the named scenario on Windows and re
 - [ ] **W2:** Broken `%TEMP%`/`%TMP%`: compare released and fixed builds; establish whether the reported failure reproduces.
 - [ ] **W3:** DLL blocked from temp by audit-mode policy; verify fallback and safe failure UI.
 - [ ] **W4:** Space/non-ASCII profile path; verify DB, library, reports, and backups.
-- [ ] **W5:** Install/start/uninstall matrix for current EXE/MSI packages; include MSIX only if a separate active distribution path exists.
+- [ ] **W5:** Install/start/uninstall matrix for current EXE/MSI packages and the active Microsoft Store MSIX distribution.
 - [ ] **W6:** Uninstall wizard against active writer, unavailable native library, and active protection.
 - [ ] **W7:** 30-minute watchdog failure soak using a test endpoint only; verify bounded reports/telemetry.
 - [ ] **W8:** Backup/WAL/SHM behavior while app is open; record actual Windows sharing errors.
-- [ ] **W9:** SelectorProvider with/without flag on the actual shipped JDK; include MSIX only if currently distributed.
+- [ ] **W9:** SelectorProvider with/without flag on the actual shipped JDK; test current EXE/MSI packages and the active Microsoft Store MSIX distribution.
 - [ ] **W10:** Fresh-profile telemetry consent and network behavior; no send before explicit consent if opt-in is selected.
 - [ ] **W11:** 24-hour memory soak before/after F7.
 - [ ] **W12:** Recurring-task behavior and dry-run repair on a copy of a polluted DB.

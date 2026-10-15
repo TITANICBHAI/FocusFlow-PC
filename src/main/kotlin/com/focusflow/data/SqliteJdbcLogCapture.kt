@@ -1,5 +1,6 @@
 package com.focusflow.data
 
+import com.focusflow.AppPaths
 import java.io.File
 import java.util.concurrent.CancellationException
 import java.util.logging.FileHandler
@@ -44,7 +45,7 @@ internal object SqliteJdbcLogCapture {
         }
 
         val home = System.getProperty("user.home")?.takeIf(String::isNotBlank) ?: return
-        val directory = File(home, ".focusflow")
+        val directory = AppPaths.dataDirForHome(home)
         val pattern = File(directory, LOG_FILE_PATTERN).absolutePath
         if (installedLogFilePattern == pattern && fileHandler != null) return
 

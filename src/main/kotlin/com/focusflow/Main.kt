@@ -221,9 +221,7 @@ private fun FocusFlowDesktop(
     val blockingStatus =
         databaseUnavailableBlockingStatus(startup is StartupView.DatabaseUnavailable)
 
-    val databaseFile = remember {
-        File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db").absoluteFile
-    }
+    val databaseFile = remember { AppPaths.dbFile.absoluteFile }
     val databaseLog = remember { File(databaseFile.parentFile, "crash.log").absolutePath }
 
     suspend fun reportStartupIssueOnce(

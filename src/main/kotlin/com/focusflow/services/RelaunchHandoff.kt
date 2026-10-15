@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.AppPaths
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -209,7 +210,7 @@ internal object RelaunchHandoff {
     )
 
     private val store by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        RelaunchHandoffStore(File(System.getProperty("user.home"), ".focusflow").absoluteFile)
+        RelaunchHandoffStore(AppPaths.dataDir.absoluteFile)
     }
 
     @Volatile private var incomingMarker: HandoffMarker? = null

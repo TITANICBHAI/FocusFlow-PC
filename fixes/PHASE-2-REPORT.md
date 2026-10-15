@@ -100,7 +100,7 @@ The non-owner-gated Phase 2 implementation findings have passing Linux tests. Th
 |---|---|
 | D4 — Uninstall on unreadable DB | **Resolved 2026-10-15, option A.** Non-BUSY/LOCKED failures require typed confirmation; BUSY/LOCKED remain blocked. |
 | D7 — Delete recurring-task duplicates | **Open.** F6 repair remains mark-only; no user rows are deleted without approval. |
-| D8 — Orphan-session end time | **Resolved 2026-10-15.** Mark interrupted and set `end_time = start_time`; live repair still requires a verified backup. |
+| D8 — Orphan-session end time | **Resolved 2026-10-15.** Mark interrupted and set `end_time = start_time`; applied repairs now require a verified backup, and no real-profile repair has been run. |
 | D9 — Backup location, restore UI, recovery notice | **Open.** Separate design/approval required; direct restore remains disabled. |
 | D10 — Startup behavior while DB is unavailable | **Resolved 2026-10-15, option A.** Show the blocking-off status on the gate and tray; no degraded blocker. |
 | D11 — Mid-run DB-loss behavior | **Open.** F19 design note is complete; no implementation before owner approval. |
@@ -108,6 +108,8 @@ The non-owner-gated Phase 2 implementation findings have passing Linux tests. Th
 
 ### F6/F9/F15 data-safety gates and Windows checks
 
-- F6 and F9 code and dry-run tests are complete, but no live repair was run against a user profile. A verified F15 backup must exist before any live repair; F6 remains mark-only, and F9 uses the D8 end-time rule.
+- F6 and F9 dry-runs remain read-only. `DatabaseRepairService` is now the applied-repair entry point: it requires `AutoBackupService.runBackupNow()` to return a verified success before mutation, and it refuses to apply a repair after a failed or unverified backup. The F6/F9 tests verify that the snapshot contains the pre-repair rows and that a failed backup leaves rows unchanged.
+- No repair was run against a real profile, and no startup caller was added. F6 remains mark-only; F9 uses the D8 end-time rule. The human W12 test on a copy of a polluted database remains pending.
 - F15 backup verification code/tests are complete, but this work did not create or verify a backup of any real profile. D9 still gates a second backup location, a safe restore workflow, and the recovery notice after automatic corruption recovery.
 - No Windows verification was performed. Applicable W1–W15 checks remain human-run gates and are not claimed complete here.
+- The follow-on F29 implementation and verification are recorded in `fixes/PHASE-3-REPORT.md`. Files changed for the backup gate: `src/main/kotlin/com/focusflow/services/DatabaseRepairService.kt`, `src/test/kotlin/com/focusflow/services/RecurringTaskServiceTest.kt`, `src/test/kotlin/com/focusflow/data/OrphanFocusSessionReconciliationTest.kt`, this report, `fixes/tracker.md`, and `fixes/PHASE-3-REPORT.md`. Files read for that follow-on: `src/main/kotlin/com/focusflow/services/AutoBackupService.kt`, the two F6/F9 test files above, `src/test/kotlin/com/focusflow/testutil/TempHome.kt`, and the F6/F9 repair methods in `src/main/kotlin/com/focusflow/data/Database.kt`.

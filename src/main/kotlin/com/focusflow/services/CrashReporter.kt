@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.AppPaths
 import com.focusflow.data.Database
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.ProcessMonitor
@@ -31,7 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │  REPORT DESTINATIONS (tried in order, first success wins)               │
  * │  1. ~/Desktop/FocusFlow-crash-<timestamp>.log                           │
- * │  2. ~/.focusflow/crash-<timestamp>.log                                  │
+ * │  2. app data directory/crash-<timestamp>.log                            │
  * │  3. %TEMP% / java.io.tmpdir / FocusFlow-crash-<timestamp>.log           │
  * │  4. stderr (last resort — always attempted regardless)                  │
  * └─────────────────────────────────────────────────────────────────────────┘
@@ -431,8 +432,8 @@ object CrashReporter {
 
     private fun appendDatabaseInfo(sb: StringBuilder) {
         try {
-            val dbDir  = File(System.getProperty("user.home") + "/.focusflow")
-            val dbFile = File(dbDir, "focusflow.db")
+            val dbFile = AppPaths.dbFile
+            val dbDir  = AppPaths.dataDir
             sb.ln("DB Path      : ${dbFile.absolutePath}")
             sb.ln("DB Exists    : ${dbFile.exists()}")
             if (dbFile.exists()) {
@@ -512,7 +513,7 @@ object CrashReporter {
         val filename = "FocusFlow-crash-$tsFile.log"
         val userHome = File(System.getProperty("user.home", "."))
         val desktop = File(userHome, "Desktop")
-        val appData = File(userHome, ".focusflow")
+        val appData = AppPaths.logDir
         val temporary = File(
             System.getProperty("java.io.tmpdir", userHome.absolutePath)
         )
@@ -692,13 +693,13 @@ object CrashReporter {
 
     /**
      * Returns all FocusFlow crash log files found on this machine, newest first.
-     * Searches: ~/Desktop, ~/.focusflow/, and %TEMP%.
+     * Searches: ~/Desktop, the app data directory, and %TEMP%.
      */
     fun findCrashLogs(): List<File> {
         val home = System.getProperty("user.home", "")
         val searchDirs = listOf(
             File(home, "Desktop"),
-            File("$home/.focusflow"),
+            AppPaths.logDir,
             File(System.getProperty("java.io.tmpdir", home))
         )
         return searchDirs

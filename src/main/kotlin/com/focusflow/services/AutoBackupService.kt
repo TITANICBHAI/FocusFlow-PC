@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.AppPaths
 import com.focusflow.data.Database
 import com.focusflow.enforcement.EnforcementLog
 import kotlinx.coroutines.*
@@ -42,11 +43,10 @@ object AutoBackupService {
         DateTimeFormatter.BASIC_ISO_DATE
 
     private val dbPath: String
-        get() = System.getProperty("user.home") + "/.focusflow/focusflow.db"
+        get() = AppPaths.dbFile.absolutePath
 
     private val backupDir: File
-        get() = File(System.getProperty("user.home") + "/.focusflow/backups")
-            .also { it.mkdirs() }
+        get() = AppPaths.backupDir.also { it.mkdirs() }
 
     // ── Public API ────────────────────────────────────────────────────────────
 

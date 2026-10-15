@@ -1,5 +1,6 @@
 package com.focusflow.enforcement
 
+import com.focusflow.AppPaths
 import java.io.File
 import java.time.LocalDateTime
 
@@ -7,7 +8,7 @@ import java.time.LocalDateTime
  * EnforcementLog
  *
  * Lightweight append-only log for enforcement-layer warnings and soft failures.
- * Writes to ~/.focusflow/enforcement.log — separate from crash.log so the two
+ * Writes to the app data directory — separate from crash.log so the two
  * are easy to distinguish (crash.log = fatal / DB, enforcement.log = Win32 soft fails).
  *
  * Rules:
@@ -18,7 +19,7 @@ import java.time.LocalDateTime
 internal object EnforcementLog {
 
     private val logFile: File by lazy {
-        File(System.getProperty("user.home") + "/.focusflow").also { it.mkdirs() }
+        AppPaths.logDir.also { it.mkdirs() }
             .let { File(it, "enforcement.log") }
     }
 
