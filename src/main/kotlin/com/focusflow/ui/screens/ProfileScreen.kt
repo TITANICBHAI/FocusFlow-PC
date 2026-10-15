@@ -3,6 +3,7 @@ package com.focusflow.ui.screens
 import com.focusflow.ui.components.AllowanceLoadBanner
 import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.FfVerticalScrollbar
+import com.focusflow.ui.components.PinGateDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -27,7 +28,10 @@ import com.focusflow.data.Database
 import com.focusflow.data.models.DailyAllowance
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.BackupService
+import com.focusflow.services.ClearUserActivityService
 import com.focusflow.services.DailyAllowanceTracker
+import com.focusflow.services.GlobalPin
+import com.focusflow.services.PinState
 import com.focusflow.services.WeeklyReportService
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +53,10 @@ fun ProfileScreen() {
     var dailyGoal       by remember { mutableStateOf(120) }
     var saved           by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
+    var showClearPinGate by remember { mutableStateOf(false) }
+    var clearActivityInProgress by remember { mutableStateOf(false) }
+    var clearActivityMessage by remember { mutableStateOf("") }
+    var clearActivityMessageIsError by remember { mutableStateOf(false) }
     var exportMsg       by remember { mutableStateOf("") }
 
     // All-time stats
@@ -58,6 +66,111 @@ fun ProfileScreen() {
     var curStreak   by remember { mutableStateOf(0) }
     var totalTasks  by remember { mutableStateOf(0) }
     var last14Days  by remember { mutableStateOf(listOf<Pair<java.time.LocalDate, Boolean>>()) }
+
+    fun setClearActivityMessage(message: String, isError: Boolean) {
+        clearActivityMessage = message
+        clearActivityMessageIsError = isError
+    }
+
+    fun openClearActivityPinGate() {
+        if (clearActivityInProgress) return
+        clearActivityInProgress = true
+        scope.launch {
+            try {
+                when (withContext(Dispatchers.IO) { GlobalPin.state() }) {
+                    PinState.SET -> {
+                        clearActivityMessage = ""
+                        showClearPinGate = true
+                    }
+                    PinState.NOT_SET -> setClearActivityMessage(
+                        "Set a Global PIN in Settings before clearing activity data.",
+                        isError = true
+                    )
+                    PinState.UNKNOWN -> setClearActivityMessage(
+                        "Could not verify the Global PIN settings. No activity data was changed.",
+                        isError = true
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                setClearActivityMessage(
+                    "Could not verify the Global PIN settings. No activity data was changed. " +
+                        (failure.message ?: ""),
+                    isError = true
+                )
+            } finally {
+                clearActivityInProgress = false
+            }
+        }
+    }
+
+    fun clearActivityAfterPin() {
+        if (clearActivityInProgress) return
+        clearActivityInProgress = true
+        scope.launch {
+            clearActivityMessage = ""
+            try {
+                when (withContext(Dispatchers.IO) { GlobalPin.state() }) {
+                    PinState.NOT_SET -> {
+                        setClearActivityMessage(
+                            "A Global PIN is required. No activity data was cleared.",
+                            isError = true
+                        )
+                        return@launch
+                    }
+                    PinState.UNKNOWN -> {
+                        setClearActivityMessage(
+                            "Could not verify the Global PIN settings. No activity data was cleared.",
+                            isError = true
+                        )
+                        return@launch
+                    }
+                    PinState.SET -> Unit
+                }
+
+                when (val result = withContext(Dispatchers.IO) {
+                    ClearUserActivityService.clearAfterVerifiedBackup()
+                }) {
+                    is ClearUserActivityService.Result.Cleared -> {
+                        allTimeMins = 0
+                        allTimeSess = 0
+                        bestStreak = 0
+                        curStreak = 0
+                        totalTasks = 0
+                        val start = java.time.LocalDate.now().minusDays(13)
+                        last14Days = (0..13).map { offset ->
+                            start.plusDays(offset.toLong()) to false
+                        }
+                        setClearActivityMessage(
+                            "Activity data cleared. Verified backup saved to ${result.backupFile.absolutePath}.",
+                            isError = false
+                        )
+                    }
+                    is ClearUserActivityService.Result.BackupFailed ->
+                        setClearActivityMessage(
+                            "Could not create a verified backup. No activity data was deleted. ${result.reason}",
+                            isError = true
+                        )
+                    is ClearUserActivityService.Result.ClearFailed ->
+                        setClearActivityMessage(
+                            "The activity clear failed. A verified backup is available at " +
+                                "${result.backupFile.absolutePath}. ${result.reason}",
+                            isError = true
+                        )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                setClearActivityMessage(
+                    "The activity clear failed. ${failure.message ?: "No success was reported."}",
+                    isError = true
+                )
+            } finally {
+                clearActivityInProgress = false
+            }
+        }
+    }
 
     fun reloadAllowanceUsage() {
         val previous = allowanceUsageState.lastKnownValue()
@@ -381,15 +494,31 @@ fun ProfileScreen() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(strings.profileDangerZone, style = MaterialTheme.typography.headlineSmall, color = Error)
-            Text("Permanently delete all stored data. This cannot be undone.",
+            Text("Clear activity records only. Settings and protection data are kept. A verified backup and Global PIN are required.",
                 style = MaterialTheme.typography.bodySmall, color = OnSurface2)
             OutlinedButton(
-                onClick = { showClearDialog = true },
+                onClick = {
+                    clearActivityMessage = ""
+                    showClearDialog = true
+                },
+                enabled = !clearActivityInProgress,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Error),
                 border = ButtonDefaults.outlinedButtonBorder.copy(width = 1.dp)
             ) {
-                Icon(Icons.Default.DeleteForever, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp)); Text(strings.profileClearAllData)
+                if (clearActivityInProgress) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.DeleteForever, null, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(if (clearActivityInProgress) "Working…" else strings.profileClearAllData)
+            }
+            if (clearActivityMessage.isNotBlank()) {
+                Text(
+                    clearActivityMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (clearActivityMessageIsError) Error else Success
+                )
             }
         }
     }
@@ -405,22 +534,17 @@ fun ProfileScreen() {
             containerColor   = Surface2,
             title            = { Text(strings.profileClearAllDataTitle, color = Error) },
             text             = {
-                Text("This will permanently delete all sessions, tasks, notes, and settings. This cannot be undone.",
+                Text(
+                    "This permanently clears focus sessions and completion stats, tasks, daily notes, and temptation logs. " +
+                        "Settings, rules, habits, allowances, PINs, and presets are kept. A verified backup is created first. " +
+                        "You must enter your Global PIN; set one in Settings if needed. This cannot be undone.",
                     color = OnSurface2)
             },
             confirmButton = {
                 Button(
                     onClick = {
                         showClearDialog = false
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                Database.clearAllSessions()
-                                Database.clearAllTasks()
-                                Database.clearNotes()
-                                Database.clearTemptationLog()
-                            }
-                            exportMsg = "All data cleared."
-                        }
+                        openClearActivityPinGate()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Error)
                 ) { Text(strings.profileDeleteEverything) }
@@ -428,6 +552,17 @@ fun ProfileScreen() {
             dismissButton = {
                 TextButton(onClick = { showClearDialog = false }) { Text(strings.btnCancel, color = OnSurface2) }
             }
+        )
+    }
+    if (showClearPinGate) {
+        PinGateDialog(
+            title = "Global PIN required",
+            subtitle = "Enter your Global PIN to clear activity data.",
+            onSuccess = {
+                showClearPinGate = false
+                clearActivityAfterPin()
+            },
+            onDismiss = { showClearPinGate = false }
         )
     }
 }

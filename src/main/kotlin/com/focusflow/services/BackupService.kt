@@ -66,10 +66,4 @@ object BackupService {
         } catch (_: Exception) { null }
     }
 
-    fun clearAllData() {
-        Database.clearAllSessions()
-        Database.clearAllTasks()
-        Database.clearTemptationLog()
-        Database.clearNotes()
-    }
 }

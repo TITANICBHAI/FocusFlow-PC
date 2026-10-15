@@ -1302,6 +1302,18 @@ object Database {
         }
     }
 
+    @Synchronized fun clearUserActivity() {
+        inTransaction {
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("DELETE FROM focus_sessions")
+                statement.executeUpdate("DELETE FROM daily_completions")
+                statement.executeUpdate("DELETE FROM tasks")
+                statement.executeUpdate("DELETE FROM daily_notes")
+                statement.executeUpdate("DELETE FROM temptation_log")
+            }
+        }
+    }
+
     @Synchronized fun getRecurringTemplates(): List<Task> {
         return connection.prepareStatement(
             "SELECT * FROM tasks WHERE recurring = 1 AND recurring_parent_id IS NULL ORDER BY created_at ASC"

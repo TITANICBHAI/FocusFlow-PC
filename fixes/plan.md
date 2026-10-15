@@ -778,7 +778,7 @@ The agent must **stop and ask** at each of these; none is the agent's to decide.
 | D10 | Behaviour while the DB is down | A: show "Blocking is OFF" (agent may do); B: degraded blocker from a plain file (needs a design note); C: status quo | A now, B only if failures prove common | F18 |
 | D11 | Mid-run DB loss design | Approve the design note | — | F19 |
 | D12 | PIN design | Salted KDF hashing; "forgot PIN" flow; wording — protection state lives in a user-writable file, so say "friction", not "secure" | Separate project | F8 |
-| D13 | "Clear all data" | What "all" means (settings? rules? habits? PINs?); require the Global PIN? | Keep settings/rules; fix the text; PIN-gate it | F22 |
+| D13 | "Clear all data" | What "all" means (settings? rules? habits? PINs?); require the Global PIN? | **Approved 2026-10-15:** clear only sessions/completion stats, tasks, daily notes, and temptation logs; preserve settings, rules, habits, allowances, PINs, and presets; fix wording; require the Global PIN | F22 |
 | D14 | CSV details | Formula-injection guard; UTF-8 BOM for Excel | Guard on, BOM on **after** testing in Excel | F23 |
 | D15 | Crash-log placement | Keep Desktop-first / move to `~/.focusflow/logs` | Move, with a "show me the log" button | F24 |
 | D16 | `recovery` Gradle module | Still needed? | Ask before touching | F26 |
