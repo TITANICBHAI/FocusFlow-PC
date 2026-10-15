@@ -122,6 +122,7 @@ object Database {
 
     private val dtFmt   = DateTimeFormatter.ISO_LOCAL_DATE_TIME
     private val dateFmt = DateTimeFormatter.ISO_LOCAL_DATE
+    internal const val UNFINISHED_FOCUS_SESSION_MAX_AGE_HOURS = 12L
 
     @Volatile private var conn: Connection? = null
     private val migrationConnection = ThreadLocal<Connection?>()
@@ -1728,21 +1729,54 @@ object Database {
     }
 
     /**
-     * Returns true when a focus session has been started but has not yet written
-     * its final end time. The uninstall wizard runs in a separate JVM, so it
-     * cannot inspect FocusSessionService's in-memory StateFlow.
+     * Marks persisted unfinished sessions as interrupted without deleting rows.
+     * Dry-run is the safe default. Applying this to a real profile must wait for
+     * F15's verified backup support; no startup caller is wired yet.
      */
-    @Synchronized fun hasUnfinishedFocusSession(): Boolean {
+    @Synchronized
+    internal fun reconcileOrphanFocusSessions(dryRun: Boolean = true): Int {
+        if (dryRun) {
+            return connection.prepareStatement(
+                "SELECT COUNT(*) FROM focus_sessions WHERE end_time IS NULL AND completed = 0"
+            ).use { statement ->
+                statement.executeQuery().use { resultSet ->
+                    if (resultSet.next()) resultSet.getInt(1) else 0
+                }
+            }
+        }
+
+        return inTransaction {
+            connection.prepareStatement(
+                """
+                UPDATE focus_sessions
+                SET end_time = start_time, interrupted = 1
+                WHERE end_time IS NULL AND completed = 0
+                """.trimIndent()
+            ).use { it.executeUpdate() }
+        }
+    }
+
+    /**
+     * Returns true for a persisted unfinished focus session started within the
+     * last 12 hours. The uninstall wizard runs in a separate JVM, so it cannot
+     * inspect FocusSessionService's in-memory StateFlow.
+     */
+    @Synchronized
+    fun hasUnfinishedFocusSession(now: LocalDateTime = LocalDateTime.now()): Boolean {
         if (!isReady) return false
         return try {
             connection.prepareStatement(
                 """
                 SELECT 1
                 FROM focus_sessions
-                WHERE end_time IS NULL AND completed = 0
+                WHERE end_time IS NULL AND completed = 0 AND start_time >= ?
                 LIMIT 1
                 """.trimIndent()
             ).use { ps ->
+                ps.setString(
+                    1,
+                    now.minusHours(UNFINISHED_FOCUS_SESSION_MAX_AGE_HOURS).format(dtFmt)
+                )
                 ps.executeQuery().use { rs -> rs.next() }
             }
         } catch (_: Exception) {

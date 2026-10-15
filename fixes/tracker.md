@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, and F6 complete; F9 end-time policy D8 pending).
+- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, and F6 complete; F9 and F13 in progress).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -173,6 +173,8 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F6 implementation:** Added the v10 `recurring_parent_id` migration through the F14a column guard, parent-aware template selection/generation, and a count-only dry-run/non-destructive mark repair. Added F6-a…d tests and updated schema-target assertions affected by v10. All test DBs use temporary paths.
 - **2026-10-15 F6 verification:** F6-a…d pass. Full root suite: 178 tests, 0 failures/errors/skips across 45 JUnit XML reports. No repair was run on a real profile.
 - [x] **F6 — Recurring task duplication:** Schema v10 adds the template-parent relation; generated rows are not templates, repeated generation is idempotent, and the dry-run repair only marks inferred copies without deleting rows. F6-a…d pass. Applying the repair to a real DB remains gated on F15 backup verification.
+- **2026-10-15 F9 start:** Owner selected D8: mark orphaned sessions interrupted with `end_time = start_time`. Implementing the 12-hour session gate and dry-run/idempotent reconciliation using temporary test databases only. Do not wire automatic reconciliation into startup or apply it to a real profile until F15 backup verification is complete.
+- **2026-10-15 F9 verification attempts:** The first `gradle :test --no-daemon --console=plain --tests com.focusflow.data.OrphanFocusSessionReconciliationTest` invocation hit the 300-second shell limit during `:compileKotlin`; it produced no final test result or XML. The background rerun of the same command completed successfully in 2m29s. Its JUnit XML records 4 tests, 0 failures/errors/skips. Full root-suite acceptance is still pending.
 - [ ] **F9 — Reconcile orphan sessions:** Add the 12-hour gate and dry-run/idempotent reconciliation. Do not apply the repair to a real DB until F15 has verified backup support and the owner approves the end-time policy (D8). Tests F9-a…d.
 - [ ] **F13 — Order focus-session writes:** Ensure end waits for start, log failed writes, and allow bounded completion on dispose. Tests F13-a…c; note whether the dispose race already passes before changes.
 - [ ] **F11 — Read-only uninstall wizard:** Add an open that does not snapshot, mutate, checkpoint, migrate, or recover the DB. This is a prerequisite for F5. Tests F11-a…d; W6 remains human-only.
@@ -215,7 +217,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D5 | Ship SQLite DLL inside installation | F1b; wait for W1–W3. |
 | D6 | sqlite-jdbc upgrade timing | No version bump without explicit approval; separate change. |
 | D7 | Whether to offer deletion of recurring-task duplicates | F6 repair defaults to mark-only; never delete user rows without approval. |
-| D8 | End-time rule for orphan focus sessions | F9. |
+| D8 | End-time rule for orphan focus sessions | **Resolved 2026-10-15:** mark interrupted and set `end_time = start_time`. Real-profile repair remains blocked on F15 backup verification. |
 | D9 | Second backup location, restore UI, and recovery notice | F15; separate design/work. |
 | D10 | Behavior while DB is down | F18. The plan permits only its small visible status message without a separate degraded-mode design. |
 | D11 | Mid-run DB-loss design | F19; design note first, implementation only after approval. |
