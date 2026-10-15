@@ -1,11 +1,17 @@
-# Phase 3 Report — F22, F23, F24, F25, and F29
+# Phase 3 Report — F20–F30 local status and verification
 
 Date: 2026-10-15
-Status: F22, F23, F24, F25, and F29 complete locally on branch `F23-consistent-csv-exports`; not pushed.
+Status: F20–F26 and F28–F30 are complete or closed locally on branch `F23-consistent-csv-exports`; F27 remains blocked on human Windows check W9. Phase 3 is not closed; human Windows verification and owner-gated work remain.
 
 ## Approved scope
 
 D13 authorizes clearing only focus sessions and completion statistics, tasks, daily notes, and temptation logs. Settings, rules, habits, allowances, PINs, and presets must remain. The Global PIN is required, the activity-clear wording must be clear, and a verified AutoBackupService backup must exist before deletion. F23 and F24 remain outside this F22 change.
+
+## F20 and F21 — Date queries and task completion
+
+- F20 replaced date-wrapped indexed-column filters and repeated per-day reads while preserving query results and storage.
+- F21 made completion idempotent: only the first completion of an existing incomplete task increments the daily completion count.
+- The tracker records F20's focused `DayQueriesTest` run as 4/4 and the Phase 3 root suite as 213/213. F21's focused `DatabaseTaskCompletionTest` run passed 3/3 and the same Phase 3 root suite passed 213/213. These are the dated phase runs; the latest 228-test root result including F30 is recorded in the F30 section below.
 
 ## Work completed
 
@@ -58,6 +64,8 @@ The builds emitted existing Compose icon deprecation and coroutine opt-in warnin
 - Tests ran on Linux only. Windows behavior and the interactive desktop UI were not verified; the desktop application workflow was not started.
 - No live user profile or database was read or changed, and no evidence script was run.
 - D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 remains open only if the Desktop-first crash-report policy is to change; no F24 change has been made yet.
+- D18 was resolved on 2026-10-15: the 90-day current-streak cap was not intentional. F30 is complete; its implementation and passing tests are recorded below.
+- W1–W15 remain human-only and unverified. F27 awaits W9; D5/F1b awaits W1–W3. D7, D9, D11, D12, D15, and D19 remain open or deferred. F6/F9 repairs have not been run against a real profile.
 
 ## F23 — Consistent CSV exports
 
@@ -148,7 +156,7 @@ The plan's expected test filenames do not always match the current tree. Review 
 | Database transaction, migration, and wizard-read-only safety (F10/F11/F14) | `DatabaseTransactionTest`, `DatabaseSchemaGuardTest`, `DatabaseTest`, `UninstallWizardReadOnlyDatabaseTest` |
 | Typed setting reads and migrated consumers (F12) | `SettingsReadWriteTest`, `AppSettingsTest`, `PinStateAndReadBackTest`, `PinSettingsUnavailableTest`, `VpnBlockerSettingsTest`, `StandaloneBlockSettingsTest`, `NuclearModeSettingsTest`, `KillSwitchSettingsTest`, `UninstallProtectionSettingsTest`, `WeeklyReportSettingsTest`, `TaskAlarmSettingsTest` |
 | Statement lifecycle/source hygiene (F7) | `DatabaseStatementHygieneTest` |
-| Queries, completion idempotence, and conditional streak behavior (F20/F21/F30) | `DayQueriesTest`, `DatabaseTaskCompletionTest`; F30-a…c are deferred until D18 is answered |
+| Queries, completion idempotence, and conditional streak behavior (F20/F21/F30) | `DayQueriesTest`, `DatabaseTaskCompletionTest`; F30-a…c now pass under resolved D18 |
 | Pins, recurring tasks, sessions, and backups (F6/F8/F9/F13/F15) | `PinStateAndReadBackTest`, `PinSettingsUnavailableTest`, `RecurringTaskServiceTest`, `OrphanFocusSessionReconciliationTest`, `FocusSessionPersistenceTest`, `AutoBackupServiceTest`; F6/F9 applied repairs now run through `DatabaseRepairService` |
 | Consent, redaction, crash summaries/retention, and test JVM configuration (F3/F4/F24/F28) | `TelemetryConsentTest`, `TelemetrySinkTest`, `CrashReporterSummaryTest`, `CrashReportRetentionTest`, `TestJvmConfigurationTest` |
 | Uninstall policy, CSV, and VPN behavior (F5/F11/F17/F23) | `UninstallProtectionSettingsTest`, `UninstallWizardDatabasePolicyTest`, `UninstallWizardReadOnlyDatabaseTest`, `CsvExportTest`, `VpnBlockerSettingsTest` |
@@ -159,7 +167,7 @@ The original F29 table's `NativeSqliteTest`, `DatabaseInitSafetyTest`, `Statemen
 
 The assertion review found a real safety gap that a filename/method inventory missed: the F6/F9 non-dry-run tests called low-level database repair methods directly, so they did not prove the plan's required verified backup preceded mutation. Added `DatabaseRepairService` as the applied-repair entry point. It takes a backup through `AutoBackupService`, stops if verification fails, and only then applies the mark-only repair. Updated F6-c and F9-c tests to cover dry-run behavior, failed-backup blocking, verified backup integrity, and pre-repair rows in the snapshot. All test data stays under `TempHome`; no real profile was accessed. The entry point is not wired to startup or a UI, so no repair runs automatically.
 
-F28 follows the reconciled Phase 1 decision: test workers receive the project version and telemetry-off property; the packaged-app missing-version fail-fast is intentionally retained. F30 remains owner-gated by D18, and F27 remains blocked on Windows W9.
+F28 follows the reconciled Phase 1 decision: test workers receive the project version and telemetry-off property; the packaged-app missing-version fail-fast is intentionally retained. D18 is resolved and F30-a…c pass; F27 remains blocked on Windows W9.
 
 ### Verification
 
@@ -185,3 +193,30 @@ F28 follows the reconciled Phase 1 decision: test workers receive the project ve
 - `src/test/kotlin/com/focusflow/services/RecurringTaskServiceTest.kt`
 - `src/test/kotlin/com/focusflow/data/OrphanFocusSessionReconciliationTest.kt`
 - `fixes/tracker.md`, `fixes/PHASE-2-REPORT.md`, and this report
+
+## F30 — Current streak was capped at 90 days
+
+### D18, implementation, and tests
+
+- D18 was resolved on 2026-10-15: the 90-day cap was not intentional; current streaks should report all consecutive qualifying days.
+- `Database.getCurrentStreak()` now reads qualifying completion dates newest-first without a 90-row limit. The existing rule that yesterday's completion keeps a streak alive when today is empty is preserved.
+- `DayQueriesTest` contains F30-a (120 consecutive days reports 120), F30-b (a gap ends the streak), and F30-c (yesterday's completion still counts). The current JUnit XML reports all three passing; `DayQueriesTest` reports 7 tests total, 0 failures/errors/skips.
+
+### Verification
+
+- The latest root run, `gradle :test --no-daemon --console=plain`, completed with `BUILD SUCCESSFUL`: 228 tests across 58 JUnit XML reports, 0 failures, 0 errors, and 0 skipped. The configured test JVM telemetry-off property remained active.
+- F30 tests use the repository's isolated test fixtures; no real profile was read or changed, and no evidence script was run.
+- Linux verification only. Windows behavior and the interactive desktop UI were not verified.
+
+### Files reviewed
+
+- `src/main/kotlin/com/focusflow/data/Database.kt`
+- `src/test/kotlin/com/focusflow/data/DayQueriesTest.kt`
+- `fixes/tracker.md`, `fixes/plan.md`, and this report
+
+### Files changed
+
+- `fixes/tracker.md`
+- `fixes/PHASE-3-REPORT.md`
+
+No F30 production source or test file was changed during this reconciliation; the implementation and tests were already present in the checkout.

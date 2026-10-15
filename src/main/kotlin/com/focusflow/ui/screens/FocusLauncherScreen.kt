@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
 import com.focusflow.data.models.FocusLauncherPreset
+import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.isWindows
 import com.focusflow.i18n.LocalizationManager
@@ -208,7 +209,17 @@ fun FocusLauncherScreen() {
                         onClick = {
                             showLockdownNotice = false
                             scope.launch(Dispatchers.IO) {
-                                Database.setSetting(LOCKDOWN_NOTICE_DISMISSED_SETTING, "true")
+                                when (val write = Database.writeSetting(
+                                    LOCKDOWN_NOTICE_DISMISSED_SETTING,
+                                    "true"
+                                )) {
+                                    Database.SettingWrite.Ok -> Unit
+                                    is Database.SettingWrite.Failed -> EnforcementLog.warn(
+                                        "FocusLauncherScreen",
+                                        "Could not persist dismissal of the full OS lockdown notice",
+                                        write.cause
+                                    )
+                                }
                             }
                         },
                         modifier = Modifier.size(32.dp)
@@ -331,7 +342,17 @@ fun FocusLauncherScreen() {
                         onClick = {
                             showProtectedProcessesNotice = false
                             scope.launch(Dispatchers.IO) {
-                                Database.setSetting(PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING, "true")
+                                when (val write = Database.writeSetting(
+                                    PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING,
+                                    "true"
+                                )) {
+                                    Database.SettingWrite.Ok -> Unit
+                                    is Database.SettingWrite.Failed -> EnforcementLog.warn(
+                                        "FocusLauncherScreen",
+                                        "Could not persist dismissal of the protected-process notice",
+                                        write.cause
+                                    )
+                                }
                             }
                         },
                         modifier = Modifier.size(32.dp)

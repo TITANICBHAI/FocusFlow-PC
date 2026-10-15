@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15; Phase 3 F24, F25, and F29 are complete locally. F19's design note is complete; runtime recovery remains gated on D11. No F6/F9 repair was run against a real profile; their applied-repair entry point now requires a verified backup. D7/D9/D19 and Windows checks remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated.
+- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 remains gated on human Windows check W9, so Phase 3 is not closed. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. F19 runtime recovery remains gated on D11. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D5, D6, D7, D9, D11, D12, D15, D17, and D19 remain open or deferred; all W1–W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains an owner action. D2, D3, D4, D8, D10, D13, D14, and D18 are resolved; D16 is closed. F1b remains gated on W1–W3.
 
 ## Tracking rules
 
@@ -71,9 +71,9 @@
 | F25 — AppPaths | P3 | **Implemented and Linux-tested.** Getter-based paths follow the current `user.home`; app-data directory literals are centralized except for the Settings display. F25-a…b and the 225-test root suite passed. Windows W4/W5 remain unverified. |
 | F26 — Recovery module missing | P3 | **Closed—not applicable.** Current `recovery/` directory and Gradle project exist. Do not remove the include or spend implementation time on this finding. |
 | F27 — SelectorProvider | P3 / WIN-VERIFY | **Unverified.** Current build targets JDK 19 and EXE/MSI; the active Microsoft Store MSIX distribution is built manually in CI. The plan’s JDK 21/MSIX claim does not establish behavior here. Test the actual shipped runtime before any change. |
-| F28 — App version property | Test setup | **Narrow.** Normal app launch gets the version from Gradle; `tasks.test` does not. Add test JVM properties, including telemetry-off after F4.0. Do not silently weaken the production fail-fast without approval. |
-| F29 — Test gaps | Cross-cutting | **Reconciled for non-owner-gated findings.** Planned test classes map to current renamed/split equivalents. Assertion review found the F6/F9 repair tests bypassed the required verified-backup step; a safe repair gate and backup-order/failure tests are now in place. F30-a…c remain gated on D18. |
-| F30 — 90-day streak cap | P3 / owner decision | **Open.** Current streak is capped at 90 while best streak is not. Ask D18 before changing product behavior. |
+| F28 — App version property | Test setup | **Implemented in Phase 1.** Test workers receive the project version and telemetry-off property; the packaged-app missing-version fail-fast remains intentional. |
+| F29 — Test gaps | Cross-cutting | **Reconciled for non-owner-gated findings.** Planned test classes map to current renamed/split equivalents. F6/F9 applied repairs require a verified backup; failure blocks mutation. F30-a…c are complete under resolved D18. |
+| F30 — 90-day streak cap | P3 / owner decision | **Complete and Linux-tested.** D18 resolved 2026-10-15: the cap was not intentional. The current-streak query has no 90-row limit; F30-a…c pass. |
 
 ## Reconciled execution sequence
 
@@ -84,7 +84,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 3. Ask D4 during Phase 1 if possible, but **defer F5 implementation/sign-off until after F11** in Phase 2; F5 depends on the read-only wizard path and is not a Phase 1 exit criterion.
 4. **Phase 2:** F10 → F12 → F7 → F8 → F14a new-migration guard → F6 generator/schema fix → F9 age-gate/dry-run implementation → F13 → F11 → F5 (if D4 is resolved) → F17 → F15 → approved F6/F9 live-data repairs → F14b legacy-migration audit → F16/F18/F19.
 5. F6/F9 code and dry-run tests may be prepared earlier, but **do not run a live repair until F15 can produce and verify a backup**. The F6 v10 migration must have a tested column guard before it is added; do not edit migrations v1–v9.
-6. **Phase 3:** proceed only after Phase 2. F22 is already ordered after F15; keep F20–F25/F30 low priority and owner-gated items deferred. F26 is closed.
+6. **Phase 3:** proceed only after Phase 2. F22 is already ordered after F15. F20–F26 and F28–F30 are complete or closed locally; F27 remains blocked on human W9. Keep all remaining owner-gated work deferred until the owner records its specific decision. F26 is closed.
 
 ## Phase 0 — Baseline and tooling
 
@@ -102,7 +102,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 1 — P0 startup failure and blast radius
 
-- **Status:** In progress — 2026-10-14 (F1).
+- **Status:** Complete for non-owner-gated scope — 2026-10-15. F1b remains gated on human W1–W3; other applicable Windows checks remain open.
 - **Required order:** **F28 test configuration → F4.0 → F2 → F1 → F3 local diagnostics/UI → F4 consent/redaction → F3 remote-payload summary. F5 is deferred until after F11.**
 
 - **2026-10-14 start note:** Began Phase 1 after explicit owner authorization. Work follows the reconciled sequence above; F1b remains owner-gated. No database finding was implemented before this authorization.
@@ -137,8 +137,8 @@ The following dependencies take precedence over conflicting ordering in the atta
 - [x] **F3 local diagnostics/UI — complete:** Bounded sqlite-jdbc JUL capture, full cause chain, retained DB path, local report path, and loader-log diagnostics appear in the startup gate. Reuses the existing full local cause-chain report; F3-d passed.
 - [x] **F3 remote summary — gated on F4:** Added bounded root-cause-first summaries to both critical and fatal remote payloads only after F4’s fail-closed consent/redaction checks. F3-a…c pass: bounded/root-first/deepest-frame behavior, cause-cycle termination, and valid JSON for quotes, backslashes, newlines, and non-ASCII text.
 - [x] **F4 — Consent, privacy, and secrets:** DB-independent opt-in consent, fail-closed unknown/unreadable states, one-time legacy migration, serialized Windows-path redaction, and the no-network sink seam pass F4-a…d. Consent appears after first-run onboarding when no decision exists. D1–D3 were resolved before this work; webhook constants remain untouched.
-- [ ] **F5 decision intake — D4:** Ask/record the owner’s uninstall policy if they answer in Phase 1. Do not implement F5 until F11’s read-only path exists in Phase 2.
-- [x] **Phase 1 exit:** F1–F4 Linux acceptance is met except outstanding WIN-VERIFY checks; F5 is explicitly deferred until after F11 and D4. `fixes/PHASE-1-REPORT.md` records D1–D5, the D4/F1b gates, test evidence, and the deferral.
+- [x] **F5 decision intake — D4:** Resolved 2026-10-15 as option A; F5 was implemented after F11 in Phase 2. W6 remains pending human verification.
+- [x] **Phase 1 exit:** F1–F4 Linux acceptance was met except outstanding WIN-VERIFY checks. F5 was deferred at Phase 1 exit and was subsequently implemented after F11 and D4 in Phase 2. `fixes/PHASE-1-REPORT.md` records the original D1–D5 gates and test evidence.
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
@@ -219,7 +219,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 3 — P3 hardening and cleanup
 
-**Status:** In progress — 2026-10-15 (F23). Phase 2 non-owner-gated exit criteria were met; F20–F23 are implemented and verified, and D13/D14 are resolved.
+**Status:** In progress — 2026-10-15. Phase 3 findings F20–F26 and F28–F30 are complete or closed locally. F27 remains blocked on human W9; Phase 3 exit and Windows verification remain open.
 
 - **2026-10-15 F20 start:** Replacing date-wrapped indexed-column filters and per-day reads only. Preserve returned values, timestamp storage, and schema; use isolated temporary databases for verification.
 - **2026-10-15 F20 verification:** The implementation has no `DATE(...)` predicates in `Database.kt`; `DayQueriesTest` passed 4/4 focused tests, and the final root suite passed 213/213 tests with 0 failures/errors/skips. XML: `build/test-results/test/TEST-com.focusflow.data.DayQueriesTest.xml`.
@@ -251,13 +251,13 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F29 start:** Reconcile the plan's required test files and finding-specific cases against the current suite; treat equivalent renamed/split test classes as coverage only when their assertions match, and leave owner-gated behavior unchanged.
 - **2026-10-15 F29 initial map:** Mapped the planned cases to current test classes. A deeper assertion review then found that F6/F9 non-dry-run tests called low-level database repairs directly, without proving the required verified backup preceded mutation.
 - **2026-10-15 F29 correction:** Added `DatabaseRepairService` as the applied-repair entry point. F6/F9 dry-runs remain read-only; failed backups block mutation; successful verified snapshots are asserted to contain the pre-repair rows. Tests use `TempHome`; no real profile was accessed.
-- **2026-10-15 F29 verification:** Focused F6/F9 classes passed 8/8. Final isolated-home root suite: `gradle :test --no-daemon --console=plain --rerun-tasks`, 225 tests across 58 JUnit XML files, 0 failures/errors/skips. F30-a…c remain deferred pending D18; Windows W9/W13/W15 remain unverified.
+- **2026-10-15 F29 verification:** Focused F6/F9 classes passed 8/8. At that point, the isolated-home root suite `gradle :test --no-daemon --console=plain --rerun-tasks` passed 225 tests across 58 JUnit XML files, 0 failures/errors/skips; F30-a…c were still deferred pending D18. D18 was resolved and F30-a…c were subsequently verified in the latest 228-test root run. Windows W9/W13/W15 remain unverified.
 - [x] **F25 — Central application paths:** Getter-based `AppPaths` follows changing `user.home`; the four DB-path computations and trivial app-data path uses are centralized. F25-a…b and the isolated-home root suite pass. W4/W5 remain pending on Windows.
 - [x] **F26 — Closed as stale:** Current checkout includes `recovery/` and its Gradle build file; no code change or removal is warranted. Evidence is recorded in root `AUDIT-ADDENDUM.md`.
 - [ ] **F27 — SelectorProvider flag:** No code change until human W9 is complete on the actual shipped JDK (current toolchain JDK 19) and EXE/MSI/MSIX formats; MSIX is an active Microsoft Store distribution. Do not remove the flag based on the audit alone.
 - [x] **F28 — Test-configuration regression:** Completed earlier in Phase 1; retain its test/configuration coverage in the final audit.
-- [x] **F29 — Test-gap closure:** Reconcile renamed/split test classes and confirm finding-specific assertions. F6/F9 applied repairs require a verified backup; failure blocks mutation. F30 cases remain gated on D18; Windows checks remain human-only.
-- [ ] **F30 — Current streak cap:** Ask whether 90 days is intentional (D18); change only after approval. If approved as a defect, pass F30-a…c.
+- [x] **F29 — Test-gap closure:** Reconcile renamed/split test classes and confirm finding-specific assertions. F6/F9 applied repairs require a verified backup; failure blocks mutation. F30-a…c now pass under resolved D18; Windows checks remain human-only.
+- [x] **F30 — Current streak cap:** D18 resolved 2026-10-15: 90 days is not an intentional cap. The current-streak query reads consecutive completion dates without a 90-row limit; F30-a…c pass.
 - [ ] **Phase 3 exit:** All non-owner-gated acceptance/tests pass; `fixes/PHASE-3-REPORT.md` lists remaining owner choices and Windows checks W9/W15 as applicable.
 
 ## Owner decisions — unresolved unless answered or explicitly closed
@@ -266,10 +266,10 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 
 | ID | Decision | Blocks / notes |
 |---|---|---|
-| D1 | Rotate exposed Discord webhooks and move delivery behind an owner-provided relay | F4. Owner performs rotation; never request, inspect, or write secret values into files/chat. |
-| D2 | Crash-report consent default: opt-in or opt-out | F4. |
-| D3 | Final consent dialog and Store privacy wording | F4. Owner/legal wording decision. |
-| D4 | Uninstall outcome when DB state is unreadable: confirmation phrase, manual path, or external flag | **Resolved 2026-10-15: A — allow after typed confirmation for failures other than BUSY/LOCKED.** | F5. |
+| D1 | Delivery route and exposed Discord webhooks | **Route resolved 2026-10-14:** keep direct Discord delivery. Owner rotation and shipped-secret exposure risk remain open; never request, inspect, or write secret values into files/chat. |
+| D2 | Crash-report consent default: opt-in or opt-out | **Resolved 2026-10-14:** opt-in; no report before explicit consent. |
+| D3 | Final consent dialog and Store privacy wording | **Resolved 2026-10-14:** use factual wording that the receiving service sees the sender IP and diagnostic text may contain local paths. |
+| D4 | Uninstall outcome when DB state is unreadable | **Resolved 2026-10-15: A — allow after typed confirmation for failures other than BUSY/LOCKED. F5.** |
 | D5 | Ship SQLite DLL inside installation | F1b; wait for W1–W3. |
 | D6 | sqlite-jdbc upgrade timing | No version bump without explicit approval; separate change. |
 | D7 | Whether to offer deletion of recurring-task duplicates | F6 repair defaults to mark-only; never delete user rows without approval. |
@@ -279,11 +279,11 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D11 | Mid-run DB-loss design | F19; design note first, implementation only after approval. |
 | D12 | PIN hashing/recovery design and security wording | F8; separate project per source plan. |
 | D13 | “Clear all data” scope and Global PIN requirement | **Resolved 2026-10-15:** clear only sessions/completion stats, tasks, daily notes, and temptation logs; preserve settings, rules, habits, allowances, PINs, and presets; fix wording; require the Global PIN. |
-| D14 | CSV formula-injection guard and UTF-8 BOM | F23; BOM recommendation requires Excel verification. |
+| D14 | CSV formula-injection guard and UTF-8 BOM | **Resolved 2026-10-15:** formula-prefix protection enabled for formula-like text; no UTF-8 BOM. W15 Excel verification remains open. |
 | D15 | Crash-log placement: Desktop-first or app log directory | F24. |
 | D16 | Whether the recovery Gradle module is still needed | **Closed—not required for this audit:** F26 is stale; revisit only if the owner proposes removing the existing module. |
 | D17 | Keep/replace/remove SelectorProvider flag | F27; only after W9. |
-| D18 | Whether the 90-day current-streak cap is intentional | F30. |
+| D18 | Whether the 90-day current-streak cap is intentional | **Resolved 2026-10-15:** cap was not intentional; remove the 90-row limit. F30-a…c pass. |
 | D19 | Threading restructure | Pending owner approval after F16 measurement; do not restructure without approval. |
 
 ## Windows verification matrix — human only
