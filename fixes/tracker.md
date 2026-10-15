@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 is in progress. F10, F12, F7, F8, F14a/b, F6, F9, F13, F11, F5, F17, and F15 are implemented and Linux-tested as recorded below. Live F6/F9 repairs remain owner-gated; F16/F18/F19 remain open. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4 and D8 are resolved. F1b remains owner-gated, and Windows checks remain human-only.
+- **Overall status:** Phase 2 is in progress. F10, F12, F7, F8, F14a/b, F6, F9, F13, F11, F5, F17, F15, and F16 are implemented and Linux-tested as recorded below. Live F6/F9 repairs remain owner-gated; F18/F19 remain open. D19 approval is still required before any threading restructure. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4 and D8 are resolved. F1b remains owner-gated, and Windows checks remain human-only.
 
 ## Tracking rules
 
@@ -59,7 +59,7 @@
 | F13 — Session write ordering | P1 | **Implemented and Linux-tested.** Start/end writes are ordered, failed writes are logged, and dispose allows bounded completion of pending writes. |
 | F14 — Migration schema verification | P2 | **F14a/b implemented and Linux-tested.** All eight swallowed legacy column additions are covered by the post-migration required-schema guard; missing columns fail initialization with `SchemaMismatchException`. A healthy v9-shaped DB upgrades to v10, and v1–v9 migration bodies remain unchanged. The exact non-duplicate SQLite failure is still inferred, not reproduced. |
 | F15 — Backup verification/restore | P1/P2 | **Implemented and Linux-tested.** `VACUUM INTO` remains; a read-only SQLite `quick_check` and SHA-256 are required for `Verified`, and hashless backups are `Unverified`. Failures are logged and persisted, same-second names do not collide, suspect existing backups are retained, and direct restore is compile-time disabled. D9 gates remain. |
-| F16 — DB contention | P2 | **Measure only.** DB methods are synchronized, but reviewed UI paths already use IO dispatchers. No contention measurement justifies a threading rewrite yet. |
+| F16 — DB contention | P2 | **Measured on Linux for 10 minutes:** 9 contended enters / 9.248 ms total, 0 AWT event-thread waits, and 7 distinct callsites. No threading rewrite is justified by this run; D19 approval remains required. |
 | F17 — VPN cache after read failure | P1 | **Implemented and Linux-tested.** The IO cache refresh reloads VPN settings; enforcement paths only read volatile state. Failed refreshes retain last-known-good values, unknown enable state fails closed, and failed writes remain visible to callers. |
 | F18 — Enforcement while DB unavailable | P1 / owner decision | **Policy, not a stand-alone code fix.** Startup deliberately leaves DB-dependent services stopped and tells the user. Decide the product behavior before changing it. |
 | F19 — Mid-run DB loss | P2 / owner decision | **Design note only.** No specific mid-run recovery behavior has been approved or reproduced. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, F11, and F5 complete).
+- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, F11, F5, and F16 complete).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -201,7 +201,13 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F14b implementation:** Audited all eight swallowed `ALTER TABLE` targets in `migrateV1`–`migrateV3`; each is present in `REQUIRED_SCHEMA_COLUMNS`, and `verifySchema()` runs after `migrate()`. Added coverage proving each missing target produces its named `SchemaMismatchException`, plus a genuine v9-shaped fixture that adds the v10 column and opens successfully. No v1–v9 migration body changed. The specific non-duplicate SQLite error remains unreproduced; the post-migration guard is the verified containment.
 - **2026-10-15 F14b verification:** `gradle :test --no-daemon --console=plain --tests com.focusflow.data.DatabaseSchemaGuardTest` passed 4/4. Root `gradle :test --no-daemon --console=plain` passed 203 tests, 0 failures/errors/skips across 50 JUnit XML reports. Tests use explicit `@TempDir` database files; no live profile was accessed. `JAVA_HOME` reports GraalVM CE 22.3.1 / OpenJDK 19.0.2; Gradle is 8.14.2 with launcher/daemon JVM 21.0.7. Windows W6 remains human-only.
 - [x] **F14b — Legacy schema audit (after F15):** All swallowed legacy column additions are covered by required-schema verification; healthy v9 upgrades to v10; v1–v9 remain unchanged. F14-a…b pass. The exact underlying non-duplicate SQLite failure remains unreproduced, as the source plan classifies it as inferred.
-- [ ] **F16 — Measure database monitor contention:** Add the planned debug-only measurement, run a 10-minute session, and report the top 10 offenders. Do not restructure threading without D19 approval.
+- **2026-10-15 F16 start:** Owner authorized the debug-only database-monitor contention measurement. Scope is limited to collecting per-wait duration, AWT event-thread status, and callsite rankings for ten minutes; no synchronization or threading changes are authorized.
+- **2026-10-15 F16 test attempt:** The first synthetic JFR test found zero waits because `RecordedEvent.getValue("duration")` exposes raw ticks on this JDK, not a `Duration`. Confirmed the event carries the Database monitor and stack trace; switching the summarizer to `RecordedEvent.getDuration()` before rerunning. No production DB behavior was exercised or changed by the probe.
+- **2026-10-15 F16 focused rerun:** JFR parsing captured the synthetic Database-monitor wait and AWT-thread timing; the run failed only because the test assertion expected the wrong test class name. Corrected the assertion before rerunning; no production DB behavior was exercised.
+- **2026-10-15 F16 focused verification:** `gradle :test --no-daemon --console=plain --tests com.focusflow.data.DatabaseMonitorDiagnosticsTest` passed: 1 test, 0 failures/errors/skips. The synthetic monitor wait was captured and summarized with its wait time, AWT-thread count, and callsite.
+- **2026-10-15 F16 root-suite verification:** `gradle :test --no-daemon --console=plain` passed with 204 tests, 0 failures/errors/skips across 51 JUnit XML files. The F16 XML records 1 passing test.
+- **2026-10-15 F16 measurement:** The ten-minute capture ran from 05:15:05.500515101Z to 05:25:05.723454452Z (600,216 ms), on Linux amd64/OpenJDK 21.0.7, using a fresh temporary profile with telemetry disabled. It recorded 9 contended Database-monitor enters (9.248 ms total), 0 AWT waits, and 7 distinct callsites. The full ranking and limitations are in `fixes/PHASE-2-REPORT.md`. No user-profile database or threading behavior was changed; D19 approval remains pending.
+- [x] **F16 — Measure database monitor contention:** Added the opt-in debug-only measurement, completed the ten-minute capture, and reported all observed callsites. No threading restructure was made.
 - [ ] **F18 — Database unavailable behavior:** No degraded blocker without a separate approved design. The plan permits the small visible “Blocking is OFF” message as option A; confirm task authorization before applying it. Ask the owner before choosing another behavior.
 - [ ] **F19 — Mid-run DB loss:** Write only the one-page health/reopen/banner design note; do not implement it without owner approval D11.
 - [ ] **Phase 2 exit:** All non-owner-gated findings have passing tests; report open gates D4 and D7–D11 plus other F6/F9/F15 decisions in `fixes/PHASE-2-REPORT.md`.
@@ -247,7 +253,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D16 | Whether the recovery Gradle module is still needed | **Closed—not required for this audit:** F26 is stale; revisit only if the owner proposes removing the existing module. |
 | D17 | Keep/replace/remove SelectorProvider flag | F27; only after W9. |
 | D18 | Whether the 90-day current-streak cap is intentional | F30. |
-| D19 | Threading restructure | F16; only after measurement. |
+| D19 | Threading restructure | Pending owner approval after F16 measurement; do not restructure without approval. |
 
 ## Windows verification matrix — human only
 

@@ -16,4 +16,4 @@
 - [Silent startup recovery gate](silent-startup-gate.md) — Keep routine JVM/database startup invisible; show recovery UI only when startup needs user action.
 - [Language market prioritization](language-market-prioritization.md) — For India, don't infer Hindi preference from install location; most users prefer reading in English.
 - [Gradle test completion evidence](gradle-test-completion.md) — Require a final `:test` result and XML reports; partial `testClasses` output is not test evidence.
-- [Gradle JVM selection](gradle-jvm-selection.md) — `JAVA_HOME` and Gradle's launcher/daemon JVM may differ; verify the actual test worker before reporting its runtime.
+- [Gradle JVM selection](gradle-jvm-selection.md) — Gradle launcher, daemon, test worker, and app process may use different JVMs; verify the one under test.

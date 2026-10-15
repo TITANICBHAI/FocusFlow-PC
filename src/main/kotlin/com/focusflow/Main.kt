@@ -5,6 +5,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.*
 import com.focusflow.data.Database
+import com.focusflow.data.DatabaseMonitorDiagnostics
 import com.focusflow.data.DbInitResult
 import com.focusflow.data.DbStartupState
 import com.focusflow.data.NativeSqliteUnavailableException
@@ -154,6 +155,7 @@ fun main(args: Array<String>) {
         return
     }
 
+    DatabaseMonitorDiagnostics.startIfEnabled()
     ElevationManager.logStartupDiagnostics()
     val handoffNonce = args.firstOrNull { it.startsWith("--focusflow-elevation-handoff=") }
         ?.substringAfter('=')
