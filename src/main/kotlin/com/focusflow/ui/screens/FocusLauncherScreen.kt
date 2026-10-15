@@ -46,6 +46,9 @@ private val DURATION_PRESETS = listOf(
 )
 private const val CUSTOM_DURATION_INDEX = -1
 private const val MAX_CUSTOM_DURATION_MINUTES = 24 * 60
+private const val LOCKDOWN_NOTICE_DISMISSED_SETTING = "launcher_lockdown_notice_dismissed"
+private const val PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING =
+    "launcher_protected_processes_notice_dismissed"
 
 private fun formatDuration(totalMinutes: Int): String {
     val hours = totalMinutes / 60
@@ -87,6 +90,7 @@ fun FocusLauncherScreen() {
     var allowedAppsExpanded by remember { mutableStateOf(false) }
     var showLockdownNotice by remember { mutableStateOf(true) }
     var showProtectedProcessesNotice by remember { mutableStateOf(true) }
+    var noticesLoaded by remember { mutableStateOf(false) }
     var launcherPresets    by remember { mutableStateOf<List<FocusLauncherPreset>>(emptyList()) }
     var showPresetDialog   by remember { mutableStateOf(false) }
 
@@ -122,6 +126,12 @@ fun FocusLauncherScreen() {
         // Restore the last selection, intersected with apps currently installed.
         val persisted = withContext(Dispatchers.IO) { Database.getSetting("launcher_selected_apps") }
         val presets = withContext(Dispatchers.IO) { Database.getFocusLauncherPresets() }
+        val noticeDismissals = withContext(Dispatchers.IO) {
+            Pair(
+                Database.getSetting(LOCKDOWN_NOTICE_DISMISSED_SETTING) == "true",
+                Database.getSetting(PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING) == "true"
+            )
+        }
         selectedApps = if (persisted != null && persisted.isNotBlank()) {
             val saved     = persisted.split(",").filter { it.isNotBlank() }
                 .map { it.trim().lowercase() }.toSet()
@@ -132,6 +142,9 @@ fun FocusLauncherScreen() {
             apps.map { it.processName.lowercase() }.toSet()
         }
         launcherPresets = presets
+        showLockdownNotice = !noticeDismissals.first
+        showProtectedProcessesNotice = !noticeDismissals.second
+        noticesLoaded = true
 
         isLoading = false
     }
@@ -167,7 +180,7 @@ fun FocusLauncherScreen() {
         }
 
         // ── Warning banner ───────────────────────────────────────────────────
-        if (showLockdownNotice) {
+        if (noticesLoaded && showLockdownNotice) {
             item {
                 Row(
                     modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
@@ -192,7 +205,12 @@ fun FocusLauncherScreen() {
                         )
                     }
                     IconButton(
-                        onClick = { showLockdownNotice = false },
+                        onClick = {
+                            showLockdownNotice = false
+                            scope.launch(Dispatchers.IO) {
+                                Database.setSetting(LOCKDOWN_NOTICE_DISMISSED_SETTING, "true")
+                            }
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
@@ -290,7 +308,7 @@ fun FocusLauncherScreen() {
         }
 
         // ── Launcher limitations ──────────────────────────────────────────────
-        if (showProtectedProcessesNotice) {
+        if (noticesLoaded && showProtectedProcessesNotice) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
@@ -310,7 +328,12 @@ fun FocusLauncherScreen() {
                         style = MaterialTheme.typography.bodySmall
                     )
                     IconButton(
-                        onClick = { showProtectedProcessesNotice = false },
+                        onClick = {
+                            showProtectedProcessesNotice = false
+                            scope.launch(Dispatchers.IO) {
+                                Database.setSetting(PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING, "true")
+                            }
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
