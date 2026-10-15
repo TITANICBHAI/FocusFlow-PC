@@ -10,6 +10,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Properties
 import java.util.UUID
@@ -22,7 +23,8 @@ enum class BackupLocation {
 data class BackupEntry(
     val file: File,
     val location: BackupLocation,
-    val verification: AutoBackupService.BackupVerification
+    val verification: AutoBackupService.BackupVerification,
+    val createdAtMillis: Long = file.lastModified()
 )
 
 data class RestoreArchiveEntry(
@@ -83,6 +85,10 @@ object BackupRecoveryService {
     private const val PREIMAGE_MANIFEST = "preimage.properties"
     private val archiveTimestamp =
         DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS")
+    private val backupFileTimestamp =
+        DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+    private val backupFilenameTimestamp =
+        Regex("""^focusflow_(?:safety_)?(\d{8}_\d{6})(?:_\d+)?\.db$""")
 
     private data class RestoreJournal(
         val state: String,
@@ -131,7 +137,8 @@ object BackupRecoveryService {
             entries += BackupEntry(
                 file = file,
                 location = BackupLocation.APP_DATA,
-                verification = AutoBackupService.verifyBackup(file)
+                verification = AutoBackupService.verifyBackup(file),
+                createdAtMillis = backupCreatedAtMillis(file)
             )
         }
         val secondary = secondaryBackupDirectory()
@@ -142,12 +149,25 @@ object BackupRecoveryService {
                 entries += BackupEntry(
                     file = file,
                     location = BackupLocation.SECONDARY,
-                    verification = AutoBackupService.verifyBackup(file)
+                    verification = AutoBackupService.verifyBackup(file),
+                    createdAtMillis = backupCreatedAtMillis(file)
                 )
             }
         }
         return entries.distinctBy { runCatching { it.file.canonicalPath }.getOrDefault(it.file.absolutePath) }
-            .sortedByDescending { it.file.lastModified() }
+            .sortedByDescending { it.createdAtMillis }
+    }
+
+    internal fun backupCreatedAtMillis(file: File): Long {
+        val encodedTimestamp = backupFilenameTimestamp.matchEntire(file.name)?.groupValues?.get(1)
+        return encodedTimestamp?.let { timestamp ->
+            runCatching {
+                LocalDateTime.parse(timestamp, backupFileTimestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+            }.getOrNull()
+        } ?: file.lastModified()
     }
 
     fun listRestoreArchives(): List<RestoreArchiveEntry> =
@@ -434,7 +454,7 @@ object BackupRecoveryService {
             clearPendingRestoreFiles()
             RecoveryNoticeService.writeRestoreNotice(
                 "Interrupted restore was rolled back",
-                "FocusFlow detected an interrupted restore and restored the database files saved before it. The selected backup was not applied. You can review backups under Contact & Bug Reports → Backup & Recovery."
+                "FocusFlow detected an interrupted restore and restored the database files saved before it. The selected backup was not applied. You can review backups under Settings → Backup & Recovery."
             )
             return Database.init()
         }

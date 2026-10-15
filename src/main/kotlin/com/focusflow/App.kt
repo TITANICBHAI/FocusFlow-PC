@@ -157,6 +157,7 @@ private val ADMIN_BUTTON_SCREENS = setOf(
 @Composable
 fun App() {
     var currentScreen         by remember { mutableStateOf(Screen.DASHBOARD) }
+    var openBackupRecoveryInSettings by remember { mutableStateOf(false) }
     var dashboardRefreshKey   by remember { mutableStateOf(0) }
     var focusPreloadTask by remember { mutableStateOf<Task?>(null) }
     var blockerInitialTab by remember { mutableStateOf(AppBlockerTabs.ALWAYS_BLOCK) }
@@ -528,7 +529,10 @@ fun App() {
                                 Screen.HABITS         -> HabitsScreen()
                                 Screen.REPORTS        -> ReportsScreen()
                                 Screen.PROFILE        -> ProfileScreen()
-                                Screen.SETTINGS       -> SettingsScreen()
+                                Screen.SETTINGS       -> SettingsScreen(
+                                    openBackupRecovery = openBackupRecoveryInSettings,
+                                    onBackupRecoveryOpened = { openBackupRecoveryInSettings = false }
+                                )
                                 Screen.ACTIVE         -> ActiveScreen(onNavigate = { currentScreen = it })
                                 Screen.KEYWORD_BLOCKER -> KeywordBlockerScreen()
                                 Screen.BLOCK_DEFENSE  -> BlockDefenseScreen(onNavigateToVpn = { currentScreen = Screen.VPN_NETWORK }, onNavigateToAppBlocker = { currentScreen = Screen.BLOCK_APPS })
@@ -714,7 +718,10 @@ fun App() {
         startupNotice?.takeIf { appLaunchDialogsResolved && !anotherDialogIsOpen }?.let { notice ->
             fun acknowledgeNotice(openBackups: Boolean) {
                 startupNotice = null
-                if (openBackups) navigate(Screen.CONTACT)
+                if (openBackups) {
+                    openBackupRecoveryInSettings = true
+                    navigate(Screen.SETTINGS)
+                }
                 scope.launch(Dispatchers.IO) {
                     RecoveryNoticeService.acknowledge(notice)
                 }
@@ -738,7 +745,7 @@ fun App() {
                         onClick = { acknowledgeNotice(openBackups = true) },
                         colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                     ) {
-                        Text("Review backups")
+                        Text("Open Backup & Recovery")
                     }
                 },
                 dismissButton = {

@@ -78,25 +78,28 @@
   <p>This is the one live database FocusFlow uses. A secondary backup folder is not a second live database and does not mirror every change in real time; it stores separate verified snapshots when backups are created.</p>
   <p>The app uses this database while it is running. Do not move or delete <code>focusflow.db</code> while FocusFlow is open.</p>
 
+  <h2>If database corruption is detected</h2>
+  <p>When FocusFlow opens the database, SQLite checks its integrity. If corruption is detected, FocusFlow first preserves the unreadable database and any WAL/SHM sidecar files, then opens a fresh database. A startup notice explains what happened and its <strong>Open Backup &amp; Recovery</strong> button takes you to <strong>Settings → Backup &amp; Recovery</strong>. The app does not automatically restore a snapshot; choose a verified backup and stage the restore yourself. Database integrity is checked during initialization, not continuously while the app is running.</p>
+
   <h2>Where backups are stored</h2>
   <ul>
     <li><strong>Primary app-data backups:</strong> <code>%USERPROFILE%\.focusflow\backups\</code>. These are database snapshots with matching <code>.sha256</code> and <code>.meta.json</code> files.</li>
-    <li><strong>Optional secondary backups:</strong> You can choose another folder in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>. Verified snapshots are copied there. It may be on another drive or network location; FocusFlow does not host this as a cloud backup.</li>
+    <li><strong>Optional secondary backups:</strong> Choose another folder in <strong>Settings → Backup &amp; Recovery</strong>. Verified snapshots are copied there. It may be on another drive or network location; FocusFlow does not host this as a cloud backup.</li>
     <li><strong>Safety backups:</strong> A verified snapshot of the current live database, created immediately before a staged restore is applied. It is separate from the older backup being restored and is kept in the primary backup folder.</li>
     <li><strong>Pre-restore archives:</strong> Before replacing the live database, FocusFlow preserves the current <code>focusflow.db</code> and any active SQLite WAL/SHM files in <code>%USERPROFILE%\.focusflow\backups\restore-archives\</code>, with a verification manifest. If applying the selected backup fails, FocusFlow uses this preserved set to attempt a rollback. Recovery archives remain available in the app for review or manual deletion.</li>
   </ul>
 
   <h2>Creating and verifying backups</h2>
-  <p>After the database is ready, FocusFlow checks for a backup at startup and then every six hours. It normally creates one regular automatic backup per day; the six-hour check does not mean six backups per day. To create an extra snapshot, use <strong>Back up now</strong> in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>.</p>
-  <p>You can create a snapshot while FocusFlow is running. FocusFlow asks SQLite to make a consistent copy of the live database, then checks the copy's integrity and SHA-256 hash. A backup is marked <strong>Verified</strong> only when those checks pass. Unverified or invalid backups cannot be restored through the normal restore flow.</p>
+  <p>After the database is ready, FocusFlow checks for a backup at startup and then every six hours. It normally creates one regular automatic backup per day; the six-hour check does not mean six backups per day. To create an extra snapshot, use <strong>Back up now</strong> in <strong>Settings → Backup &amp; Recovery</strong>.</p>
+  <p>You can create a snapshot while FocusFlow is running. FocusFlow asks SQLite to make a consistent copy of the live database, then checks the copy's integrity and SHA-256 hash. A backup is marked <strong>Verified</strong> only when those checks pass. Unverified or invalid backups cannot be restored through the normal restore flow. The backup list shows each snapshot's creation date and time, and marks the newest one <strong>Latest</strong>.</p>
 
   <h2>Automatic cleanup</h2>
-  <p>FocusFlow keeps up to seven regular primary app-data backups. After a new backup succeeds, older regular snapshots beyond that limit are removed along with their matching hash and metadata files. Cleanup is based on file age and count, not on which backups are verified.</p>
+  <p>FocusFlow keeps up to seven regular primary app-data backups. A successful new backup triggers cleanup only when the regular-backup count is over seven; with one or two regular backups, nothing is deleted. Cleanup removes the oldest regular snapshot or snapshots and their matching hash and metadata files. It is based on age and count, not on which backups are verified.</p>
   <p>Safety backups, pre-restore recovery archives, and copies in your secondary folder are not automatically deleted. Removing the selected secondary-folder setting also leaves existing files in that folder untouched.</p>
 
   <h2>Restoring a snapshot</h2>
   <ol>
-    <li>Open <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong> and choose a backup marked <strong>Verified</strong>.</li>
+    <li>Open <strong>Settings → Backup &amp; Recovery</strong> and choose a backup marked <strong>Verified</strong>.</li>
     <li>Review the confirmation and choose <strong>Stage restore</strong>. The current database keeps running; it is not replaced immediately.</li>
     <li>Quit and reopen FocusFlow. Before applying the restore, FocusFlow creates and verifies a safety backup, then preserves the current database files in a pre-restore archive. If the restored database fails to initialize, FocusFlow attempts to reinstate the preserved files. The safety backup and archive are distinct recovery points; the previous database files remain available after a successful restore too.</li>
   </ol>
@@ -106,8 +109,8 @@
 
   <h2>Deleting backups</h2>
   <ul>
-    <li><strong>Safety backups, secondary copies, and preserved restore archives:</strong> Use the corresponding delete control in <strong>Contact &amp; Bug Reports → Backup &amp; Recovery</strong>. The app asks for confirmation before removing the selected copy.</li>
-    <li><strong>Regular primary backups:</strong> The current screen does not provide a delete button for these; automatic cleanup keeps the newest seven. To remove one manually, quit FocusFlow first, then delete that selected <code>focusflow_*.db</code> file and its matching <code>.sha256</code> and <code>.meta.json</code> sidecars from the <code>backups</code> folder. Do not delete files you may need to restore.</li>
+    <li><strong>Safety backups, secondary copies, and preserved restore archives:</strong> Use the corresponding delete control in <strong>Settings → Backup &amp; Recovery</strong>. The app asks for confirmation before removing the selected copy.</li>
+    <li><strong>Regular primary backups:</strong> The Backup &amp; Recovery screen does not provide a delete button for these; automatic cleanup keeps the newest seven. To remove one manually, quit FocusFlow first, then delete that selected <code>focusflow_*.db</code> file and its matching <code>.sha256</code> and <code>.meta.json</code> sidecars from the <code>backups</code> folder. Do not delete files you may need to restore.</li>
     <li><strong>Removing a secondary-folder setting:</strong> This stops future copies to that folder; it does not delete copies already there.</li>
   </ul>
   <p>Deleting a backup is different from deleting the live database. To remove all local FocusFlow data, first uninstall the app, then delete <code>%USERPROFILE%\.focusflow\</code>. This also removes the database, settings, logs, backups, and recovery files and cannot be undone.</p>

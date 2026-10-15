@@ -71,7 +71,7 @@ object RecoveryNoticeService {
         return RecoveryNotice(
             id = "corrupt-db:${archive.name}",
             title = "Database recovery",
-            message = "FocusFlow preserved an unreadable database file and its SQLite sidecars, then opened a fresh database. The previous data was not restored. You can review verified backups under Contact & Bug Reports → Backup & Recovery. The preserved files have not been deleted.",
+            message = "FocusFlow preserved an unreadable database file and its SQLite sidecars, then opened a fresh database. The previous data was not restored. You can review verified backups under Settings → Backup & Recovery. The preserved files have not been deleted.",
             archiveFile = archive
         )
     }

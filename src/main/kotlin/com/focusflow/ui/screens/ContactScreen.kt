@@ -43,6 +43,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.DecimalFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.awt.Desktop
 import java.net.URI
 import javax.swing.JFileChooser
@@ -174,8 +178,6 @@ fun ContactScreen() {
                     )
                 }
             }
-
-            BackupRecoverySection()
 
             if (showForgottenPinNotice) {
                 SectionCard(
@@ -464,7 +466,7 @@ fun ContactScreen() {
 }
 
 @Composable
-private fun BackupRecoverySection() {
+internal fun BackupRecoverySection() {
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<BackupEntry>>(emptyList()) }
     var restoreArchives by remember { mutableStateOf<List<RestoreArchiveEntry>>(emptyList()) }
@@ -749,10 +751,12 @@ private fun BackupRecoverySection() {
             } else if (entries.isEmpty()) {
                 Text("No backup files found.", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
             } else {
+                val latestBackupCreatedAt = entries.maxOfOrNull { it.createdAtMillis }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     entries.forEach { entry ->
                         BackupEntryRow(
                             entry = entry,
+                            isLatest = entry.createdAtMillis == latestBackupCreatedAt,
                             enabled = !working && !pendingRestore,
                             onRestore = { restoreSource = entry },
                             onDelete = { deleteSource = entry }
@@ -918,6 +922,7 @@ private data class BackupRecoverySnapshot(
 @Composable
 private fun BackupEntryRow(
     entry: BackupEntry,
+    isLatest: Boolean,
     enabled: Boolean,
     onRestore: () -> Unit,
     onDelete: () -> Unit
@@ -937,11 +942,37 @@ private fun BackupEntryRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    entry.file.name,
+                    modifier = Modifier.weight(1f),
+                    color = OnSurface,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
+                )
+                if (isLatest) {
+                    Surface(
+                        color = Purple80.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Text(
+                            "Latest",
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            color = Purple80,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
             Text(
-                entry.file.name,
-                color = OnSurface,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
+                "Created: ${formatBackupCreatedAt(entry.createdAtMillis)}",
+                color = OnSurface2,
+                style = MaterialTheme.typography.labelSmall,
                 maxLines = 1
             )
             Text(
@@ -973,6 +1004,13 @@ private fun BackupEntryRow(
         }
     }
 }
+
+private fun formatBackupCreatedAt(timestampMillis: Long): String =
+    runCatching {
+        Instant.ofEpochMilli(timestampMillis)
+            .atZone(ZoneId.systemDefault())
+            .format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM))
+    }.getOrDefault("Unknown")
 
 // ── CrashLogRow ─────────────────────────────────────────────────────────────────
 @Composable

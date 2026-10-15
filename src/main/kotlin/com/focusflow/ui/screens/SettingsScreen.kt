@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,11 +47,15 @@ import com.focusflow.services.TaskAlarmService
 import com.focusflow.ui.theme.*
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(
+    openBackupRecovery: Boolean = false,
+    onBackupRecoveryOpened: () -> Unit = {}
+) {
     val strings = LocalizationManager.strings
     val scope = rememberCoroutineScope()
 
@@ -172,6 +177,13 @@ fun SettingsScreen() {
     }
 
     val settingsListState = rememberLazyListState()
+    LaunchedEffect(openBackupRecovery) {
+        if (!openBackupRecovery) return@LaunchedEffect
+        val itemCount = snapshotFlow { settingsListState.layoutInfo.totalItemsCount }
+            .first { it > 0 }
+        settingsListState.animateScrollToItem(itemCount - 1)
+        onBackupRecoveryOpened()
+    }
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         state = settingsListState,
@@ -851,7 +863,7 @@ fun SettingsScreen() {
             }
         }
 
-        // ── Fix 8: Nuclear Mode moved to "Advanced" at the bottom ─────────────
+        // ── Advanced enforcement controls ─────────────────────────────────────
         item {
             SectionCard(title = "⚠ Advanced") {
                 Row(
@@ -945,6 +957,10 @@ fun SettingsScreen() {
                     }
                 }
             }
+        }
+
+        item(key = "backup-recovery") {
+            BackupRecoverySection()
         }
     }
     FfVerticalScrollbar(
