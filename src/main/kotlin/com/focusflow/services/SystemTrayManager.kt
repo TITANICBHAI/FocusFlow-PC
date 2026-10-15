@@ -14,6 +14,24 @@ object SystemTrayManager {
     // after initialisation, silently dropping notifications or tooltip updates.
     @Volatile private var trayIcon: TrayIcon? = null
     @Volatile private var killSwitchItem: MenuItem? = null
+    private var trayMode: TrayMode? = null
+
+    private enum class TrayMode {
+        ACTIVE,
+        DATABASE_UNAVAILABLE
+    }
+
+    internal enum class UnavailableTrayAction {
+        STATUS,
+        OPEN,
+        QUIT
+    }
+
+    internal data class UnavailableTrayEntry(
+        val label: String,
+        val enabled: Boolean,
+        val action: UnavailableTrayAction
+    )
 
     data class TrayCallbacks(
         val onRestore: () -> Unit,
@@ -25,19 +43,11 @@ object SystemTrayManager {
     val isSupported: Boolean get() = SystemTray.isSupported()
 
     fun install(callbacks: TrayCallbacks) {
-        if (!SystemTray.isSupported()) return
-
-        EventQueue.invokeLater {
-            // Guard against duplicate installation. install() is normally called once,
-            // but if called again (e.g., after an accidental double-init) this prevents
-            // a second unreachable ghost icon being added to the system tray — the first
-            // icon's reference would be overwritten, making it impossible to remove later.
-            if (trayIcon != null) return@invokeLater
-
-            val tray = SystemTray.getSystemTray()
-            val traySize = tray.trayIconSize
-            val image = createTrayImage(traySize.width, traySize.height)
-
+        installTray(
+            mode = TrayMode.ACTIVE,
+            tooltip = "FocusFlow — Focus & Block",
+            onIconClick = callbacks.onRestore
+        ) {
             val popup = PopupMenu()
 
             val openItem = MenuItem("Open FocusFlow")
@@ -62,13 +72,72 @@ object SystemTrayManager {
             quitItem.addActionListener { callbacks.onQuit() }
             popup.add(quitItem)
 
-            val icon = TrayIcon(image, "FocusFlow — Focus & Block", popup)
-            icon.isImageAutoSize = false
-            icon.addActionListener { callbacks.onRestore() }
+            popup
+        }
+    }
 
-            trayIcon = icon
+    fun installDatabaseUnavailable(
+        status: String,
+        onRestore: () -> Unit,
+        onQuit: () -> Unit
+    ) {
+        val entries = databaseUnavailableTrayEntries(status)
+        installTray(
+            mode = TrayMode.DATABASE_UNAVAILABLE,
+            tooltip = status,
+            onIconClick = onRestore
+        ) {
+            PopupMenu().apply {
+                entries.forEachIndexed { index, entry ->
+                    if (index == 1) addSeparator()
+                    val item = MenuItem(entry.label).apply { isEnabled = entry.enabled }
+                    when (entry.action) {
+                        UnavailableTrayAction.STATUS -> Unit
+                        UnavailableTrayAction.OPEN -> item.addActionListener { onRestore() }
+                        UnavailableTrayAction.QUIT -> item.addActionListener { onQuit() }
+                    }
+                    add(item)
+                }
+            }
+        }
+    }
+
+    internal fun databaseUnavailableTrayEntries(status: String): List<UnavailableTrayEntry> =
+        listOf(
+            UnavailableTrayEntry(status, enabled = false, action = UnavailableTrayAction.STATUS),
+            UnavailableTrayEntry("Open FocusFlow", enabled = true, action = UnavailableTrayAction.OPEN),
+            UnavailableTrayEntry("Quit", enabled = true, action = UnavailableTrayAction.QUIT)
+        )
+
+    private fun installTray(
+        mode: TrayMode,
+        tooltip: String,
+        onIconClick: () -> Unit,
+        createPopup: () -> PopupMenu
+    ) {
+        if (!SystemTray.isSupported()) return
+
+        EventQueue.invokeLater {
+            // A database-unavailable tray is replaced with the normal tray after
+            // startup succeeds. Repeated installs in the same mode remain no-ops.
+            if (trayIcon != null && trayMode == mode) return@invokeLater
+
+            val tray = SystemTray.getSystemTray()
+            trayIcon?.let(tray::remove)
+            trayIcon = null
+            trayMode = null
+            killSwitchItem = null
+
+            val traySize = tray.trayIconSize
+            val image = createTrayImage(traySize.width, traySize.height)
+            val icon = TrayIcon(image, tooltip, createPopup())
+            icon.isImageAutoSize = false
+            icon.addActionListener { onIconClick() }
+
             try {
                 tray.add(icon)
+                trayIcon = icon
+                trayMode = mode
             } catch (e: AWTException) {
                 System.err.println("[FocusFlow] Tray install failed: ${e.message}")
             }
@@ -76,12 +145,22 @@ object SystemTrayManager {
     }
 
     fun remove() {
-        trayIcon?.let { icon ->
-            EventQueue.invokeLater {
-                SystemTray.getSystemTray().remove(icon)
-            }
+        EventQueue.invokeLater {
+            trayIcon?.let { SystemTray.getSystemTray().remove(it) }
+            trayIcon = null
+            trayMode = null
+            killSwitchItem = null
         }
-        trayIcon = null
+    }
+
+    fun removeDatabaseUnavailable() {
+        EventQueue.invokeLater {
+            if (trayMode != TrayMode.DATABASE_UNAVAILABLE) return@invokeLater
+            trayIcon?.let { SystemTray.getSystemTray().remove(it) }
+            trayIcon = null
+            trayMode = null
+            killSwitchItem = null
+        }
     }
 
     fun showNotification(

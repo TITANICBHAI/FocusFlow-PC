@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 fun StartupGateWindow(
     title: String,
     message: String,
+    blockingStatus: String? = null,
     details: String,
     databasePath: String,
     logPath: String,
@@ -116,6 +117,15 @@ fun StartupGateWindow(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                blockingStatus?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
                 if (!reportPath.isNullOrBlank()) {
                     Text(

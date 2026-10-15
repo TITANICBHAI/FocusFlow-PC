@@ -1,4 +1,4 @@
-# Phase 2 Report — F16 Database Monitor Contention
+# Phase 2 Report — F16 Measurement and F18 Startup Status
 
 **Date:** 2026-10-15
 
@@ -49,4 +49,33 @@ Ranked by accumulated monitor wait:
 
 ## Limits and remaining gates
 
-This was a Linux fresh-profile capture, not a Windows validation or a busy-user workload. The absence of AWT waits applies only to this ten-minute session. F18 and F19 remain open, and the Phase 2 exit criteria are not met. D19 remains an owner-approval gate for any threading restructure.
+This was a Linux fresh-profile capture, not a Windows validation or a busy-user workload. The absence of AWT waits applies only to this ten-minute session. F19 remains open, and the Phase 2 exit criteria are not met. D19 remains an owner-approval gate for any threading restructure.
+
+## F18 — Database unavailable status
+
+**Date:** 2026-10-15
+**Owner decision:** D10 option A — show “Blocking is OFF until the database opens” on the startup gate and in the system tray. No degraded blocker or enforcement-policy change.
+
+### Outcome
+
+- The gate displays the status for both database Busy and Failed states.
+- A limited tray mode displays the same status and provides Open and Quit actions only; it does not expose Toggle Blocking.
+- When the database opens, the limited tray is removed or replaced by the regular service tray.
+- The status is removed on quit. Database-dependent enforcement services still start only after `Database.init()` returns Ready.
+
+### Files read and changed
+
+- **Read:** `replit.md`; `fixes/plan.md`; `fixes/tracker.md`; `fixes/focusflow-audit-evidence/README.md`; `fixes/PHASE-2-REPORT.md`; `.agents/memory/silent-startup-gate.md`; `src/main/kotlin/com/focusflow/Main.kt`; `src/main/kotlin/com/focusflow/ui/startup/StartupGateWindow.kt`; `src/main/kotlin/com/focusflow/services/SystemTrayManager.kt`; `src/main/kotlin/com/focusflow/services/StartupBootstrap.kt`; `src/test/kotlin/com/focusflow/StartupFailureDetailsTest.kt`; `build.gradle.kts`.
+- **Changed:** `src/main/kotlin/com/focusflow/Main.kt`; `src/main/kotlin/com/focusflow/ui/startup/StartupGateWindow.kt`; `src/main/kotlin/com/focusflow/services/SystemTrayManager.kt`; `src/test/kotlin/com/focusflow/StartupUnavailableStatusTest.kt`; `fixes/tracker.md`; this report.
+
+### Verification
+
+- The first focused command, `gradle :test --no-daemon --console=plain --tests com.focusflow.StartupUnavailableStatusTest`, hit the shell's 300-second timeout during `:compileKotlin`; it produced no final result and is not counted as a test result.
+- The background rerun of that exact command completed with `BUILD SUCCESSFUL`; JUnit XML: 2 tests, 0 failures, 0 errors, 0 skipped.
+- `gradle :test --no-daemon --console=plain`: `BUILD SUCCESSFUL`; 206 tests, 0 failures, 0 errors, 0 skipped across 52 JUnit XML files.
+- `JAVA_HOME` Java: GraalVM CE 22.3.1 / OpenJDK 19.0.2. Gradle: 8.14.2; launcher and daemon JVM: OpenJDK 21.0.7. The test worker JVM was not independently captured in this run.
+- `git diff --check` passed. A scan of changed production files found no empty `catch (_: Exception) {}` blocks.
+
+### Limits and remaining gates
+
+No Windows verification was performed. The desktop workflow was not launched because its configured command initializes the normal profile database; no real profile was accessed. The Compose screen and system tray were compiled and their presentation rules were unit-tested, but the failure UI was not visually exercised. F19 remains open; Phase 2 exit criteria and the remaining owner/data-repair gates are not met.

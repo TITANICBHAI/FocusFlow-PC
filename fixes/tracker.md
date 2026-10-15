@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 is in progress. F10, F12, F7, F8, F14a/b, F6, F9, F13, F11, F5, F17, F15, and F16 are implemented and Linux-tested as recorded below. Live F6/F9 repairs remain owner-gated; F18/F19 remain open. D19 approval is still required before any threading restructure. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4 and D8 are resolved. F1b remains owner-gated, and Windows checks remain human-only.
+- **Overall status:** Phase 2 is in progress. F10, F12, F7, F8, F14a/b, F6, F9, F13, F11, F5, F17, F15, F16, and F18 are implemented and Linux-tested as recorded below. Live F6/F9 repairs remain owner-gated; F19 remains open. D19 approval is still required before any threading restructure. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4, D8, and D10 are resolved. F1b remains owner-gated, and Windows checks remain human-only.
 
 ## Tracking rules
 
@@ -61,7 +61,7 @@
 | F15 — Backup verification/restore | P1/P2 | **Implemented and Linux-tested.** `VACUUM INTO` remains; a read-only SQLite `quick_check` and SHA-256 are required for `Verified`, and hashless backups are `Unverified`. Failures are logged and persisted, same-second names do not collide, suspect existing backups are retained, and direct restore is compile-time disabled. D9 gates remain. |
 | F16 — DB contention | P2 | **Measured on Linux for 10 minutes:** 9 contended enters / 9.248 ms total, 0 AWT event-thread waits, and 7 distinct callsites. No threading rewrite is justified by this run; D19 approval remains required. |
 | F17 — VPN cache after read failure | P1 | **Implemented and Linux-tested.** The IO cache refresh reloads VPN settings; enforcement paths only read volatile state. Failed refreshes retain last-known-good values, unknown enable state fails closed, and failed writes remain visible to callers. |
-| F18 — Enforcement while DB unavailable | P1 / owner decision | **Policy, not a stand-alone code fix.** Startup deliberately leaves DB-dependent services stopped and tells the user. Decide the product behavior before changing it. |
+| F18 — Enforcement while DB unavailable | P1 | **Implemented and Linux-tested under D10 option A.** The gate and tray state that blocking is off until the database opens; no degraded blocker or enforcement-policy change was added. Windows remains unverified. |
 | F19 — Mid-run DB loss | P2 / owner decision | **Design note only.** No specific mid-run recovery behavior has been approved or reproduced. |
 | F20 — Date queries/N+1 | P3 | **Open, low urgency.** Indexed timestamps are wrapped in `DATE(...)`; daily views also make repeated queries. Optimize after correctness work. |
 | F21 — Task completion idempotence | P3 | **Open.** Repeated calls and unknown IDs still increment the daily counter. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, F11, F5, and F16 complete).
+- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, F11, F5, F16, and F18 complete).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -208,9 +208,13 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F16 root-suite verification:** `gradle :test --no-daemon --console=plain` passed with 204 tests, 0 failures/errors/skips across 51 JUnit XML files. The F16 XML records 1 passing test.
 - **2026-10-15 F16 measurement:** The ten-minute capture ran from 05:15:05.500515101Z to 05:25:05.723454452Z (600,216 ms), on Linux amd64/OpenJDK 21.0.7, using a fresh temporary profile with telemetry disabled. It recorded 9 contended Database-monitor enters (9.248 ms total), 0 AWT waits, and 7 distinct callsites. The full ranking and limitations are in `fixes/PHASE-2-REPORT.md`. No user-profile database or threading behavior was changed; D19 approval remains pending.
 - [x] **F16 — Measure database monitor contention:** Added the opt-in debug-only measurement, completed the ten-minute capture, and reported all observed callsites. No threading restructure was made.
-- [ ] **F18 — Database unavailable behavior:** No degraded blocker without a separate approved design. The plan permits the small visible “Blocking is OFF” message as option A; confirm task authorization before applying it. Ask the owner before choosing another behavior.
+- **2026-10-15 F18 start:** Owner authorized option A only: show “Blocking is OFF until the database opens” in the database-failure gate and system tray. Do not add a degraded blocker or change enforcement policy.
+- **2026-10-15 F18 implementation:** The gate now shows the explicit blocking-off status for database Busy/Failed states. A status-only tray appears with Open and Quit actions; it has no blocking toggle and is replaced by the regular tray after database recovery. No enforcement behavior changed.
+- **2026-10-15 F18 verification attempt:** The first focused Gradle invocation hit the 300-second shell limit during `:compileKotlin` and produced no final test result. The background rerun completed successfully.
+- **2026-10-15 F18 verification:** `gradle :test --no-daemon --console=plain --tests com.focusflow.StartupUnavailableStatusTest` passed 2/2; the final root `gradle :test --no-daemon --console=plain` passed 206 tests, 0 failures/errors/skips across 52 JUnit XML reports. The suite used the configured GraalVM CE 19 `JAVA_HOME`; Gradle 8.14.2 launcher/daemon reported OpenJDK 21.0.7. `git diff --check` and the changed-file empty-catch scan passed. The desktop workflow was not launched against the normal profile; no Windows verification was performed.
+- [x] **F18 — Database unavailable behavior:** D10 option A is implemented: the startup gate and tray explicitly say blocking is OFF until the database opens. The unavailable tray offers only status, Open, and Quit; recovery restores the standard tray. No degraded enforcement or enforcement-policy change was made.
 - [ ] **F19 — Mid-run DB loss:** Write only the one-page health/reopen/banner design note; do not implement it without owner approval D11.
-- [ ] **Phase 2 exit:** All non-owner-gated findings have passing tests; report open gates D4 and D7–D11 plus other F6/F9/F15 decisions in `fixes/PHASE-2-REPORT.md`.
+- [ ] **Phase 2 exit:** All non-owner-gated findings have passing tests; report remaining owner gates (including D7, D9, D11, and D19) and F6/F9 live repairs still blocked on verified F15 backups in `fixes/PHASE-2-REPORT.md`.
 
 ## Phase 3 — P3 hardening and cleanup
 
@@ -244,7 +248,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D7 | Whether to offer deletion of recurring-task duplicates | F6 repair defaults to mark-only; never delete user rows without approval. |
 | D8 | End-time rule for orphan focus sessions | **Resolved 2026-10-15:** mark interrupted and set `end_time = start_time`. Real-profile repair remains blocked on F15 backup verification. |
 | D9 | Second backup location, restore UI, and recovery notice | F15; separate design/work. |
-| D10 | Behavior while DB is down | F18. The plan permits only its small visible status message without a separate degraded-mode design. |
+| D10 | Behavior while DB is down | **Resolved 2026-10-15: A — show the blocking-off status on the startup gate and tray; no degraded blocker.** |
 | D11 | Mid-run DB-loss design | F19; design note first, implementation only after approval. |
 | D12 | PIN hashing/recovery design and security wording | F8; separate project per source plan. |
 | D13 | “Clear all data” scope and Global PIN requirement | F22. |

@@ -79,6 +79,12 @@ internal fun formatStartupFailureDetails(
         }
 }
 
+internal const val DATABASE_UNAVAILABLE_BLOCKING_STATUS =
+    "Blocking is OFF until the database opens."
+
+internal fun databaseUnavailableBlockingStatus(isDatabaseUnavailable: Boolean): String? =
+    DATABASE_UNAVAILABLE_BLOCKING_STATUS.takeIf { isDatabaseUnavailable }
+
 private fun currentProcessRestartCommand(): List<String>? {
     val processInfo = ProcessHandle.current().info()
     val executable = processInfo.command().orElse(null)?.takeIf(String::isNotBlank) ?: return null
@@ -212,6 +218,8 @@ private fun FocusFlowDesktop(
     val killSwitchActive by KillSwitchService.isActive.collectAsState()
     val killSwitchSettingsAvailable by KillSwitchService.settingsAvailable.collectAsState()
     val ready = startup is StartupView.Ready
+    val blockingStatus =
+        databaseUnavailableBlockingStatus(startup is StartupView.DatabaseUnavailable)
 
     val databaseFile = remember {
         File(File(System.getProperty("user.home"), ".focusflow"), "focusflow.db").absoluteFile
@@ -239,6 +247,7 @@ private fun FocusFlowDesktop(
 
     val quitGate: () -> Unit = {
         Thread({
+            SystemTrayManager.remove()
             Database.close()
             launch.release()
             exitApplication()
@@ -324,6 +333,18 @@ private fun FocusFlowDesktop(
         }
     }
     SideEffect { AppLifecycle.shutdown = doShutdown }
+
+    LaunchedEffect(blockingStatus) {
+        if (blockingStatus != null) {
+            SystemTrayManager.installDatabaseUnavailable(
+                status = blockingStatus,
+                onRestore = { windowVisible = true },
+                onQuit = quitGate
+            )
+        } else {
+            SystemTrayManager.removeDatabaseUnavailable()
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (launch.showPending.getAndSet(false)) windowVisible = true
@@ -571,6 +592,7 @@ private fun FocusFlowDesktop(
                         retryEnabled = startup !is StartupView.ServiceFailure &&
                             nativeFailure?.requiresRestart != true,
                         requiresRestart = nativeFailure?.requiresRestart == true,
+                        blockingStatus = blockingStatus,
                         onRetry = { retryToken++ },
                         onRestart = restartGate,
                         onOpenFolder = {
