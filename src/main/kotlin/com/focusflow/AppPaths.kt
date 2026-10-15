@@ -25,6 +25,9 @@ object AppPaths {
     val logDir: File
         get() = dataDir
 
+    val crashReportDir: File
+        get() = File(dataDir, "logs")
+
     val consentFile: File
         get() = File(dataDir, CONSENT_FILE_NAME)
 

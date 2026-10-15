@@ -32,6 +32,7 @@ class AppPathsTest {
                 )
                 assertEquals(File(expectedDataDir, "backups"), AppPaths.backupDir)
                 assertEquals(expectedDataDir, AppPaths.logDir)
+                assertEquals(File(expectedDataDir, "logs"), AppPaths.crashReportDir)
                 assertEquals(File(expectedDataDir, "telemetry-consent"), AppPaths.consentFile)
                 assertEquals(File(expectedDataDir, "native"), AppPaths.nativeDir)
             }

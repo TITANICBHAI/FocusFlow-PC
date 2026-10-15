@@ -31,10 +31,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │  REPORT DESTINATIONS (tried in order, first success wins)               │
- * │  1. ~/Desktop/FocusFlow-crash-<timestamp>.log                           │
- * │  2. app data directory/crash-<timestamp>.log                            │
- * │  3. %TEMP% / java.io.tmpdir / FocusFlow-crash-<timestamp>.log           │
- * │  4. stderr (last resort — always attempted regardless)                  │
+ * │  1. ~/.focusflow/logs/FocusFlow-crash-<timestamp>.log                   │
+ * │  2. %TEMP% / java.io.tmpdir / FocusFlow-crash-<timestamp>.log           │
+ * │  3. stderr (last resort — always attempted regardless)                  │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
@@ -501,7 +500,7 @@ object CrashReporter {
     // ── Log file writing ───────────────────────────────────────────────────────
 
     /**
-     * Tries three log destinations in order; returns the first that succeeds.
+     * Tries the app-owned log directory and then the temp directory.
      * Also always writes the first ~4 KB of the report to stderr so there's
      * always a record even if all file paths fail.
      */
@@ -513,7 +512,7 @@ object CrashReporter {
         val filename = "FocusFlow-crash-$tsFile.log"
         val userHome = File(System.getProperty("user.home", "."))
         val desktop = File(userHome, "Desktop")
-        val appData = AppPaths.logDir
+        val appData = AppPaths.crashReportDir
         val temporary = File(
             System.getProperty("java.io.tmpdir", userHome.absolutePath)
         )
@@ -523,17 +522,10 @@ object CrashReporter {
             // Always write the report header unless this signature was suppressed.
             content.lines().take(30).forEach { System.err.println(it) }
 
-            val candidates = mutableListOf<File>()
-            try {
-                if (desktop.isDirectory) candidates.add(File(desktop, filename))
-            } catch (failure: Throwable) {
-                System.err.println(
-                    "[FocusFlow] Could not inspect Desktop for crash reporting: " +
-                        "${failure.javaClass.name}: ${failure.message}"
-                )
-            }
-            candidates.add(File(appData, filename))
-            candidates.add(File(temporary, filename))
+            val candidates = listOf(
+                File(appData, filename),
+                File(temporary, filename)
+            )
 
             var written: File? = null
             for (candidate in candidates) {
@@ -693,12 +685,14 @@ object CrashReporter {
 
     /**
      * Returns all FocusFlow crash log files found on this machine, newest first.
-     * Searches: ~/Desktop, the app data directory, and %TEMP%.
+     * Searches the current report directory plus legacy Desktop/app-data paths
+     * and %TEMP%, so existing reports remain discoverable after D15.
      */
     fun findCrashLogs(): List<File> {
         val home = System.getProperty("user.home", "")
         val searchDirs = listOf(
             File(home, "Desktop"),
+            AppPaths.crashReportDir,
             AppPaths.logDir,
             File(System.getProperty("java.io.tmpdir", home))
         )
