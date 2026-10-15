@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 1 implementation and Linux acceptance through F4 and the gated F3 remote summary are complete. F28, F4.0, F2, F1, and F3 local diagnostics/UI were already complete. D1–D3 remain as recorded on 2026-10-14: direct Discord delivery is owner-selected (webhook rotation/secrets risk remains open), crash reporting is opt-in, and factual consent/privacy disclosure is approved. F11 is implemented; F5 remains deferred pending D4. F1b and Windows checks remain open.
+- **Overall status:** Phase 2 is in progress. F10, F12, F7, F8, F14a, F6, F9, F13, F11, and F5 are implemented and Linux-tested as recorded below. F17 and F15 remain next in the reconciled order; live F6/F9 repairs remain gated on F15 backup verification. D1 keeps direct Discord delivery with webhook rotation/exposure risk open; D2 opt-in and D3 factual privacy wording are approved; D4 and D8 are resolved. F1b remains owner-gated, and Windows checks remain human-only.
 
 ## Tracking rules
 
@@ -48,7 +48,7 @@
 | F2 — Throwable-safe startup | P0 | **Implemented; Phase 1 Linux tests pass.** Database and startup callers now produce a stable failed state for nonfatal `Throwable`s and rethrow cancellation/fatal VM errors. |
 | F3 — Root cause | P0 | **Implemented and Linux-tested.** Local full cause-chain reporting remains intact; remote critical/fatal telemetry now uses only bounded root-cause-first summaries, with JSON-safe fields and F4 redaction applied before the sink. Windows remains unverified. |
 | F4 — Consent, PII, endpoints | P0 | **Implemented and Linux-tested.** Consent remains DB-independent, opt-in and fail-closed; the one-time legacy migration is covered, and serialized Windows paths plus current home/user/host values are redacted before the sink. D1’s delivery choice and exposure risk remain open; Windows W10 remains unverified. |
-| F5 — Uninstall on DB failure | P0 | **In progress; D4 resolved to option A.** Non-BUSY/LOCKED database read failures will allow uninstall only after a typed confirmation phrase; BUSY/LOCKED remain blocked. |
+| F5 — Uninstall on DB failure | P0 | **Implemented and Linux-tested; D4 option A.** Non-BUSY/LOCKED database read failures require a typed confirmation phrase; BUSY/LOCKED remain blocked, and readable-database protections remain enforced. W6 is pending human verification. |
 | F6 — Recurring task multiplication | P1 | **Implemented and Linux-tested.** Schema v10 tracks template parents, generated copies are excluded from templates, and daily generation is idempotent. The legacy repair defaults to dry-run and only marks duplicates; live repair waits for F15 backup verification. |
 | F7 — JDBC statement closure | P1 | **Open.** Many query sites close the result set but not the owning statement; the enabled-block-process query is reached from the two-second cache refresh. Recount exact sites against current code. |
 | F8 — PIN fail-open | P1 | **Partially mitigated by F12; remaining work is open.** Unavailable lookups now fail closed; F8 still covers UI tri-state/read-back behavior and generated-PIN verification. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, and F11 complete; F5 is in progress after D4 option A was selected).
+- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, F6, F9, F13, F11, and F5 complete).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -187,7 +187,8 @@ The following dependencies take precedence over conflicting ordering in the atta
 - [x] **F11 — Read-only uninstall wizard:** The wizard open is read-only and separate from normal startup; missing DB means no saved protection state, while unreadable/BUSY/LOCKED remain blocking. F11-a…d pass; W6 remains human-only.
 - **2026-10-15 D4 resolution:** Owner selected option A: for database failures other than BUSY/LOCKED, warn that PINs and blocks cannot be verified and allow uninstall only after a typed confirmation phrase.
 - **2026-10-15 F5 start:** Implementing the selected phrase override in the wizard while preserving BUSY/LOCKED blocking and readable-database protections. The wizard runs outside the app's single-instance path; no cross-process IPC or external authorization flag is being added.
-- [ ] **F5 — Safe uninstall when DB is unavailable:** D4 option A selected; allow non-BUSY/LOCKED read failures only after typed confirmation. BUSY/LOCKED must continue to block. Tests F5-a…c; W6 remains human-only.
+- **2026-10-15 F5 verification:** The implementation and F5 tests were already present at `HEAD`; no duplicate production or test edits were needed. Read the full wizard, protection service, and F5 policy test, plus the relevant database failure classification/read-only-open code and the wizard entry point. `gradle :test --no-daemon --console=plain --tests com.focusflow.services.UninstallWizardDatabasePolicyTest` passed 6/6; root `gradle :test --no-daemon --console=plain` passed 195 tests, 0 failures/errors/skips across 49 JUnit XML files. The F5 XML records 6 tests, 0 failures/errors/skips. The tests use scratch homes/injected results; no real profile was accessed. `JAVA_HOME` was GraalVM CE 19.0.2; Gradle was 8.14.2, whose launcher/daemon reported JVM 21.0.7. W6 was not run.
+- [x] **F5 — Safe uninstall when DB is unavailable:** D4 option A is implemented and Linux-tested: non-BUSY/LOCKED read failures require the typed confirmation phrase, BUSY/LOCKED remain blocked, and active Standalone/Always-On/Nuclear protections still block or require their existing authorization when the database is readable. F5-a…c pass; W6 remains human-only.
 - [ ] **F17 — Recover VPN settings after read failures:** Keep last-known-good volatile state, refresh outside the enforcement hot path, and report failed writes. Tests F17-a…c.
 - [ ] **F15 — Verifiable backups:** Keep the existing `VACUUM INTO` snapshot and hash checks; add SQLite `quick_check`, distinguish unverified backups, report failures, correct sidecar naming, and make the unused unsafe `restoreBackup` uncallable. Complete this before any F6/F9 live repair. Real restore, second destination, and post-recovery UI require owner approval (D9). Tests F15-a…d.
 - [ ] **F14b — Legacy schema audit (after F15):** Verify required schema state and audit swallowed legacy migration errors without editing v1–v9. Tests F14-a…b.
