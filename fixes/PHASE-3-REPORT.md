@@ -65,7 +65,13 @@ The builds emitted existing Compose icon deprecation and coroutine opt-in warnin
 - No live user profile or database was read or changed, and no evidence script was run.
 - D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 was resolved on 2026-10-15: new crash reports go to `~/.focusflow/logs`; legacy reports remain searchable and no Desktop report is moved or deleted.
 - D18 was resolved on 2026-10-15: the 90-day current-streak cap was not intentional. F30 is complete; its implementation and passing tests are recorded below.
-- W1–W15 remain human-only and unverified. F27 awaits W9; D5/F1b awaits W1–W3. D9's approved features have a written safety design but no runtime implementation; D11's design is approved only, with runtime implementation still unapproved. D7, D12, and D19 remain open or deferred. F6/F9 repairs have not been run against a real profile.
+- W1–W15 remain human-only and unverified. F27 awaits W9; D5/F1b awaits W1–W3. D9's approved runtime features are implemented and Linux-tested, but its D9-specific W8 scenario remains pending; no real-profile backup or restore was performed. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design is approved only, with runtime implementation still unapproved. F6/F9 repairs have not been run against a real profile.
+
+## D9 — Backup and recovery status
+
+The three owner-approved D9 capabilities are present in the current source: verified copies to a user-selected secondary folder, a UI for backup management and verified-backup restore, and recovery notices. Restore is staged for the next launch; the implementation creates a verified safety backup, preserves the pre-restore database set and sidecars, and rolls back if initialization fails.
+
+Automated coverage is in `BackupRecoveryServiceTest` and uses temporary homes. The notice-acknowledgment case now has a void-returning JUnit method and is discovered. On 2026-10-15, all 6 tests in the class passed; the full root suite passed 235 tests across 60 JUnit XML reports, with 0 failures, errors, or skips. Remaining acceptance work: run the D9-specific Windows W8 scenario from `D9-backup-recovery-design.md`, and cover the design's currently untested failure paths (secondary-copy failure, failed safety backup/staging, and interrupted restore recovery). No real-profile backup or restore was performed.
 
 ## F23 — Consistent CSV exports
 
@@ -229,7 +235,7 @@ F28 follows the reconciled Phase 1 decision: test workers receive the project ve
 
 ### Verification
 
-- The latest root run, `gradle :test --no-daemon --console=plain`, completed with `BUILD SUCCESSFUL`: 228 tests across 58 JUnit XML reports, 0 failures, 0 errors, and 0 skipped. The configured test JVM telemetry-off property remained active.
+- The latest root run, `gradle :test --no-daemon --console=plain`, completed with `BUILD SUCCESSFUL`: 235 tests across 60 JUnit XML reports, 0 failures, 0 errors, and 0 skipped. The configured test JVM telemetry-off property remained active.
 - F30 tests use the repository's isolated test fixtures; no real profile was read or changed, and no evidence script was run.
 - Linux verification only. Windows behavior and the interactive desktop UI were not verified.
 

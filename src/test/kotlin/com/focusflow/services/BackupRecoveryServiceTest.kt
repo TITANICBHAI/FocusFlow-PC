@@ -167,17 +167,19 @@ class BackupRecoveryServiceTest {
     }
 
     @Test
-    fun recoveryNoticeIsAcknowledgedPerPreservedDatabaseArchive() = TempHome.withHome { home ->
-        val first = File(home.toFile(), ".focusflow/focusflow.db.broken_first")
-            .apply { parentFile.mkdirs(); writeText("preserved") }
+    fun recoveryNoticeIsAcknowledgedPerPreservedDatabaseArchive() {
+        TempHome.withHome { home ->
+            val first = File(home.toFile(), ".focusflow/focusflow.db.broken_first")
+                .apply { parentFile.mkdirs(); writeText("preserved") }
 
-        val notice = assertNotNull(RecoveryNoticeService.pendingNotice())
-        assertEquals(first, notice.archiveFile)
-        RecoveryNoticeService.acknowledge(notice)
-        assertEquals(null, RecoveryNoticeService.pendingNotice())
+            val notice = assertNotNull(RecoveryNoticeService.pendingNotice())
+            assertEquals(first, notice.archiveFile)
+            RecoveryNoticeService.acknowledge(notice)
+            assertEquals(null, RecoveryNoticeService.pendingNotice())
 
-        File(home.toFile(), ".focusflow/focusflow.db.broken_second").writeText("another preserved database")
-        assertNotNull(RecoveryNoticeService.pendingNotice())
+            File(home.toFile(), ".focusflow/focusflow.db.broken_second").writeText("another preserved database")
+            assertNotNull(RecoveryNoticeService.pendingNotice())
+        }
     }
 
     private fun sha256(file: File): String {
