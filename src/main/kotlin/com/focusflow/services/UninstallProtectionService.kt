@@ -23,6 +23,13 @@ object UninstallProtectionService {
     private val authorizedUninstallUntilMs = AtomicLong(0L)
     private val uninstallPromptLock = Any()
     internal enum class Action { QUIT, UNINSTALL }
+    @Volatile
+    internal var isDirectInstallForTest: Boolean? = null
+    @Volatile
+    private var wizardDatabaseMissing = false
+
+    private val isDirectInstall: Boolean
+        get() = isDirectInstallForTest ?: InstallVariant.isWindowsDirectInstall
 
     internal sealed interface Requirement {
         data class WaitForStandalone(val remainingMs: Long) : Requirement
@@ -43,15 +50,18 @@ object UninstallProtectionService {
      * Windows and must not be intercepted by FocusFlow.
      */
     fun prepareForUninstallWizard(): Boolean {
-        if (!InstallVariant.isWindowsDirectInstall) return true
+        wizardDatabaseMissing = false
+        if (!isDirectInstall) return true
 
         return runCatching {
-            val result = if (Database.isReady) {
-                DbInitResult.Ready
-            } else {
-                Database.init(allowRecovery = false)
+            val result = Database.initReadOnlyForWizard()
+            if (result !is DbInitResult.Ready) return false
+            if (!Database.isReady) {
+                // A missing database contains no persisted protection state.
+                wizardDatabaseMissing = true
+                ProcessMonitor.alwaysOnEnabled = false
+                return true
             }
-            if (result !is DbInitResult.Ready || !Database.isReady) return false
 
             when (val setting = Database.readSetting("always_on_enforcement")) {
                 is SettingRead.Present -> when (setting.value) {
@@ -83,7 +93,7 @@ object UninstallProtectionService {
      * close paths and is also the API for a future custom uninstaller helper.
      */
     fun authorizeQuit(): Boolean {
-        if (!InstallVariant.isWindowsDirectInstall) return true
+        if (!isDirectInstall) return true
 
         return authorizeRequirements(activeRequirements(Action.QUIT))
     }
@@ -95,8 +105,12 @@ object UninstallProtectionService {
      * protection is active it uses the same requirements as tray Quit.
      */
     fun authorizeUninstallWizard(): Boolean {
-        if (!InstallVariant.isWindowsDirectInstall) return true
+        if (!isDirectInstall) return true
         if (!Database.isReady) {
+            if (wizardDatabaseMissing) {
+                wizardDatabaseMissing = false
+                return true
+            }
             showMessage(
                 "Uninstall protection unavailable",
                 "FocusFlow could not read its protection state safely. " +
@@ -104,6 +118,7 @@ object UninstallProtectionService {
             )
             return false
         }
+        wizardDatabaseMissing = false
         return authorizeRequirements(activeRequirements(Action.UNINSTALL))
     }
 
@@ -115,7 +130,7 @@ object UninstallProtectionService {
      * more than one msiexec process during a single uninstall.
      */
     fun authorizeUninstallAttempt(): Boolean {
-        if (!InstallVariant.isWindowsDirectInstall) return true
+        if (!isDirectInstall) return true
 
         val now = System.currentTimeMillis()
         if (authorizedUninstallUntilMs.get() > now) return true

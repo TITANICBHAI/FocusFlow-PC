@@ -125,6 +125,8 @@ object Database {
     internal const val UNFINISHED_FOCUS_SESSION_MAX_AGE_HOURS = 12L
 
     @Volatile private var conn: Connection? = null
+    @Volatile private var wizardReadOnlyConnection = false
+    @Volatile private var wizardReadOnlyDatabasePath: String? = null
     private val migrationConnection = ThreadLocal<Connection?>()
     @Volatile private var lastInitResult: DbInitResult? = null
 
@@ -179,7 +181,16 @@ object Database {
         policy: InitPolicy = InitPolicy.Default,
         allowRecovery: Boolean = true
     ): DbInitResult {
-        if (isReady) return DbInitResult.Ready
+        if (isReady) {
+            return if (wizardReadOnlyConnection) {
+                DbInitResult.Failed(
+                    IllegalStateException("The uninstall wizard database connection is read-only."),
+                    dbFile
+                )
+            } else {
+                DbInitResult.Ready
+            }
+        }
 
         try {
             val dbDir = dbFile.absoluteFile.parentFile ?: File(".")
@@ -252,10 +263,90 @@ object Database {
         }
     }
 
+    /**
+     * Opens the uninstall wizard's database without running normal startup.
+     * This path never creates a missing database or parent directory, snapshots
+     * or restores sidecars, changes pragmas, migrates, checkpoints, or recovers.
+     * A missing database is represented as Ready with no published connection:
+     * the wizard treats it as having no persisted protection state.
+     */
+    @Synchronized
+    internal fun initReadOnlyForWizard(
+        dbFile: File = defaultDbFile(),
+        busyTimeoutMs: Int = UNINSTALL_WIZARD_BUSY_TIMEOUT_MS
+    ): DbInitResult {
+        require(busyTimeoutMs >= 0) { "busyTimeoutMs must not be negative" }
+        val absoluteDbFile = dbFile.absoluteFile
+        val normalizedPath = absoluteDbFile.toPath().normalize().toString()
+
+        if (isReady) {
+            return if (wizardReadOnlyConnection && wizardReadOnlyDatabasePath == normalizedPath) {
+                DbInitResult.Ready
+            } else {
+                DbInitResult.Failed(
+                    IllegalStateException("A writable database connection is already open."),
+                    absoluteDbFile
+                )
+            }
+        }
+
+        if (!absoluteDbFile.exists()) {
+            lastInitResult = null
+            _startupState.value = DbStartupState.NotStarted
+            return DbInitResult.Ready
+        }
+        if (!absoluteDbFile.isFile) {
+            return DbInitResult.Failed(
+                IOException("The uninstall wizard database path is not a file."),
+                absoluteDbFile
+            )
+        }
+
+        val startedAtNs = System.nanoTime()
+        try {
+            when (val nativeStatus = NativeSqlite.ensureLoaded()) {
+                is NativeSqliteStatus.Loaded -> Unit
+                is NativeSqliteStatus.Unavailable ->
+                    return DbInitResult.Failed(nativeStatus.failure, absoluteDbFile)
+            }
+
+            val config = org.sqlite.SQLiteConfig().apply {
+                setBusyTimeout(busyTimeoutMs)
+                setReadOnly(true)
+            }
+            val dataSource = SQLiteDataSource(config).apply {
+                url = "jdbc:sqlite:${absoluteDbFile.absolutePath}"
+            }
+            val readOnlyConnection = dataSource.connection
+            conn = readOnlyConnection
+            wizardReadOnlyConnection = true
+            wizardReadOnlyDatabasePath = normalizedPath
+            return finishReady()
+        } catch (cancelled: CancellationException) {
+            rememberThrownFailure(cancelled, absoluteDbFile)
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            rememberThrownFailure(fatal, absoluteDbFile)
+            throw fatal
+        } catch (failure: Throwable) {
+            val elapsedMs = (System.nanoTime() - startedAtNs) / 1_000_000L
+            val sqlFailure = failure as? SQLException
+            val kind = sqlFailure?.let(::classifySqliteFailure)
+            if (sqlFailure != null &&
+                (kind == SqliteFailureKind.BUSY || kind == SqliteFailureKind.LOCKED)
+            ) {
+                return DbInitResult.Busy(sqlFailure, attempts = 1, waitedMs = elapsedMs)
+            }
+            return DbInitResult.Failed(failure, absoluteDbFile)
+        }
+    }
+
     @Synchronized
     internal fun resetForTest() {
         val previous = conn
         conn = null
+        wizardReadOnlyConnection = false
+        wizardReadOnlyDatabasePath = null
         lastInitResult = null
         _startupState.value = DbStartupState.NotStarted
         recoveryFileOpsForTest = null
@@ -268,12 +359,17 @@ object Database {
     @Synchronized
     fun close() {
         val current = conn ?: return
-        runCatching {
-            current.createStatement().use { statement ->
-                statement.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        val readOnlyWizardConnection = wizardReadOnlyConnection
+        conn = null
+        wizardReadOnlyConnection = false
+        wizardReadOnlyDatabasePath = null
+        if (!readOnlyWizardConnection) {
+            runCatching {
+                current.createStatement().use { statement ->
+                    statement.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                }
             }
         }
-        conn = null
         runCatching { current.close() }
     }
 
@@ -455,6 +551,8 @@ object Database {
             }
 
             conn = localConn
+            wizardReadOnlyConnection = false
+            wizardReadOnlyDatabasePath = null
             localConn = null
             return null
         } catch (failure: Throwable) {
@@ -617,6 +715,7 @@ object Database {
     // Never edit an existing migrate_vN() — add a new one and bump TARGET_VERSION.
     //
     private val TARGET_VERSION = 10
+    private const val UNINSTALL_WIZARD_BUSY_TIMEOUT_MS = 1_000
 
     private val REQUIRED_SCHEMA_COLUMNS = linkedMapOf(
         "tasks" to listOf(
