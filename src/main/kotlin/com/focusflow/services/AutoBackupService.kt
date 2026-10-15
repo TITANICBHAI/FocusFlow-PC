@@ -1,7 +1,10 @@
 package com.focusflow.services
 
 import com.focusflow.data.Database
+import com.focusflow.enforcement.EnforcementLog
 import kotlinx.coroutines.*
+import org.sqlite.SQLiteConfig
+import org.sqlite.SQLiteDataSource
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -11,35 +14,27 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 /**
- * AutoBackupService — three-layer database backup
+ * AutoBackupService — snapshot and verification for database backups.
  *
- * Layer 1 — Write:
- *   Copies the live SQLite database to a timestamped file and immediately
- *   computes a SHA-256 hash, writing it to a ".sha256" sidecar file alongside
- *   the backup. Both files are written atomically (copy → hash → write hash).
+ * Backups use SQLite VACUUM INTO, then a read-only quick_check and SHA-256
+ * sidecar verification. Hashless legacy backups are reported as Unverified.
+ * A metadata sidecar records timestamp, size, and hash.
  *
- * Layer 2 — Verify:
- *   Immediately after writing, the backup is read back and its hash is compared
- *   against the sidecar. If they differ (disk error, partial write, filesystem
- *   issue) both files are deleted and [BackupResult.VerificationFailed] is
- *   returned — a corrupted backup is never silently kept.
- *   A human-readable ".meta.json" sidecar is also written with timestamp, size,
- *   and hash so the UI can display rich backup info without re-reading the db.
- *
- * Layer 3 — Safe restore:
- *   [restoreBackup] verifies the backup's hash before overwriting the live
- *   database. Before the overwrite it creates a "pre_restore_safety.db" snapshot
- *   of the current database. If the copy fails, the safety snapshot is
- *   automatically rolled back so the live database is never left in a broken state.
+ * Direct restore is intentionally unavailable: [restoreBackup] is retained
+ * only as a legacy API guarded by a compile-time deprecation error. A supported
+ * recovery workflow requires separate owner approval.
  */
 object AutoBackupService {
 
     private const val MAX_BACKUPS = 7
+    private const val LAST_BACKUP_STATUS_KEY = "last_backup_status"
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // @Volatile: start() writes on the Compose application thread; stop() reads on the
     // "FocusFlow-Shutdown" daemon thread (Main.kt). Without @Volatile the shutdown
     // thread may see a stale null and skip the cancel, leaving the 6-hour loop running.
     @Volatile private var job: Job? = null
+    @Volatile internal var snapshotWriterForTest: ((File) -> Unit)? = null
+    @Volatile internal var warningSinkForTest: ((String, Throwable?) -> Unit)? = null
 
     private val TIMESTAMP_FORMAT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
@@ -60,6 +55,12 @@ object AutoBackupService {
         object NoDatabase          : BackupResult()
         object VerificationFailed  : BackupResult()
         data class Error(val reason: String) : BackupResult()
+    }
+
+    sealed class BackupVerification {
+        data class Verified(val hash: String) : BackupVerification()
+        object Unverified : BackupVerification()
+        data class Invalid(val reason: String) : BackupVerification()
     }
 
     sealed class RestoreResult {
@@ -92,45 +93,69 @@ object AutoBackupService {
      * Perform a full backup right now regardless of schedule.
      * Returns a [BackupResult] that callers can inspect or surface in the UI.
      */
+    @Synchronized
     fun runBackupNow(): BackupResult {
         val src = File(dbPath)
-        if (!src.exists()) return BackupResult.NoDatabase
+        if (!src.exists()) return completeBackup(BackupResult.NoDatabase)
 
-        val timestamp = LocalDateTime.now().format(TIMESTAMP_FORMAT)
-        val destDb    = File(backupDir, "focusflow_$timestamp.db")
-        val destHash  = File(backupDir, "focusflow_$timestamp.sha256")
-        val destMeta  = File(backupDir, "focusflow_$timestamp.meta.json")
+        val dir = backupDir
+        val timestamp = uniqueTimestamp(LocalDateTime.now().format(TIMESTAMP_FORMAT), dir)
+        val destDb = File(dir, "focusflow_$timestamp.db")
+        val destHash = sidecarFile(destDb, "sha256")
+        val destMeta = sidecarFile(destDb, "meta.json")
 
         return try {
             // Layer 1: safe snapshot via VACUUM INTO.
             // Unlike a raw file copy, VACUUM INTO produces a fully consistent,
             // WAL-free SQLite file — it flushes WAL pages into the snapshot and
             // never captures a torn state even under concurrent writes.
-            Database.vacuumInto(destDb.absolutePath)
+            val injectedSnapshotWriter = snapshotWriterForTest
+            if (injectedSnapshotWriter == null) {
+                Database.vacuumInto(destDb.absolutePath)
+            } else {
+                injectedSnapshotWriter(destDb)
+            }
+
+            // A matching digest only proves the file has not changed since it
+            // was hashed. Check SQLite's own integrity before creating sidecars.
+            val quickCheckFailure = sqliteQuickCheckFailure(destDb)
+            if (quickCheckFailure != null) {
+                deleteBackupArtifacts(destDb)
+                return completeBackup(BackupResult.VerificationFailed, quickCheckFailure)
+            }
+
             val hash = sha256(destDb)
             destHash.writeText(hash)
 
-            // Layer 2: verify immediately
-            val verifiedHash = sha256(destDb)
-            if (verifiedHash != hash) {
-                runCatching { destDb.delete(); destHash.delete() }
-                return BackupResult.VerificationFailed
+            // Layer 2: verify hash and SQLite integrity immediately.
+            val verificationFailure = when (val verification = verifyBackup(destDb)) {
+                is BackupVerification.Verified ->
+                    if (verification.hash == hash) null else "SHA-256 changed during verification"
+                BackupVerification.Unverified -> "SHA-256 sidecar disappeared during verification"
+                is BackupVerification.Invalid -> verification.reason
+            }
+            if (verificationFailure != null) {
+                deleteBackupArtifacts(destDb)
+                return completeBackup(
+                    BackupResult.VerificationFailed,
+                    verificationFailure
+                )
             }
 
             // Write human-readable metadata
             destMeta.writeText(buildMetaJson(timestamp, destDb.length(), hash))
 
             pruneOldBackups()
-            BackupResult.Success(destDb, hash, destDb.length())
+            completeBackup(BackupResult.Success(destDb, hash, destDb.length()))
         } catch (cancelled: CancellationException) {
-            runCatching { destDb.delete(); destHash.delete(); destMeta.delete() }
+            deleteBackupArtifacts(destDb)
             throw cancelled
         } catch (fatal: VirtualMachineError) {
-            runCatching { destDb.delete(); destHash.delete(); destMeta.delete() }
+            deleteBackupArtifacts(destDb)
             throw fatal
         } catch (e: Throwable) {
-            runCatching { destDb.delete(); destHash.delete(); destMeta.delete() }
-            BackupResult.Error(e.message ?: "Unknown error")
+            deleteBackupArtifacts(destDb)
+            completeBackup(BackupResult.Error(e.message ?: "Unknown error"))
         }
     }
 
@@ -138,19 +163,23 @@ object AutoBackupService {
         val today = LocalDate.now().format(DATE_FORMAT)
         val todayBackup = backupDir.listFiles { f ->
             f.name.startsWith("focusflow_$today") && f.name.endsWith(".db")
-        }?.firstOrNull()
+        }?.maxByOrNull { it.lastModified() }
 
         if (todayBackup == null) {
             runBackupNow()
         } else {
-            // Today's backup exists — verify it hasn't been corrupted since creation
-            val result = verifyBackup(todayBackup)
-            if (!result) {
-                // Stale / corrupted — make a fresh one with a new timestamp
-                todayBackup.delete()
-                File(todayBackup.path.replace(".db", ".sha256")).delete()
-                File(todayBackup.path.replace(".db", ".meta.json")).delete()
-                runBackupNow()
+            // Keep any unverified/corrupt file for inspection; make a fresh
+            // verified snapshot rather than silently deleting an existing backup.
+            when (val verification = verifyBackup(todayBackup)) {
+                is BackupVerification.Verified -> persistBackupStatus("success")
+                BackupVerification.Unverified -> {
+                    warn("Today's backup has no hash sidecar; creating a verified backup.")
+                    runBackupNow()
+                }
+                is BackupVerification.Invalid -> {
+                    warn("Today's backup failed verification; creating a fresh backup: ${verification.reason}")
+                    runBackupNow()
+                }
             }
         }
     }
@@ -158,23 +187,40 @@ object AutoBackupService {
     // ── Layer 2 helper: verify a backup file ──────────────────────────────────
 
     /**
-     * Returns true if [file] matches its sidecar ".sha256" hash.
-     * If no hash file exists (legacy backup from before this version),
-     * returns true without verification to avoid false negatives.
+     * Verifies both the hash sidecar and SQLite integrity. A legacy backup with
+     * no hash sidecar is explicitly Unverified rather than treated as trusted.
      */
-    fun verifyBackup(file: File): Boolean {
-        val hashFile = File(file.parent, file.nameWithoutExtension + ".sha256")
-        if (!hashFile.exists()) return true   // pre-hash legacy backup — assume ok
+    fun verifyBackup(file: File): BackupVerification {
+        if (!file.isFile) return BackupVerification.Invalid("Backup file is missing")
+        val hashFile = sidecarFile(file, "sha256")
+        if (!hashFile.isFile) return BackupVerification.Unverified
         return try {
-            val stored   = hashFile.readText().trim()
+            val stored = hashFile.readText().trim()
+            if (stored.isBlank()) {
+                return BackupVerification.Invalid("SHA-256 sidecar is empty")
+            }
             val computed = sha256(file)
-            stored == computed
-        } catch (_: Exception) { false }
+            if (stored != computed) {
+                return BackupVerification.Invalid("SHA-256 mismatch")
+            }
+            val quickCheckFailure = sqliteQuickCheckFailure(file)
+            if (quickCheckFailure != null) {
+                BackupVerification.Invalid(quickCheckFailure)
+            } else {
+                BackupVerification.Verified(computed)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            BackupVerification.Invalid(failure.message ?: "Backup verification failed")
+        }
     }
 
     /** Reads the metadata sidecar for [file], or null if not present. */
     fun readMeta(file: File): String? {
-        val metaFile = File(file.parent, file.nameWithoutExtension + ".meta.json")
+        val metaFile = sidecarFile(file, "meta.json")
         return if (metaFile.exists()) runCatching { metaFile.readText() }.getOrNull() else null
     }
 
@@ -189,12 +235,18 @@ object AutoBackupService {
      *   3. Overwrite live database with backup
      *   4. If step 3 throws, automatically roll back using the safety snapshot
      */
+    @Deprecated(
+        message = "Unsafe direct restore is disabled; use an owner-approved recovery workflow.",
+        level = DeprecationLevel.ERROR
+    )
     fun restoreBackup(backupFile: File): RestoreResult {
         if (!backupFile.exists()) return RestoreResult.NoBackupFile
 
-        val hashFile = File(backupFile.parent, backupFile.nameWithoutExtension + ".sha256")
+        val hashFile = sidecarFile(backupFile, "sha256")
         if (!hashFile.exists()) return RestoreResult.NoHashFile
-        if (!verifyBackup(backupFile)) return RestoreResult.HashMismatch
+        if (verifyBackup(backupFile) !is BackupVerification.Verified) {
+            return RestoreResult.HashMismatch
+        }
 
         val live   = File(dbPath)
         val safety = File(backupDir, "pre_restore_safety.db")
@@ -231,6 +283,119 @@ object AutoBackupService {
             ?.sortedByDescending { it.lastModified() } ?: emptyList())
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    private fun completeBackup(
+        result: BackupResult,
+        verificationFailure: String? = null
+    ): BackupResult {
+        val status = when (result) {
+            is BackupResult.Success -> "success"
+            BackupResult.NoDatabase -> "no_database"
+            BackupResult.VerificationFailed -> "verification_failed"
+            is BackupResult.Error -> "error"
+        }
+        if (result !is BackupResult.Success) {
+            val detail = verificationFailure ?: when (result) {
+                BackupResult.NoDatabase -> "database file is missing"
+                BackupResult.VerificationFailed -> "SQLite or hash verification failed"
+                is BackupResult.Error -> result.reason
+                is BackupResult.Success -> error("Success cannot be a failure")
+            }
+            warn("Backup did not complete ($status): $detail")
+        }
+        persistBackupStatus(status)
+        return result
+    }
+
+    private fun persistBackupStatus(status: String) {
+        when (val write = Database.writeSetting(LAST_BACKUP_STATUS_KEY, status)) {
+            Database.SettingWrite.Ok -> Unit
+            is Database.SettingWrite.Failed ->
+                warn("Could not persist $LAST_BACKUP_STATUS_KEY", write.cause)
+        }
+    }
+
+    private fun warn(message: String, cause: Throwable? = null) {
+        val sink = warningSinkForTest
+        if (sink == null) {
+            EnforcementLog.warn("AutoBackupService", message, cause)
+        } else {
+            sink(message, cause)
+        }
+    }
+
+    private fun uniqueTimestamp(base: String, dir: File): String {
+        var candidate = base
+        var suffix = 1
+        while (listOf("db", "sha256", "meta.json").any { extension ->
+                File(dir, "focusflow_$candidate.$extension").exists()
+            }) {
+            candidate = "${base}_${suffix.toString().padStart(2, '0')}"
+            suffix++
+        }
+        return candidate
+    }
+
+    private fun sidecarFile(file: File, extension: String): File =
+        File(file.parentFile, "${file.nameWithoutExtension}.$extension")
+
+    private fun sqliteQuickCheckFailure(file: File): String? {
+        return try {
+            val config = SQLiteConfig().apply {
+                setBusyTimeout(1_000)
+                setReadOnly(true)
+            }
+            val dataSource = SQLiteDataSource(config).apply {
+                url = "jdbc:sqlite:${file.absolutePath}"
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("PRAGMA quick_check").use { results ->
+                        if (!results.next()) {
+                            return "SQLite quick_check returned no rows"
+                        }
+                        var problem: String? = null
+                        do {
+                            val message = results.getString(1).orEmpty()
+                            if (!message.equals("ok", ignoreCase = true)) {
+                                problem = message
+                            }
+                        } while (results.next())
+                        problem?.let { "SQLite quick_check reported: $it" }
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            "SQLite quick_check failed: ${failure.message ?: failure.javaClass.simpleName}"
+        }
+    }
+
+    private fun deleteBackupArtifacts(file: File) {
+        listOf(file, sidecarFile(file, "sha256"), sidecarFile(file, "meta.json"))
+            .forEach { artifact ->
+                try {
+                    Files.deleteIfExists(artifact.toPath())
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (fatal: VirtualMachineError) {
+                    throw fatal
+                } catch (failure: Throwable) {
+                    warn("Could not remove incomplete backup artifact ${artifact.name}", failure)
+                }
+            }
+    }
+
+    @Synchronized
+    internal fun resetForTest() {
+        job?.cancel()
+        job = null
+        snapshotWriterForTest = null
+        warningSinkForTest = null
+    }
 
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
