@@ -1,7 +1,7 @@
 # Phase 3 Report — F20–F30 local status and verification
 
 Date: 2026-10-15
-Status: F20–F26 and F28–F30 are complete or closed locally on branch `F23-consistent-csv-exports`; D15 is now implemented. F27 remains blocked on human Windows check W9. Phase 3 is not closed; human Windows verification and owner-gated work remain.
+Status: F20–F26 and F28–F30 are complete or closed locally on branch `F23-consistent-csv-exports`; D15 is now implemented. F27/D17 is closed by the owner with the flag unchanged; W9 was not run and Windows behavior is accepted as unverified. Phase 3 is not closed; other applicable Windows verification and owner-gated work remain.
 
 ## Approved scope
 
@@ -65,7 +65,7 @@ The builds emitted existing Compose icon deprecation and coroutine opt-in warnin
 - No live user profile or database was read or changed, and no evidence script was run.
 - D14 is resolved: formula-prefix protection is enabled for text cells and CSV exports omit a UTF-8 BOM. D15 was resolved on 2026-10-15: new crash reports go to `~/.focusflow/logs`; legacy reports remain searchable and no Desktop report is moved or deleted.
 - D18 was resolved on 2026-10-15: the 90-day current-streak cap was not intentional. F30 is complete; its implementation and passing tests are recorded below.
-- Applicable Windows checks remain human-only and unverified. F27/D17 is unresolved pending whether to run W9; D5/F1b is closed with no packaging change, and W14 is not applicable. W1–W3 still verify the F1 fallback. D9's approved runtime features are implemented and Linux-tested, but its D9-specific W8 scenario remains pending; no real-profile backup or restore was performed. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design is approved only, with runtime implementation still unapproved. F6/F9 repairs have not been run against a real profile.
+- Applicable Windows checks remain human-only and unverified. F27/D17 is closed with the flag unchanged; W9 was waived and remains unverified. D5/F1b is closed with no packaging change, and W14 is not applicable. W1–W3 still verify the F1 fallback. D9's approved runtime features are implemented and Linux-tested, but its D9-specific W8 scenario remains pending; no real-profile backup or restore was performed. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design is approved only, with runtime implementation still unapproved. F6/F9 repairs have not been run against a real profile.
 
 ## D9 — Backup and recovery status
 
@@ -151,7 +151,7 @@ The build reported one non-failing warning in `CsvExport.kt` about the temporary
 - Added getter-based `AppPaths` properties for the data directory, database, backups, logs, telemetry consent, and native library directory. Each property resolves from the current `user.home`; none caches the home directory.
 - Replaced the four database-path computations in `Database`, `Main`, `AutoBackupService`, and `CrashReporter`.
 - Centralized other direct app-data paths in crash reporting, telemetry consent, SQLite logging/native-library selection, enforcement logging, instance locking, relaunch handoff, diagnostics, and the Stats CSV export. The Settings screen's Windows database-location display remains the sole intentional literal.
-- Left the `SelectorProvider` flag and packaging configuration unchanged. The owner confirmed MSIX is an active Microsoft Store distribution; W5/W9 include MSIX and still require Windows verification.
+- Left the `SelectorProvider` flag and packaging configuration unchanged. The owner confirmed MSIX is an active Microsoft Store distribution; W5 remains a Windows check. The owner later closed D17 with the flag unchanged and accepted W9 as unverified.
 
 ### Verification
 
@@ -159,7 +159,7 @@ The build reported one non-failing warning in `CsvExport.kt` about the temporary
 2. **Full root suite:** With the configured GraalVM JDK 19 and `JAVA_TOOL_OPTIONS="-Duser.home=<fresh temporary directory> -Dfocusflow.telemetry=off"`, ran `gradle :test --no-daemon --rerun-tasks`. Result: `BUILD SUCCESSFUL` in 3m41s; 225 tests across 58 JUnit XML files, 0 failures, 0 errors, and 0 skipped.
 3. `git diff --check` passed. The source scan confirms no app-data directory path literal remains outside `AppPaths` except the Settings display.
 
-Existing unrelated warnings remain in `CsvExport.kt`, Compose icon usages, coroutine test opt-ins, and Gradle deprecations. No Windows verification or desktop workflow run was performed; W4/W5/W9 remain pending.
+Existing unrelated warnings remain in `CsvExport.kt`, Compose icon usages, coroutine test opt-ins, and Gradle deprecations. No Windows verification or desktop workflow run was performed; W4/W5 remain pending. W9 was waived by the owner and is not verified.
 
 ### Files read
 
@@ -198,14 +198,14 @@ The original F29 table's `NativeSqliteTest`, `DatabaseInitSafetyTest`, `Statemen
 
 The assertion review found a real safety gap that a filename/method inventory missed: the F6/F9 non-dry-run tests called low-level database repair methods directly, so they did not prove the plan's required verified backup preceded mutation. Added `DatabaseRepairService` as the applied-repair entry point. It takes a backup through `AutoBackupService`, stops if verification fails, and only then applies the mark-only repair. Updated F6-c and F9-c tests to cover dry-run behavior, failed-backup blocking, verified backup integrity, and pre-repair rows in the snapshot. All test data stays under `TempHome`; no real profile was accessed. The entry point is not wired to startup or a UI, so no repair runs automatically.
 
-F28 follows the reconciled Phase 1 decision: test workers receive the project version and telemetry-off property; the packaged-app missing-version fail-fast is intentionally retained. D18 is resolved and F30-a…c pass; F27 remains blocked on Windows W9.
+F28 follows the reconciled Phase 1 decision: test workers receive the project version and telemetry-off property; the packaged-app missing-version fail-fast is intentionally retained. D18 is resolved and F30-a…c pass; F27 was later closed by the owner with no change, accepting W9 as unverified.
 
 ### Verification
 
 - Focused repair coverage: `gradle :test --no-daemon --console=plain --tests com.focusflow.services.RecurringTaskServiceTest --tests com.focusflow.data.OrphanFocusSessionReconciliationTest` passed 8 tests, 0 failures/errors/skips.
 - Final full root suite ran with a fresh temporary `user.home` and telemetry disabled: `gradle :test --no-daemon --console=plain --rerun-tasks`. Result: `BUILD SUCCESSFUL` in 3m48s; 225 tests across 58 JUnit XML files, 0 failures, 0 errors, 0 skipped. The F6 and F9 XML files each report 4 passing tests.
 - `CrashReportRetentionTest` also passed both F24 cases in the focused run and in the full root suite.
-- After adding the F6/F9 verified-backup gate, no new automated-test gaps were found among non-owner-gated findings. W4/W5/W9/W12/W13/W15 and other Windows checks remain human-only.
+- After adding the F6/F9 verified-backup gate, no new automated-test gaps were found among non-owner-gated findings. W4/W5/W12/W13/W15 and other applicable Windows checks remain human-only; W9 was waived and remains unverified.
 - `git diff --check` passed.
 
 ### Files read

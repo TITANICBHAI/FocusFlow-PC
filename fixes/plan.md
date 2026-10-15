@@ -700,7 +700,9 @@ The database path is computed in four places: `Database.kt:201-202` (`defaultDbF
 
 `build.gradle.kts:55` passes `-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.PollSelectorProvider` to every packaged launch, with a comment that it is needed under MSIX. In the JDK source tree (tag `jdk-21+35`; I did **not** check JDK 19) that class exists only under `src/java.base/unix/classes/sun/nio/ch/`; the Windows tree has `WindowsSelectorProvider` and `WEPollSelectorProvider`. `SelectorProvider.provider()` honours the property by `Class.forName(...)` and turns a missing class into `ServiceConfigurationError` (`java/nio/channels/spi/SelectorProvider.java:111-126`). So on Windows **any** code that opens a selector (`Selector.open`, `SocketChannel.open`, `Pipe.open`, `java.net.http.HttpClient`) would throw an `Error` **[INF]**.
 Nothing in the app's own code does so today: telemetry uses `HttpURLConnection` (`DiscordWebhookClient.kt:3-4, 28-30`) and `SingleInstanceGuard` uses `ServerSocket`/`FileChannel` **[V-code]** — which is why nobody has noticed. The module `java.net.http` is bundled (`build.gradle.kts:67-76`), so a future or transitive use is one import away.
-**Required change:** none until **W9** (§9) has been run on Windows (with and without the flag, including under MSIX). If W9 shows the flag is harmful or unnecessary, remove it in its own commit; if MSIX needs a fallback, use a Windows-valid class. **Never remove it on the strength of this audit alone.**
+**Original plan recommendation:** make no change until **W9** (§9) has been run on Windows (with and without the flag, including under MSIX). If W9 shows the flag is harmful or unnecessary, remove it in its own commit; if MSIX needs a fallback, use a Windows-valid class. **Never remove it on the strength of this audit alone.**
+
+**Current owner decision (2026-10-15):** Keep the current flag unchanged and accept that Windows behavior is unverified. W9 is waived; do not remove or replace the flag unless the owner reopens D17.
 
 ### F28 — `CrashReporter` cannot initialise without a JVM property `[V-code]` — **pull this forward**
 
@@ -733,7 +735,7 @@ Existing tests cover `Database` init/busy/corrupt/recovery/v9 migration and the 
 
 ---
 
-**Phase 3 exit criteria:** every non-owner-gated task above has passing tests; `./gradlew test` is green; `PHASE-3-REPORT.md` lists the owner-gated items (F22 scope/PIN, F23 BOM/formula guard, F24 Desktop policy, F26 `recovery`, F27 pending W9, F30 intent).
+**Phase 3 exit criteria:** every non-owner-gated task above has passing tests; `./gradlew test` is green; `PHASE-3-REPORT.md` lists the owner-gated items and D17's accepted unverified W9 status (F22 scope/PIN, F23 BOM/formula guard, F24 Desktop policy, F26 `recovery`, F30 intent).
 
 ---
 ## 9. Windows verification checklist (human only)
@@ -750,7 +752,7 @@ Nothing in this plan was run on Windows. The agent prepares scripts and notes; *
 | **W6** | Uninstall wizard | (a) app running and writing, DB healthy; (b) native library unavailable (reuse W2/W3 setup); (c) Nuclear/Standalone requirement active | (a) wizard opens quickly and `focusflow.db`, `-wal`, `-shm` are byte-identical before/after (F11); (b) the owner-chosen F5 outcome — not a dead end; (c) unchanged from today | F5, F11 |
 | **W7** | Watchdog relaunch loop | In the persistent-failure setup of W2/W3: kill the process, watch relaunches for 30 min, use a **test** webhook endpoint (never production) | Relaunch ≤ 2 min; number of crash files and telemetry posts stays bounded (F24 de-duplication, F4 consent) | F4, F18, F24 |
 | **W8** | Backup/restore against an open database | Copy/move `focusflow.db-wal`/`-shm` while the app runs; `VACUUM INTO` onto an existing file; run the fixed `restoreBackup` replacement if one is built | Record the real Windows errors (sharing violation expected **[INF]**); the app never ends up with a mismatched db/wal pair | F11, F15 |
-| **W9** | The `SelectorProvider` flag | With a full JDK of the **same major version as the bundled runtime**, run a one-class program that calls `java.nio.channels.Selector.open()` once with and once without `-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.PollSelectorProvider`; repeat the MSIX scenario the flag was added for | Record whether the flag throws `ServiceConfigurationError` on Windows and whether MSIX fails without it. Decide keep/replace/remove only from these results | F27 |
+| **W9** | The `SelectorProvider` flag | With a full JDK of the **same major version as the bundled runtime**, run a one-class program that calls `java.nio.channels.Selector.open()` once with and once without `-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.PollSelectorProvider`; repeat the MSIX scenario the flag was added for | Would record whether the flag throws `ServiceConfigurationError` on Windows and whether MSIX fails without it. **Waived by owner 2026-10-15:** keep the current flag and accept behavior as unverified; do not claim W9 passed | F27 |
 | **W10** | First-run consent | Fresh profile, packet capture or firewall prompt, no internet exceptions | **No** outbound telemetry before the user answers; the answer survives a DB failure; opt-out stops all posts | F4 |
 | **W11** | 24-hour soak | Run the released build and the F7-fixed build for 24 h; sample Private Bytes at 0/6/12/24 h | Released build grows; fixed build stays flat. (My Linux numbers are a linear extrapolation — this replaces them with a real figure.) | F7 |
 | **W12** | Recurring tasks | After F6: create one daily recurring task; advance the clock 3 days (or wait); run the repair **dry run on a copy** of a real polluted DB | Exactly one task per day; dry run changes nothing | F6 |
@@ -782,7 +784,7 @@ The agent must **stop and ask** at each of these; none is the agent's to decide.
 | D14 | CSV details | Formula-injection guard; UTF-8 BOM for Excel | Guard on, BOM on **after** testing in Excel | F23 |
 | D15 | Crash-log placement | Keep Desktop-first / move to `~/.focusflow/logs` | Move, with a "show me the log" button | F24 |
 | D16 | `recovery` Gradle module | Still needed? | Ask before touching | F26 |
-| D17 | `SelectorProvider` flag | Decide after W9 | — | F27 |
+| D17 | `SelectorProvider` flag | **Resolved 2026-10-15:** keep current flag; waive W9 and accept unverified Windows behavior | — | F27 |
 | D18 | Streak cap of 90 | Intentional? | If not intentional, fix | F30 |
 | D19 | Threading restructure | Approve only after the F16 measurements | — | F16 |
 

@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Audit evidence:** [focusflow-audit-evidence/README.md](focusflow-audit-evidence/README.md) and [focusflow-audit-evidence.zip](focusflow-audit-evidence.zip)
-- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 remains gated on human Windows check W9, so Phase 3 is not closed. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. D9's approved backup/recovery features are implemented and Linux-tested; its D9-specific Windows W8 scenario remains unverified, and no real-profile backup or restore was performed. D5/F1b is closed with no packaging change; W14 is not applicable. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design direction is approved, but runtime recovery remains unapproved. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D17/F27 remains unresolved pending a decision on whether to test the current SelectorProvider flag; W1–W13 and W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains a separate owner action. D2, D3, D4, D5, D6, D8, D10, D13, D14, and D18 are resolved; D15 is implemented; D16 is closed.
+- **Overall status:** Phase 2 non-owner-gated exit criteria were met on 2026-10-15. Phase 3 local work F20–F26 and F28–F30 is complete or closed; F27 is closed by the owner with the flag unchanged, W9 unrun, and Windows behavior accepted as unverified. Phase 3 remains open for other applicable Windows checks. D18 is resolved: the 90-day cap was not intentional, and F30 removes it. D9's approved backup/recovery features are implemented and Linux-tested; its D9-specific Windows W8 scenario remains unverified, and no real-profile backup or restore was performed. D5/F1b is closed with no packaging change; W14 is not applicable. D7 is closed with duplicates left as-is; D12 will not be done; D19 is closed with no threading restructure. D11's design direction is approved, but runtime recovery remains unapproved. No F6/F9 repair was run against a real profile; the applied-repair entry point requires a verified backup. D17 is closed with the current SelectorProvider flag retained; W1–W8, W10–W13, and W15 remain human-only. D1's direct Discord route is retained, but webhook rotation/exposure risk remains a separate owner action. D2, D3, D4, D5, D6, D8, D10, D13, D14, D17, and D18 are resolved; D15 is implemented; D16 is closed.
 
 ## Tracking rules
 
@@ -70,7 +70,7 @@
 | F24 — Crash-log retention | P3 | **Implemented and Linux-tested.** Root-cause signatures are persisted for the 60-minute window; only matching FocusFlow crash logs in app-data and temp are capped at the newest 20. Desktop-first writes remain unchanged and Desktop files are never pruned. F24-a/b pass; W13 remains unverified. |
 | F25 — AppPaths | P3 | **Implemented and Linux-tested.** Getter-based paths follow the current `user.home`; app-data directory literals are centralized except for the Settings display. F25-a…b and the 225-test root suite passed. Windows W4/W5 remain unverified. |
 | F26 — Recovery module missing | P3 | **Closed—not applicable.** Current `recovery/` directory and Gradle project exist. Do not remove the include or spend implementation time on this finding. |
-| F27 — SelectorProvider | P3 / WIN-VERIFY | **Unverified.** Current build targets JDK 19 and EXE/MSI; the active Microsoft Store MSIX distribution is built manually in CI. The plan’s JDK 21/MSIX claim does not establish behavior here. Test the actual shipped runtime before any change. |
+| F27 — SelectorProvider | P3 / WIN-VERIFY | **Closed by owner 2026-10-15:** keep the current flag unchanged and accept unverified Windows behavior. W9 was not run; do not remove or replace the flag. |
 | F28 — App version property | Test setup | **Implemented in Phase 1.** Test workers receive the project version and telemetry-off property; the packaged-app missing-version fail-fast remains intentional. |
 | F29 — Test gaps | Cross-cutting | **Reconciled for non-owner-gated findings.** Planned test classes map to current renamed/split equivalents. F6/F9 applied repairs require a verified backup; failure blocks mutation. F30-a…c are complete under resolved D18. |
 | F30 — 90-day streak cap | P3 / owner decision | **Complete and Linux-tested.** D18 resolved 2026-10-15: the cap was not intentional. The current-streak query has no 90-row limit; F30-a…c pass. |
@@ -84,7 +84,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 3. Ask D4 during Phase 1 if possible, but **defer F5 implementation/sign-off until after F11** in Phase 2; F5 depends on the read-only wizard path and is not a Phase 1 exit criterion.
 4. **Phase 2:** F10 → F12 → F7 → F8 → F14a new-migration guard → F6 generator/schema fix → F9 age-gate/dry-run implementation → F13 → F11 → F5 (if D4 is resolved) → F17 → F15 → approved F6/F9 live-data repairs → F14b legacy-migration audit → F16/F18/F19.
 5. F6/F9 code and dry-run tests may be prepared earlier, but **do not run a live repair until F15 can produce and verify a backup**. The F6 v10 migration must have a tested column guard before it is added; do not edit migrations v1–v9.
-6. **Phase 3:** proceed only after Phase 2. F22 is already ordered after F15. F20–F26 and F28–F30 are complete or closed locally; F27 remains blocked on human W9. Keep all remaining owner-gated work deferred until the owner records its specific decision. F26 is closed.
+6. **Phase 3:** proceed only after Phase 2. F22 is already ordered after F15. F20–F26 and F28–F30 are complete or closed locally; F27 is closed by the owner with the flag unchanged and W9 waived as unverified. Keep all remaining owner-gated work deferred until the owner records its specific decision. F26 is closed.
 
 ## Phase 0 — Baseline and tooling
 
@@ -220,7 +220,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 3 — P3 hardening and cleanup
 
-**Status:** In progress — 2026-10-15. Phase 3 findings F20–F26 and F28–F30 are complete or closed locally. F27 remains blocked on human W9; Phase 3 exit and Windows verification remain open.
+**Status:** In progress — 2026-10-15. Phase 3 findings F20–F27 and F28–F30 are complete or closed locally. F27 was closed by the owner with the flag unchanged and W9 unrun; Phase 3 exit and other applicable Windows verification remain open.
 
 - **2026-10-15 F20 start:** Replacing date-wrapped indexed-column filters and per-day reads only. Preserve returned values, timestamp storage, and schema; use isolated temporary databases for verification.
 - **2026-10-15 F20 verification:** The implementation has no `DATE(...)` predicates in `Database.kt`; `DayQueriesTest` passed 4/4 focused tests, and the final root suite passed 213/213 tests with 0 failures/errors/skips. XML: `build/test-results/test/TEST-com.focusflow.data.DayQueriesTest.xml`.
@@ -249,18 +249,18 @@ The following dependencies take precedence over conflicting ordering in the atta
 - [x] **F24 — Bounded crash reports:** Persistently deduplicate matching root-cause reports for 60 minutes and cap only matching app-data/temp files at 20; preserve Desktop reports from pruning. F24-a/b pass. D15 was resolved separately below; W13 remains unverified.
 - **2026-10-15 F25 start:** Owner explicitly authorized central application paths. Add getter-based `AppPaths` that reads the current `user.home` on each access, replace the four database-path computations, and verify F25-a…b. Scope limited to required path centralization and trivial replacements.
 - **2026-10-15 F25 verification:** F25-a…b passed. The full root suite passed 225 tests across 58 JUnit XML files with 0 failures, errors, or skips, using a fresh temporary `user.home` and telemetry disabled. W4/W5 remain Windows-only and unverified.
-- **2026-10-15 F27 distribution clarification:** Owner confirms MSIX is an active Microsoft Store distribution and must not be abandoned. Include MSIX in W5 and W9; F27's SelectorProvider decision remains blocked on human Windows verification with the actual shipped JDK and package formats.
+- **2026-10-15 F27 distribution clarification:** Owner confirms MSIX is an active Microsoft Store distribution and must not be abandoned. Include MSIX in W5 and W9; at that point F27 was blocked on human Windows verification with the actual shipped JDK and package formats. The owner later closed D17 by keeping the flag and accepting W9 as unverified.
 - **2026-10-15 F29 start:** Reconcile the plan's required test files and finding-specific cases against the current suite; treat equivalent renamed/split test classes as coverage only when their assertions match, and leave owner-gated behavior unchanged.
 - **2026-10-15 F29 initial map:** Mapped the planned cases to current test classes. A deeper assertion review then found that F6/F9 non-dry-run tests called low-level database repairs directly, without proving the required verified backup preceded mutation.
 - **2026-10-15 F29 correction:** Added `DatabaseRepairService` as the applied-repair entry point. F6/F9 dry-runs remain read-only; failed backups block mutation; successful verified snapshots are asserted to contain the pre-repair rows. Tests use `TempHome`; no real profile was accessed.
-- **2026-10-15 F29 verification:** Focused F6/F9 classes passed 8/8. At that point, the isolated-home root suite `gradle :test --no-daemon --console=plain --rerun-tasks` passed 225 tests across 58 JUnit XML files, 0 failures/errors/skips; F30-a…c were still deferred pending D18. D18 was resolved and F30-a…c were subsequently verified in the latest 228-test root run. Windows W9/W13/W15 remain unverified.
+- **2026-10-15 F29 verification:** Focused F6/F9 classes passed 8/8. At that point, the isolated-home root suite `gradle :test --no-daemon --console=plain --rerun-tasks` passed 225 tests across 58 JUnit XML files, 0 failures/errors/skips; F30-a…c were still deferred pending D18. D18 was resolved and F30-a…c were subsequently verified in a 228-test root run. W9 remains unverified and was later waived by the owner; W13/W15 remain pending.
 - [x] **F25 — Central application paths:** Getter-based `AppPaths` follows changing `user.home`; the four DB-path computations and trivial app-data path uses are centralized. F25-a…b and the isolated-home root suite pass. W4/W5 remain pending on Windows.
 - [x] **F26 — Closed as stale:** Current checkout includes `recovery/` and its Gradle build file; no code change or removal is warranted. Evidence is recorded in root `AUDIT-ADDENDUM.md`.
-- [ ] **F27 — SelectorProvider flag:** No code change until human W9 is complete on the actual shipped JDK (current toolchain JDK 19) and EXE/MSI/MSIX formats; MSIX is an active Microsoft Store distribution. Do not remove the flag based on the audit alone.
+- [x] **F27 — SelectorProvider flag:** Closed by owner 2026-10-15. Keep the current flag unchanged; W9 was not run and Windows behavior is accepted as unverified.
 - [x] **F28 — Test-configuration regression:** Completed earlier in Phase 1; retain its test/configuration coverage in the final audit.
 - [x] **F29 — Test-gap closure:** Reconcile renamed/split test classes and confirm finding-specific assertions. F6/F9 applied repairs require a verified backup; failure blocks mutation. F30-a…c now pass under resolved D18; Windows checks remain human-only.
 - [x] **F30 — Current streak cap:** D18 resolved 2026-10-15: 90 days is not an intentional cap. The current-streak query reads consecutive completion dates without a 90-row limit; F30-a…c pass.
-- [ ] **Phase 3 exit:** All non-owner-gated acceptance/tests pass; `fixes/PHASE-3-REPORT.md` lists remaining owner choices and Windows checks W9/W15 as applicable.
+- [ ] **Phase 3 exit:** All non-owner-gated acceptance/tests pass; `fixes/PHASE-3-REPORT.md` lists remaining owner choices and applicable Windows checks. W9 is waived as unverified; W14 is not applicable.
 
 ## Owner decisions — unresolved unless answered or explicitly closed
 
@@ -284,7 +284,7 @@ Recommendations in the source plan are not approvals. Record the owner’s answe
 | D14 | CSV formula-injection guard and UTF-8 BOM | **Resolved 2026-10-15:** formula-prefix protection enabled for formula-like text; no UTF-8 BOM. W15 Excel verification remains open. |
 | D15 | Crash-log placement: Desktop-first or app log directory | **Resolved 2026-10-15:** new reports go to `~/.focusflow/logs`; legacy Desktop/app-data reports remain searchable. |
 | D16 | Whether the recovery Gradle module is still needed | **Closed—not required for this audit:** F26 is stale; revisit only if the owner proposes removing the existing module. |
-| D17 | Keep/replace/remove SelectorProvider flag | F27; only after W9. |
+| D17 | Keep/replace/remove SelectorProvider flag | **Closed 2026-10-15:** keep the current flag unchanged; accept unverified Windows behavior and do not run W9. |
 | D18 | Whether the 90-day current-streak cap is intentional | **Resolved 2026-10-15:** cap was not intentional; remove the 90-row limit. F30-a…c pass. |
 | D19 | Threading restructure | **Closed 2026-10-15:** no threading restructure is needed. |
 
@@ -300,7 +300,7 @@ All applicable test items stay unchecked until a human runs the named scenario o
 - [ ] **W6:** Uninstall wizard against active writer, unavailable native library, and active protection.
 - [ ] **W7:** 30-minute watchdog failure soak using a test endpoint only; verify bounded reports/telemetry.
 - [ ] **W8:** Backup/WAL/SHM behavior while app is open; record actual Windows sharing errors.
-- [ ] **W9:** SelectorProvider with/without flag on the actual shipped JDK; test current EXE/MSI packages and the active Microsoft Store MSIX distribution.
+- [ ] **W9 — Not run (owner waived):** Keep the current flag; accept unverified Windows behavior. Do not report this check as passed.
 - [ ] **W10:** Fresh-profile telemetry consent and network behavior; no send before explicit consent if opt-in is selected.
 - [ ] **W11:** 24-hour memory soak before/after F7.
 - [ ] **W12:** Recurring-task behavior and dry-run repair on a copy of a polluted DB.
