@@ -3,6 +3,9 @@ package com.focusflow.data
 import com.focusflow.testutil.TempHome
 import com.focusflow.services.AutoBackupService
 import com.focusflow.services.ClearUserActivityService
+import com.focusflow.services.GlobalPin
+import com.focusflow.services.PinState
+import com.focusflow.services.PinVerificationResult
 import java.nio.file.Path
 import java.sql.DriverManager
 import java.sql.SQLException
@@ -10,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class DatabaseUserActivityClearTest {
 
@@ -52,6 +56,58 @@ class DatabaseUserActivityClearTest {
         assertIs<ClearUserActivityService.Result.BackupFailed>(result)
         assertActivityCounts(dbFile, expected = 1)
         assertProtectedDataCounts(dbFile)
+    }
+
+    @Test
+    fun f22dUnconfiguredGlobalPinPreventsBackupAndActivityClear() = withDatabase { dbFile ->
+        seedActivityAndProtectedData(dbFile)
+        removeGlobalPinHash(dbFile)
+        assertEquals(PinState.NOT_SET, GlobalPin.state())
+        assertEquals(
+            PinVerificationResult.UNAVAILABLE,
+            GlobalPin.verifyConfiguredResult("anything")
+        )
+        var backupAttempts = 0
+
+        val result = ClearUserActivityService.clearAfterVerifiedBackup {
+            backupAttempts++
+            AutoBackupService.BackupResult.Success(
+                file = dbFile.resolveSibling("unverified-test-backup.db").toFile(),
+                hash = "test-hash",
+                sizeBytes = 0
+            )
+        }
+
+        assertEquals(0, backupAttempts, "backup must not run when no Global PIN is configured")
+        assertEquals(
+            ClearUserActivityService.Result.PinCheckFailed(PinState.NOT_SET),
+            result
+        )
+        assertActivityCounts(dbFile, expected = 1)
+        assertProtectedDataCounts(dbFile, expectedSettings = 1)
+    }
+
+    @Test
+    fun f22eVerifiedBackupContainsActivityBeforeTheClear() = withDatabase { dbFile ->
+        seedActivityAndProtectedData(dbFile)
+        AutoBackupService.resetForTest()
+
+        try {
+            val result = assertIs<ClearUserActivityService.Result.Cleared>(
+                ClearUserActivityService.clearAfterVerifiedBackup()
+            )
+
+            assertTrue(result.backupFile.isFile, "verified backup file must exist")
+            assertIs<AutoBackupService.BackupVerification.Verified>(
+                AutoBackupService.verifyBackup(result.backupFile)
+            )
+            assertActivityCounts(result.backupFile.toPath(), expected = 1)
+            assertActivityCounts(dbFile, expected = 0)
+            assertProtectedDataCounts(dbFile, expectedSettings = 3)
+            assertEquals("test-hash", settingValue(dbFile, "global_pin_hash"))
+        } finally {
+            AutoBackupService.resetForTest()
+        }
     }
 
     private fun withDatabase(block: (Path) -> Unit) {
@@ -149,6 +205,14 @@ class DatabaseUserActivityClearTest {
         }
     }
 
+    private fun removeGlobalPinHash(dbFile: Path) {
+        DriverManager.getConnection("jdbc:sqlite:${dbFile.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate("DELETE FROM settings WHERE key = 'global_pin_hash'")
+            }
+        }
+    }
+
     private fun assertActivityCounts(dbFile: Path, expected: Int) {
         listOf(
             "focus_sessions",
@@ -161,9 +225,9 @@ class DatabaseUserActivityClearTest {
         }
     }
 
-    private fun assertProtectedDataCounts(dbFile: Path) {
+    private fun assertProtectedDataCounts(dbFile: Path, expectedSettings: Int = 2) {
         mapOf(
-            "settings" to 2,
+            "settings" to expectedSettings,
             "block_rules" to 1,
             "block_schedules" to 1,
             "network_cutoff_rules" to 1,

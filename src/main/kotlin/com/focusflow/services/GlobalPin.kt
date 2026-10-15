@@ -58,6 +58,19 @@ object GlobalPin {
     fun verifyResult(rawPin: String): PinVerificationResult =
         PinPolicy.verify(Database.readSetting(KEY), rawPin, ::sha256)
 
+    /**
+     * Verify only when a nonblank Global PIN is currently configured.
+     * Unlike [verifyResult], an absent PIN is not an authorization success.
+     */
+    internal fun verifyConfiguredResult(rawPin: String): PinVerificationResult =
+        when (val stored = Database.readSetting(KEY)) {
+            is Database.SettingRead.Present ->
+                if (stored.value.isBlank()) PinVerificationResult.UNAVAILABLE
+                else PinPolicy.verify(stored, rawPin, ::sha256)
+            Database.SettingRead.Absent,
+            is Database.SettingRead.Unreadable -> PinVerificationResult.UNAVAILABLE
+        }
+
     /** Returns true if PIN is correct OR if no PIN is set (unguarded). */
     fun verify(rawPin: String): Boolean =
         verifyResult(rawPin) == PinVerificationResult.ACCEPTED

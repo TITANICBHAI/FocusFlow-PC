@@ -158,6 +158,20 @@ fun ProfileScreen() {
                                 "${result.backupFile.absolutePath}. ${result.reason}",
                             isError = true
                         )
+                    is ClearUserActivityService.Result.PinCheckFailed -> {
+                        val pinMessage = when (result.state) {
+                            PinState.NOT_SET ->
+                                "A configured Global PIN is required. No activity data was cleared."
+                            PinState.UNKNOWN ->
+                                "Could not verify the Global PIN settings. No activity data was cleared."
+                            PinState.SET ->
+                                "The Global PIN settings changed. No activity data was cleared."
+                        }
+                        val backupMessage = result.backupFile?.let {
+                            " A verified backup is available at ${it.absolutePath}."
+                        }.orEmpty()
+                        setClearActivityMessage(pinMessage + backupMessage, isError = true)
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -558,6 +572,7 @@ fun ProfileScreen() {
         PinGateDialog(
             title = "Global PIN required",
             subtitle = "Enter your Global PIN to clear activity data.",
+            requireConfiguredPin = true,
             onSuccess = {
                 showClearPinGate = false
                 clearActivityAfterPin()

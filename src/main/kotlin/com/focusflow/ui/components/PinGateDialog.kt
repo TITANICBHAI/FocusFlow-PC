@@ -44,6 +44,7 @@ fun PinGateDialog(
     title: String = "",
     subtitle: String = "",
     allowReset: Boolean = true,
+    requireConfiguredPin: Boolean = false,
     onSuccess: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -204,18 +205,25 @@ fun PinGateDialog(
                         onClick = {
                             scope.launch {
                                 var currentState = pinState
-                                if (currentState == null || currentState == PinState.UNKNOWN) {
+                                if (requireConfiguredPin ||
+                                    currentState == null ||
+                                    currentState == PinState.UNKNOWN
+                                ) {
                                     currentState = withContext(Dispatchers.IO) { GlobalPin.state() }
                                     pinState = currentState
                                 }
 
                                 when (currentState) {
-                                    PinState.NOT_SET -> onSuccess()
+                                    PinState.NOT_SET -> if (!requireConfiguredPin) onSuccess()
                                     PinState.UNKNOWN,
                                     null -> Unit
-                                    PinState.SET -> when (
-                                        withContext(Dispatchers.IO) { GlobalPin.verifyResult(pin) }
-                                    ) {
+                                    PinState.SET -> when (withContext(Dispatchers.IO) {
+                                        if (requireConfiguredPin) {
+                                            GlobalPin.verifyConfiguredResult(pin)
+                                        } else {
+                                            GlobalPin.verifyResult(pin)
+                                        }
+                                    }) {
                                         PinVerificationResult.ACCEPTED -> onSuccess()
                                         PinVerificationResult.INCORRECT -> {
                                             error = true
@@ -231,8 +239,13 @@ fun PinGateDialog(
                             }
                         },
                         colors  = ButtonDefaults.buttonColors(containerColor = Purple80),
-                        enabled = pinState != null &&
-                            (pinState != PinState.SET || pin.isNotBlank())
+                        enabled = pinState != null && (
+                            if (requireConfiguredPin) {
+                                pinState == PinState.SET && pin.isNotBlank()
+                            } else {
+                                pinState != PinState.SET || pin.isNotBlank()
+                            }
+                        )
                     ) { Text(s.pinGateConfirm) }
                 }
                 PinGateStep.FORGOT_CONFIRM -> {
