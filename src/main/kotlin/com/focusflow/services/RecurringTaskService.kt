@@ -57,20 +57,21 @@ object RecurringTaskService {
      * either DB insert is committed, pass the dedup check, and both insert a
      * fresh copy of every template — producing duplicate tasks for the day.
      */
-    @Synchronized fun generateForToday() {
+    @Synchronized fun generateForToday(today: LocalDate = LocalDate.now()) {
         try {
-            val today     = LocalDate.now()
-            val templates = Database.getRecurringTemplates()   // all tasks where recurring=true
+            val templates = Database.getRecurringTemplates()
             // Dedup key: title + scheduled time — prevents both cross-template title collisions
             // AND correctly allows two different templates that share a name but differ by time.
-            val existing = Database.getTasksForDate(today)
+            val existingTasks = Database.getTasksForDate(today)
+            val existingKeys = existingTasks
                 .map { "${it.title.lowercase().trim()}|${it.scheduledTime?.toString() ?: ""}" }
-                .toSet()
+                .toMutableSet()
+            val existingParentIds = existingTasks.mapNotNull { it.recurringParentId }.toMutableSet()
 
             for (template in templates) {
                 if (!shouldGenerateToday(template, today)) continue
                 val dedupKey = "${template.title.lowercase().trim()}|${template.scheduledTime?.toString() ?: ""}"
-                if (dedupKey in existing) continue
+                if (template.id in existingParentIds || dedupKey in existingKeys) continue
 
                 val newTask = template.copy(
                     id            = UUID.randomUUID().toString(),
@@ -78,9 +79,12 @@ object RecurringTaskService {
                     scheduledTime = template.scheduledTime,
                     completed     = false,
                     skipped       = false,
+                    recurringParentId = template.id,
                     createdAt     = LocalDateTime.now()
                 )
                 Database.upsertTask(newTask)
+                existingParentIds += template.id
+                existingKeys += dedupKey
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

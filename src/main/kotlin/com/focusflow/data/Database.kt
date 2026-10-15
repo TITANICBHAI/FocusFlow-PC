@@ -13,6 +13,7 @@ import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -614,7 +615,7 @@ object Database {
     // Every new schema change gets its own numbered migrate_vN() function.
     // Never edit an existing migrate_vN() — add a new one and bump TARGET_VERSION.
     //
-    private val TARGET_VERSION = 9
+    private val TARGET_VERSION = 10
 
     private val REQUIRED_SCHEMA_COLUMNS = linkedMapOf(
         "tasks" to listOf(
@@ -622,7 +623,8 @@ object Database {
             "focus_mode",
             "focus_intensity",
             "focus_blocked_apps",
-            "focus_require_pin"
+            "focus_require_pin",
+            "recurring_parent_id"
         ),
         "daily_completions" to listOf("total_count", "focus_minutes"),
         "block_rules" to listOf("source")
@@ -655,6 +657,7 @@ object Database {
             if (lockedVersion < 7) migrateV7()
             if (lockedVersion < 8) migrateV8()
             if (lockedVersion < 9) migrateV9()
+            if (lockedVersion < 10) migrateV10()
 
             // Bump stored version only after ALL steps succeed
             connection.createStatement().use { statement ->
@@ -1004,6 +1007,11 @@ object Database {
         }
     }
 
+    // v10 — distinguish recurring templates from generated task copies.
+    private fun migrateV10() {
+        addColumnIfMissing("tasks", "recurring_parent_id", "TEXT")
+    }
+
     // v4 — network cutoff rules (domain + keyword, with optional per-app targeting)
     private fun migrateV4() {
         connection.createStatement().use { st ->
@@ -1070,8 +1078,8 @@ object Database {
             INSERT OR REPLACE INTO tasks
             (id, title, description, duration_minutes, scheduled_date, scheduled_time,
              completed, skipped, recurring, recurring_type, priority, tags, created_at, completed_at,
-             focus_mode, focus_intensity, focus_blocked_apps, focus_require_pin)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             focus_mode, focus_intensity, focus_blocked_apps, focus_require_pin, recurring_parent_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """.trimIndent()).use { ps ->
             ps.setString(1, task.id)
             ps.setString(2, task.title)
@@ -1091,6 +1099,7 @@ object Database {
             ps.setString(16, task.focusIntensity)
             ps.setString(17, task.focusBlockedApps.joinToString(","))
             ps.setInt(18, if (task.focusRequirePin) 1 else 0)
+            ps.setString(19, task.recurringParentId)
             ps.executeUpdate()
         }
     }
@@ -1168,7 +1177,7 @@ object Database {
 
     @Synchronized fun getRecurringTemplates(): List<Task> {
         return connection.prepareStatement(
-            "SELECT * FROM tasks WHERE recurring = 1 ORDER BY created_at ASC"
+            "SELECT * FROM tasks WHERE recurring = 1 AND recurring_parent_id IS NULL ORDER BY created_at ASC"
         ).use { ps ->
             ps.executeQuery().use { rs ->
                 val list = mutableListOf<Task>()
@@ -1176,6 +1185,115 @@ object Database {
                 list
             }
         }
+    }
+
+    internal data class RecurringTaskRepairResult(
+        val dryRun: Boolean,
+        val duplicateGroups: Int,
+        val rowsToMark: Int,
+        val rowsMarked: Int
+    )
+
+    private data class RecurringTaskRepairRow(
+        val id: String,
+        val title: String,
+        val scheduledTime: String?,
+        val recurringType: String?,
+        val createdAt: LocalDateTime
+    )
+
+    private data class RecurringTaskRepairKey(
+        val title: String,
+        val scheduledTime: String?,
+        val recurringType: String?
+    )
+
+    private data class RecurringTaskRepairPlan(
+        val duplicateGroups: Int,
+        val links: List<Pair<String, String>>
+    )
+
+    /**
+     * Identifies legacy recurring rows that appear to be generated copies.
+     * The dry-run default is read-only. Applying this repair to a real profile
+     * must wait until F15 provides verified backup support.
+     */
+    @Synchronized
+    internal fun repairRecurringTaskParents(dryRun: Boolean = true): RecurringTaskRepairResult {
+        fun findPlan(): RecurringTaskRepairPlan {
+            val rows = connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    """
+                    SELECT id, title, scheduled_time, recurring_type, created_at
+                    FROM tasks
+                    WHERE recurring = 1 AND recurring_parent_id IS NULL
+                    """.trimIndent()
+                ).use { resultSet ->
+                    buildList {
+                        while (resultSet.next()) {
+                            add(
+                                RecurringTaskRepairRow(
+                                    id = resultSet.getString("id"),
+                                    title = resultSet.getString("title"),
+                                    scheduledTime = resultSet.getString("scheduled_time"),
+                                    recurringType = resultSet.getString("recurring_type"),
+                                    createdAt = LocalDateTime.parse(resultSet.getString("created_at"), dtFmt)
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            val groups = rows.groupBy { row ->
+                RecurringTaskRepairKey(
+                    title = row.title.trim().lowercase(Locale.ROOT),
+                    scheduledTime = row.scheduledTime,
+                    recurringType = row.recurringType?.lowercase(Locale.ROOT)
+                )
+            }.values.filter { it.size > 1 }
+
+            val links = groups.flatMap { group ->
+                val template = group.minWith(compareBy<RecurringTaskRepairRow>({ it.createdAt }, { it.id }))
+                group.asSequence()
+                    .filter { it.id != template.id }
+                    .map { duplicate -> duplicate.id to template.id }
+                    .toList()
+            }
+            return RecurringTaskRepairPlan(groups.size, links)
+        }
+
+        val (plan, rowsMarked) = if (dryRun) {
+            findPlan() to 0
+        } else {
+            inTransaction {
+                val currentPlan = findPlan()
+                var marked = 0
+                connection.prepareStatement(
+                    """
+                    UPDATE tasks
+                    SET recurring_parent_id = ?
+                    WHERE id = ? AND recurring = 1 AND recurring_parent_id IS NULL
+                    """.trimIndent()
+                ).use { statement ->
+                    currentPlan.links.forEach { (duplicateId, templateId) ->
+                        statement.setString(1, templateId)
+                        statement.setString(2, duplicateId)
+                        check(statement.executeUpdate() == 1) {
+                            "Recurring task repair could not mark a planned duplicate row"
+                        }
+                        marked++
+                    }
+                }
+                currentPlan to marked
+            }
+        }
+
+        return RecurringTaskRepairResult(
+            dryRun = dryRun,
+            duplicateGroups = plan.duplicateGroups,
+            rowsToMark = plan.links.size,
+            rowsMarked = rowsMarked
+        )
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────
@@ -2188,7 +2306,8 @@ object Database {
         focusMode         = rs.getInt("focus_mode") == 1,
         focusIntensity    = rs.getString("focus_intensity") ?: "standard",
         focusBlockedApps  = try { rs.getString("focus_blocked_apps")?.split(",")?.filter { it.isNotBlank() } ?: emptyList() } catch (_: Exception) { emptyList() },
-        focusRequirePin   = try { rs.getInt("focus_require_pin") == 1 } catch (_: Exception) { false }
+        focusRequirePin   = try { rs.getInt("focus_require_pin") == 1 } catch (_: Exception) { false },
+        recurringParentId = rs.getString("recurring_parent_id")
     )
 
     private fun rowToSession(rs: java.sql.ResultSet): FocusSession = FocusSession(

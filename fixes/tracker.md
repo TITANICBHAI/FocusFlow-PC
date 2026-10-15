@@ -49,7 +49,7 @@
 | F3 — Root cause | P0 | **Implemented and Linux-tested.** Local full cause-chain reporting remains intact; remote critical/fatal telemetry now uses only bounded root-cause-first summaries, with JSON-safe fields and F4 redaction applied before the sink. Windows remains unverified. |
 | F4 — Consent, PII, endpoints | P0 | **Implemented and Linux-tested.** Consent remains DB-independent, opt-in and fail-closed; the one-time legacy migration is covered, and serialized Windows paths plus current home/user/host values are redacted before the sink. D1’s delivery choice and exposure risk remain open; Windows W10 remains unverified. |
 | F5 — Uninstall on DB failure | P0 | **Open; owner-gated.** Current code blocks uninstall when protection state cannot be read. Decide D4; implement only after F11’s read-only path. |
-| F6 — Recurring task multiplication | P1 | **Open; confirmed by current logic.** Generated copies remain recurring templates and the existing-key set is not updated in the loop. `@Synchronized` does not prevent this growth. |
+| F6 — Recurring task multiplication | P1 | **Implemented and Linux-tested.** Schema v10 tracks template parents, generated copies are excluded from templates, and daily generation is idempotent. The legacy repair defaults to dry-run and only marks duplicates; live repair waits for F15 backup verification. |
 | F7 — JDBC statement closure | P1 | **Open.** Many query sites close the result set but not the owning statement; the enabled-block-process query is reached from the two-second cache refresh. Recount exact sites against current code. |
 | F8 — PIN fail-open | P1 | **Partially mitigated by F12; remaining work is open.** Unavailable lookups now fail closed; F8 still covers UI tri-state/read-back behavior and generated-PIN verification. |
 | F9 — Orphan focus sessions | P1 | **Open.** The unfinished-session query has no age bound; asynchronous end writes can be lost. Live repair needs F15 backup verification and D8. |
@@ -142,7 +142,7 @@ The following dependencies take precedence over conflicting ordering in the atta
 
 ## Phase 2 — P1/P2 data integrity and security findings
 
-- **Status:** In progress — 2026-10-15 (F10, F12, F7, and F8 complete; F14a next).
+- **Status:** In progress — 2026-10-15 (F10, F12, F7, F8, F14a, and F6 complete; F9 end-time policy D8 pending).
 - **Required order:** **F10 → F12 → F7 → F8 → F14a new-migration guard → F6 code → F9 gate/dry-run → F13 → F11 → F5 → F17 → F15 → approved F6/F9 live repairs → F14b legacy audit → F16/F18/F19.**
 
 - **2026-10-15 Phase 2 start:** Owner authorized Phase 2 in the prescribed order. Checked the current schema target is v9 before adding the F10-d v9 fixture comparison; the existing v8→v9 migration test remains unchanged.
@@ -169,7 +169,10 @@ The following dependencies take precedence over conflicting ordering in the atta
 - **2026-10-15 F14a start:** Add a required-column check after migration plus a PRAGMA-based, idempotent helper for future migrations; preserve all v1–v9 migration bodies.
 - **2026-10-15 F14a verification:** Post-migration schema validation reports the first missing required column via `SchemaMismatchException`; the guarded migration helper is idempotent. F14a…c pass; full root suite: 174 tests, 0 failures/errors/skips across 44 JUnit XML reports. Updated the v9 migration test fixture to retain the full core schema.
 - [x] **F14a — New-migration guard (before F6):** Required columns are checked after migration; future migrations have a PRAGMA-based `addColumnIfMissing` helper. Existing v1–v9 migration bodies are unchanged. F6 prerequisite satisfied.
-- [ ] **F6 — Recurring task duplication:** After the F14 new-migration guard, add the numbered migration and recurring-template parent relation; make generation idempotent. Add a dry-run repair; do not run it on a real DB until F15 has verified backup support. Mark, never delete, unless the owner explicitly approves deletion (D7). Tests F6-a…d.
+- **2026-10-15 F6 start:** Owner authorized F6 and F9. Beginning F6 on its own branch after confirming F14a is complete. D7 remains mark-only: no duplicate task rows will be deleted. F9 is gated on D8's orphan-session end-time policy; no live repair will be run.
+- **2026-10-15 F6 implementation:** Added the v10 `recurring_parent_id` migration through the F14a column guard, parent-aware template selection/generation, and a count-only dry-run/non-destructive mark repair. Added F6-a…d tests and updated schema-target assertions affected by v10. All test DBs use temporary paths.
+- **2026-10-15 F6 verification:** F6-a…d pass. Full root suite: 178 tests, 0 failures/errors/skips across 45 JUnit XML reports. No repair was run on a real profile.
+- [x] **F6 — Recurring task duplication:** Schema v10 adds the template-parent relation; generated rows are not templates, repeated generation is idempotent, and the dry-run repair only marks inferred copies without deleting rows. F6-a…d pass. Applying the repair to a real DB remains gated on F15 backup verification.
 - [ ] **F9 — Reconcile orphan sessions:** Add the 12-hour gate and dry-run/idempotent reconciliation. Do not apply the repair to a real DB until F15 has verified backup support and the owner approves the end-time policy (D8). Tests F9-a…d.
 - [ ] **F13 — Order focus-session writes:** Ensure end waits for start, log failed writes, and allow bounded completion on dispose. Tests F13-a…c; note whether the dispose race already passes before changes.
 - [ ] **F11 — Read-only uninstall wizard:** Add an open that does not snapshot, mutate, checkpoint, migrate, or recover the DB. This is a prerequisite for F5. Tests F11-a…d; W6 remains human-only.

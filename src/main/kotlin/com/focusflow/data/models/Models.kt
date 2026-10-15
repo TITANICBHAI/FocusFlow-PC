@@ -21,7 +21,8 @@ data class Task(
     val focusMode: Boolean = false,
     val focusIntensity: String = "standard",
     val focusBlockedApps: List<String> = emptyList(),
-    val focusRequirePin: Boolean = false
+    val focusRequirePin: Boolean = false,
+    val recurringParentId: String? = null
 )
 
 data class FocusSession(

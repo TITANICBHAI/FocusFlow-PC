@@ -37,6 +37,7 @@ class DatabaseSchemaGuardTest {
         DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}").use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute("ALTER TABLE tasks RENAME COLUMN skipped TO skipped_legacy")
+                statement.execute("PRAGMA user_version=9")
             }
         }
         assertEquals(9, userVersion(dbFile))
@@ -47,11 +48,11 @@ class DatabaseSchemaGuardTest {
     }
 
     @Test
-    fun f14bHealthyVersionNineDatabasePassesSchemaGuard() {
-        val dbFile = tempDir.resolve("healthy-v9.db").toFile()
+    fun f14bHealthyVersionTenDatabasePassesSchemaGuard() {
+        val dbFile = tempDir.resolve("healthy-v10.db").toFile()
         assertIs<DbInitResult.Ready>(init(dbFile))
         Database.close()
-        assertEquals(9, userVersion(dbFile))
+        assertEquals(10, userVersion(dbFile))
 
         assertIs<DbInitResult.Ready>(init(dbFile))
     }

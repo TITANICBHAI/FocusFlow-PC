@@ -92,26 +92,26 @@ class DatabaseTransactionTest {
     }
 
     @Test
-    fun openingV9FixtureAndMigratingEmptyDatabaseReachSameSchema() {
-        val generatedV9 = tempDir.resolve("generated-v9.db").toFile()
-        init(generatedV9)
+    fun openingVersionTenFixtureAndEmptyDatabaseReachSameSchema() {
+        val generatedV10 = tempDir.resolve("generated-v10.db").toFile()
+        init(generatedV10)
         Database.close()
-        assertEquals(9, userVersion(generatedV9))
+        assertEquals(10, userVersion(generatedV10))
 
-        val v9Fixture = tempDir.resolve("fixture-v9.db").toFile()
-        Files.copy(generatedV9.toPath(), v9Fixture.toPath())
+        val versionTenFixture = tempDir.resolve("fixture-v10.db").toFile()
+        Files.copy(generatedV10.toPath(), versionTenFixture.toPath())
 
         Database.resetForTest()
-        init(v9Fixture)
-        val fixtureSchema = schemaSnapshot(v9Fixture)
+        init(versionTenFixture)
+        val fixtureSchema = schemaSnapshot(versionTenFixture)
 
         Database.resetForTest()
         val emptyDatabase = tempDir.resolve("empty.db").toFile()
         init(emptyDatabase)
         val emptySchema = schemaSnapshot(emptyDatabase)
 
-        assertEquals(9, fixtureSchema.userVersion)
-        assertEquals(9, emptySchema.userVersion)
+        assertEquals(10, fixtureSchema.userVersion)
+        assertEquals(10, emptySchema.userVersion)
         assertEquals(emptySchema.tables, fixtureSchema.tables)
     }
 
