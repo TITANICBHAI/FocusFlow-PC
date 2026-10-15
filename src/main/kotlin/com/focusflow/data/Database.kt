@@ -85,6 +85,10 @@ class DatabaseUnavailableException(
     val state: DbInitResult?
 ) : IllegalStateException("FocusFlow database is unavailable: $state")
 
+class SchemaMismatchException(
+    val missingColumn: String
+) : IllegalStateException("Database schema is missing required column: $missingColumn")
+
 internal interface SettingsStore {
     fun readSetting(key: String): Database.SettingRead
     fun writeSetting(key: String, value: String): Database.SettingWrite
@@ -443,6 +447,7 @@ object Database {
             migrationConnection.set(localConn)
             try {
                 migrate()
+                verifySchema()
             } finally {
                 migrationConnection.remove()
             }
@@ -611,6 +616,18 @@ object Database {
     //
     private val TARGET_VERSION = 9
 
+    private val REQUIRED_SCHEMA_COLUMNS = linkedMapOf(
+        "tasks" to listOf(
+            "skipped",
+            "focus_mode",
+            "focus_intensity",
+            "focus_blocked_apps",
+            "focus_require_pin"
+        ),
+        "daily_completions" to listOf("total_count", "focus_minutes"),
+        "block_rules" to listOf("source")
+    )
+
     private fun migrate() {
         val current = connection.createStatement().use { statement ->
             statement.executeQuery("PRAGMA user_version")
@@ -644,6 +661,47 @@ object Database {
                 statement.executeUpdate("PRAGMA user_version = $TARGET_VERSION")
             }
         }
+    }
+
+    private fun verifySchema() {
+        REQUIRED_SCHEMA_COLUMNS.forEach { (table, requiredColumns) ->
+            val existingColumns = tableColumns(table)
+            requiredColumns.firstOrNull { it !in existingColumns }?.let { missingColumn ->
+                throw SchemaMismatchException("$table.$missingColumn")
+            }
+        }
+    }
+
+    /**
+     * Future migrations should use this instead of swallowing ALTER TABLE errors.
+     * The check makes reruns idempotent while non-duplicate SQL failures still surface.
+     */
+    internal fun addColumnIfMissing(table: String, column: String, definition: String) {
+        if (column in tableColumns(table)) return
+
+        val quotedTable = quoteIdentifier(table)
+        val quotedColumn = quoteIdentifier(column)
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("ALTER TABLE $quotedTable ADD COLUMN $quotedColumn $definition")
+        }
+    }
+
+    private fun tableColumns(table: String): Set<String> {
+        val quotedTable = quoteIdentifier(table)
+        return connection.createStatement().use { statement ->
+            statement.executeQuery("PRAGMA table_info($quotedTable)").use { resultSet ->
+                buildSet {
+                    while (resultSet.next()) add(resultSet.getString("name"))
+                }
+            }
+        }
+    }
+
+    private fun quoteIdentifier(identifier: String): String {
+        require(identifier.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) {
+            "Invalid SQLite identifier: $identifier"
+        }
+        return "\"$identifier\""
     }
 
     // v1 — full baseline schema (all original tables + additive column guards + indexes)

@@ -322,36 +322,43 @@ class DatabaseTest {
     @Test
     fun migrationV9NormalizesAndDeduplicatesAllowanceAndUsageProcessNames() {
         val dbFile = tempDir.resolve("v8-case-variants.db").toFile()
-        DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}").use { connection ->
-            connection.createStatement().use { statement ->
-                statement.execute(
-                    """
-                    CREATE TABLE daily_allowances (
-                        process_name TEXT PRIMARY KEY,
-                        display_name TEXT NOT NULL,
-                        allowance_minutes INTEGER NOT NULL
-                    )
-                    """.trimIndent()
-                )
-                statement.execute(
-                    """
-                    CREATE TABLE daily_usage (
-                        date TEXT NOT NULL,
-                        process_name TEXT NOT NULL,
-                        seconds_used INTEGER NOT NULL,
-                        PRIMARY KEY (date, process_name)
-                    )
-                    """.trimIndent()
-                )
-                statement.execute("INSERT INTO daily_allowances VALUES ('Discord.exe', 'Discord relaxed', 30)")
-                statement.execute("INSERT INTO daily_allowances VALUES ('discord.exe', 'Discord strict', 10)")
-                statement.execute("INSERT INTO daily_usage VALUES ('2026-01-02', 'Discord.exe', 45)")
-                statement.execute("INSERT INTO daily_usage VALUES ('2026-01-02', 'discord.exe', 90)")
-                statement.execute("PRAGMA user_version=8")
-            }
-        }
-
         try {
+            assertIs<DbInitResult.Ready>(
+                Database.init(dbFile = dbFile, allowRecovery = false)
+            )
+            Database.close()
+
+            DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}").use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute("DROP TABLE daily_allowances")
+                    statement.execute(
+                        """
+                        CREATE TABLE daily_allowances (
+                            process_name TEXT PRIMARY KEY,
+                            display_name TEXT NOT NULL,
+                            allowance_minutes INTEGER NOT NULL
+                        )
+                        """.trimIndent()
+                    )
+                    statement.execute("DROP TABLE daily_usage")
+                    statement.execute(
+                        """
+                        CREATE TABLE daily_usage (
+                            date TEXT NOT NULL,
+                            process_name TEXT NOT NULL,
+                            seconds_used INTEGER NOT NULL,
+                            PRIMARY KEY (date, process_name)
+                        )
+                        """.trimIndent()
+                    )
+                    statement.execute("INSERT INTO daily_allowances VALUES ('Discord.exe', 'Discord relaxed', 30)")
+                    statement.execute("INSERT INTO daily_allowances VALUES ('discord.exe', 'Discord strict', 10)")
+                    statement.execute("INSERT INTO daily_usage VALUES ('2026-01-02', 'Discord.exe', 45)")
+                    statement.execute("INSERT INTO daily_usage VALUES ('2026-01-02', 'discord.exe', 90)")
+                    statement.execute("PRAGMA user_version=8")
+                }
+            }
+
             assertIs<DbInitResult.Ready>(
                 Database.init(dbFile = dbFile, allowRecovery = false)
             )
