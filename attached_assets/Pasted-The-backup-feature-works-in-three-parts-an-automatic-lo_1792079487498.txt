@@ -1,0 +1,18 @@
+The backup feature works in three parts: an automatic local snapshot, an optional second copy, and a guarded restore.
+
+### Making backups
+- Once the database is ready, FocusFlow checks for a usable backup at startup and then every six hours. It normally creates **one regular backup per day**—the six-hour check doesn’t mean six backups a day.
+- You can also run one manually in **Contact & Bug Reports → Backup & Recovery**.
+- FocusFlow makes a consistent snapshot of the whole database, including data such as tasks, focus history, settings, and protection rules. It checks the snapshot with SQLite’s integrity check and a SHA-256 hash.
+- A backup is labeled **Verified** only if those checks pass. Older backups without a hash are **Unverified**; invalid or unverified backups can’t be restored through the normal restore flow.
+- Regular app-data backups keep the latest seven. Safety backups, recovery archives, and secondary-folder backups aren’t deleted automatically.
+
+### Keeping a second copy
+You can choose another folder in Backup & Recovery. Each verified app-data backup is copied there and checked again. If that copy fails, the verified primary backup remains usable and FocusFlow reports the secondary-copy problem. This is a local folder copy, not built-in cloud storage.
+
+### Restoring
+You select a **Verified** backup and confirm. Restore is staged; it does **not** replace the database while FocusFlow is running. On the next launch, FocusFlow creates and verifies a safety backup of the current database, preserves the current database files, then installs and checks the selected snapshot. If the restored database fails to open correctly, it rolls back to the preserved files. Restore replaces the database with that older snapshot—it doesn’t merge it with newer activity.
+
+If corruption recovery has already moved an unreadable database aside and opened a fresh one, FocusFlow shows a notice. The old files are preserved, but the notice does **not** mean their data was restored; you can review the verified backups and choose one yourself.
+
+The tracker says this flow is implemented and Linux-tested. The Windows restore scenario is still pending, and no real user database has been used for a backup or restore test.
