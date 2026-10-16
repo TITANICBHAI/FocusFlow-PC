@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class LauncherLaunchCoordinatorTest {
@@ -50,6 +51,53 @@ class LauncherLaunchCoordinatorTest {
     }
 
     @Test
+    fun everyTerminalAttemptEmitsOneSummaryWithTraceFields() = runTest {
+        val logs = mutableListOf<String>()
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Failed("test spawn failure")
+        }
+        val coordinator = coordinator(platform, backgroundScope, logs)
+
+        coordinator.request(app)
+        runCurrent()
+
+        platform.spawnResult = SpawnResult.Started(101L)
+        platform.windowAppearsAtMs = platform.nowMs()
+        val secondApp = FocusLauncherApp(
+            processName = "second.exe",
+            displayName = "Second",
+            exePath = "C:\\Apps\\second.exe"
+        )
+        coordinator.request(secondApp)
+        runCurrent()
+
+        val summaries = logs.filter { " summary=true " in " $it " }
+        assertEquals(2, summaries.size)
+        val failedSummary = summaries.single { "exe=sample.exe" in it }
+        val openedSummary = summaries.single { "exe=second.exe" in it }
+        assertTrue("result=Failed(code=SpawnFailed)" in failedSummary)
+        assertTrue("spawnPid=none" in failedSummary)
+        assertTrue("spawnAlive=not-spawned" in failedSummary)
+        assertTrue("snapshotMs=" in failedSummary)
+        assertTrue("spawnMs=" in failedSummary)
+        assertTrue("firstWindowMs=" in failedSummary)
+        assertTrue("raiseMs=" in failedSummary)
+        assertTrue("focusFlowElevated=true" in failedSummary)
+        assertTrue("foregroundLockCall=lock=true" in failedSummary)
+        assertTrue("result=Opened" in openedSummary)
+        assertTrue("spawnPid=101" in openedSummary)
+        assertTrue("spawnAlive=true" in openedSummary)
+        assertTrue("tierResults=[fake=true]" in openedSummary)
+
+        val attemptIds = summaries.map { Regex("attemptId=([^ ]+)").find(it)!!.groupValues[1] }
+        assertNotEquals(attemptIds[0], attemptIds[1])
+        attemptIds.forEach { id ->
+            assertEquals(1, summaries.count { "attemptId=$id " in it })
+        }
+        coordinator.cancelAll()
+    }
+
+    @Test
     fun delayedWindowIsRaisedAfterThreePolls() = runTest {
         val platform = FakeLaunchPlatform(this).apply {
             windowAppearsAtMs = 300L
@@ -71,7 +119,8 @@ class LauncherLaunchCoordinatorTest {
     @Test
     fun timeoutCanRetryByWaitingButDoesNotSpawnAgain() = runTest {
         val platform = FakeLaunchPlatform(this)
-        val coordinator = coordinator(platform, backgroundScope)
+        val logs = mutableListOf<String>()
+        val coordinator = coordinator(platform, backgroundScope, logs)
 
         coordinator.request(app)
         runCurrent()
@@ -81,6 +130,12 @@ class LauncherLaunchCoordinatorTest {
         val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
         assertTrue(failed.canRetry)
         assertEquals(1, platform.spawnCount)
+        val firstAttemptId = Regex("attemptId=([^ ]+)")
+            .find(logs.first())!!
+            .groupValues[1]
+        val firstAttemptLogs = logs.filter { it.startsWith("attemptId=$firstAttemptId ") }
+        assertTrue(firstAttemptLogs.size <= 10, "attempt logged ${firstAttemptLogs.size} lines")
+        assertEquals(1, firstAttemptLogs.count { " summary=true " in " $it " })
 
         assertTrue(coordinator.request(app))
         runCurrent()
@@ -164,11 +219,13 @@ class LauncherLaunchCoordinatorTest {
 
     private fun coordinator(
         platform: FakeLaunchPlatform,
-        scope: kotlinx.coroutines.CoroutineScope
+        scope: kotlinx.coroutines.CoroutineScope,
+        logs: MutableList<String>? = null
     ) = LauncherLaunchCoordinator(
         platform = platform,
         scope = scope,
-        isAllowed = { true }
+        isAllowed = { true },
+        logInfo = { line -> logs?.add(line) }
     )
 
     private class FakeLaunchPlatform(private val testScope: TestScope) : LaunchPlatform {
@@ -210,5 +267,11 @@ class LauncherLaunchCoordinatorTest {
             raisedWindows += window
             return RaiseResult(success = true, tier = "fake")
         }
+
+        override fun focusFlowElevated(): Boolean? = true
+
+        override fun lastForegroundLockCall(): String? = "lock=true"
+
+        override fun processIsAlive(pid: Long): Boolean? = pid == spawnedPid
     }
 }

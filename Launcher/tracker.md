@@ -54,6 +54,16 @@
 
 ### P0.1 — Per-attempt launch tracing
 
+**Status:** In progress — 2026-10-16.
+
+### 2026-10-16 — P0.1 — In progress
+
+- **Scope:** Add per-attempt IDs, bounded phase/event logging, exactly one typed terminal summary, foreground-lock call-result logging, and T22 coverage. No P0.2–P0.5 behavior changes.
+- **Current findings:** The coordinator currently emits per-refresh polling logs without attempt IDs; the keyboard hook ignores lock/unlock return values; the existing coordinator test suite has no T22 summary assertion.
+- **Files read:** `Launcher/plan.md`, `Launcher/tracker.md`, `Launcher/rules.md`, `Launcher/preagent-prompt.md`, `replit.md`, `.agents/memory/focus-launcher-task-brief.md`, `LauncherLaunchCoordinator.kt`, `JvmLauncherLaunchPlatform.kt`, `WindowRaiser.kt`, `GlobalKeyboardHook.kt`, `EnforcementLog.kt`, and `LauncherLaunchCoordinatorTest.kt`.
+- **Working tree:** `main` is ahead of `origin/main` by two commits; the only untracked path is the newly supplied implementation prompt. No application source changes have been made in this batch.
+- **Verification:** Pending.
+
 - [ ] Add attempt IDs and phase timings; log meaningful polling changes only.
 - [ ] Emit exactly one terminal summary per attempt with the fields required by plan §4/P0.1.
 - [ ] Record foreground-lock call results; stay within the plan's logging and privacy limits.

@@ -123,6 +123,8 @@ object GlobalKeyboardHook {
     @Volatile private var running:       Boolean  = false
     @Volatile private var win32ThreadId: Int      = 0
     private var pumpThread: Thread? = null
+    @Volatile var lastForegroundLockCall: String? = null
+        private set
 
     /** True while the hook is installed and active. */
     val isActive: Boolean get() = hookHandle != null
@@ -172,7 +174,7 @@ object GlobalKeyboardHook {
             // Prevent other apps from stealing foreground focus via SetForegroundWindow.
             // Paired with the keyboard hook this makes Alt+Tab and programmatic focus
             // theft both impossible without going through our exit flow.
-            try { KbdHookUser32.INSTANCE.LockSetForegroundWindow(LSFW_LOCK) } catch (_: Exception) {}
+            recordForegroundLockCall("lock", LSFW_LOCK)
 
             // ── Message pump ─────────────────────────────────────────────────
             // Hooks are delivered on this thread via GetMessage.  Without a pump
@@ -187,7 +189,7 @@ object GlobalKeyboardHook {
             }
 
             // ── Cleanup ───────────────────────────────────────────────────────
-            try { KbdHookUser32.INSTANCE.LockSetForegroundWindow(LSFW_UNLOCK) } catch (_: Exception) {}
+            recordForegroundLockCall("unlock", LSFW_UNLOCK)
             hookHandle?.let { KbdHookUser32.INSTANCE.UnhookWindowsHookEx(it) }
             hookHandle = null
             hookProc   = null   // now safe to release the GC reference
@@ -250,6 +252,24 @@ object GlobalKeyboardHook {
      *     versions (legacy; Win key does the same on modern systems but Ctrl+Esc
      *     is a common fallback).
      */
+    private fun recordForegroundLockCall(operation: String, lockCode: Int) {
+        try {
+            val result = KbdHookUser32.INSTANCE.LockSetForegroundWindow(lockCode)
+            lastForegroundLockCall = "$operation=$result"
+            EnforcementLog.info(
+                "Launcher",
+                "foregroundLockCall operation=$operation result=$result"
+            )
+        } catch (failure: Exception) {
+            lastForegroundLockCall = "$operation=error:${failure.javaClass.simpleName}"
+            EnforcementLog.warn(
+                "Launcher",
+                "foregroundLockCall operation=$operation result=error " +
+                    "error=${failure.javaClass.simpleName}"
+            )
+        }
+    }
+
     private fun shouldSuppress(vk: Int, altDown: Boolean): Boolean = when (vk) {
         VK_LWIN, VK_RWIN -> true
         VK_TAB           -> altDown

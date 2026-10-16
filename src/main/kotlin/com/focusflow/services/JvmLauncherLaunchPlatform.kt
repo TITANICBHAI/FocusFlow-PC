@@ -16,7 +16,16 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
     override fun findWindows(pids: Set<Long>): List<WindowRef> =
         WindowRaiser.findWindows(pids)
 
-    override fun spawn(app: FocusLauncherApp): SpawnResult {
+    override fun findWindows(pids: Set<Long>, attemptId: String): List<WindowRef> =
+        WindowRaiser.findWindows(pids, attemptId)
+
+    override fun spawn(app: FocusLauncherApp): SpawnResult =
+        spawnInternal(app, attemptId = null)
+
+    override fun spawn(app: FocusLauncherApp, attemptId: String): SpawnResult =
+        spawnInternal(app, attemptId)
+
+    private fun spawnInternal(app: FocusLauncherApp, attemptId: String?): SpawnResult {
         val executablePath = app.exePath?.takeIf(String::isNotBlank)
         if (executablePath != null && isWindowsAppsPath(executablePath)) {
             return SpawnResult.Failed(
@@ -41,22 +50,40 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
             val process = processBuilder.start()
             SpawnResult.Started(process.pid())
         } catch (failure: Exception) {
+            val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
+            val detail = failure.message
+                ?.replace(Regex("[\\r\\n\\t]+"), " ")
+                ?.take(160)
+                ?: failure.javaClass.simpleName
             EnforcementLog.warn(
                 "Launcher",
-                "spawn exception app=${app.processName}",
-                failure
+                "${prefix}spawn exception app=${app.processName} " +
+                    "error=${failure.javaClass.simpleName} detail=$detail"
             )
-            val detail = failure.message?.takeIf(String::isNotBlank)
+            val userDetail = failure.message?.takeIf(String::isNotBlank)
                 ?: failure.javaClass.simpleName
-            SpawnResult.Failed("Couldn't open ${app.displayName}: $detail")
+            SpawnResult.Failed("Couldn't open ${app.displayName}: $userDetail")
         }
     }
 
     override suspend fun raise(window: WindowRef): RaiseResult =
         WindowRaiser.raise(window)
 
+    override suspend fun raise(window: WindowRef, attemptId: String): RaiseResult =
+        WindowRaiser.raise(window, attemptId)
+
     override fun focusFlowElevated(): Boolean? =
         if (isWindows) ElevationManager.isElevated else null
+
+    override fun lastForegroundLockCall(): String? =
+        GlobalKeyboardHook.lastForegroundLockCall
+
+    override fun processIsAlive(pid: Long): Boolean? =
+        runCatching { ProcessHandle.of(pid).map { it.isAlive }.orElse(false) }.getOrNull()
+
+    override fun finishAttempt(attemptId: String) {
+        WindowRaiser.finishAttempt(attemptId)
+    }
 
     private fun isWindowsAppsPath(path: String): Boolean {
         val normalized = path.replace('/', '\\').lowercase(Locale.ROOT)

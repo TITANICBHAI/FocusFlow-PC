@@ -47,6 +47,11 @@ object WindowRaiser {
 
     private val hwndTop = HWND(Pointer(0L))
     private val hwndNotTopmost = HWND(Pointer(-2L))
+    private val loggedAttemptIssues = ConcurrentHashMap.newKeySet<String>()
+
+    fun finishAttempt(attemptId: String) {
+        loggedAttemptIssues.removeIf { it.startsWith("$attemptId:") }
+    }
 
     private interface EnumWindowsCallback : StdCallLibrary.StdCallCallback {
         fun callback(hwnd: HWND, data: Pointer?): Boolean
@@ -89,7 +94,10 @@ object WindowRaiser {
         }
     }
 
-    fun findWindows(pids: Set<Long>): List<WindowRef> {
+    fun findWindows(pids: Set<Long>): List<WindowRef> =
+        findWindows(pids, attemptId = null)
+
+    fun findWindows(pids: Set<Long>, attemptId: String?): List<WindowRef> {
         if (!isWindows || pids.isEmpty()) return emptyList()
 
         val appWindows = mutableListOf<WindowRef>()
@@ -121,19 +129,30 @@ object WindowRaiser {
                 .distinctBy(WindowRef::handle)
                 .sortedWith(compareBy(WindowRef::pid, WindowRef::handle))
         } catch (failure: Throwable) {
-            EnforcementLog.warn("Launcher", "top-level window enumeration failed", failure)
+            warnAttemptOnce(
+                attemptId,
+                "enumeration",
+                "top-level window enumeration failed",
+                failure
+            )
             emptyList()
         }
     }
 
-    suspend fun raise(window: WindowRef): RaiseResult {
-        if (!isWindows) return RaiseResult(false, "unsupported-platform")
+    suspend fun raise(window: WindowRef): RaiseResult =
+        raise(window, attemptId = null)
+
+    suspend fun raise(window: WindowRef, attemptId: String?): RaiseResult {
+        if (!isWindows) {
+            return RaiseResult(false, "unsupported-platform", listOf("unsupported-platform=false"))
+        }
 
         val api = User32ActivationApi.INSTANCE
         val hwnd = HWND(Pointer(window.handle))
         var lastTier = "SetForegroundWindow"
+        val tierResults = mutableListOf<String>()
         try {
-            demoteLauncherWindows(api)
+            demoteLauncherWindows(api, attemptId)
 
             if (api.IsIconic(hwnd)) api.ShowWindow(hwnd, SW_RESTORE)
             api.SetWindowPos(
@@ -162,31 +181,38 @@ object WindowRaiser {
 
             for ((tier, action) in strategies) {
                 lastTier = tier
-                if (!action()) continue
+                if (!action()) {
+                    tierResults += "$tier=call-failed"
+                    continue
+                }
                 delay(FOREGROUND_VERIFY_DELAY_MS)
                 val foreground = api.GetForegroundWindow()
                 if (foreground != null && Pointer.nativeValue(foreground.pointer) == window.handle) {
-                    return RaiseResult(success = true, tier = tier)
+                    tierResults += "$tier=verified"
+                    return RaiseResult(success = true, tier = tier, tierResults = tierResults)
                 }
-                EnforcementLog.info(
-                    "Launcher",
-                    "foreground verification failed pid=${window.pid} tier=$tier"
-                )
+                tierResults += "$tier=not-foreground"
             }
-            return RaiseResult(success = false, tier = lastTier)
+            return RaiseResult(success = false, tier = lastTier, tierResults = tierResults)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            EnforcementLog.warn(
-                "Launcher",
+            warnAttemptOnce(
+                attemptId,
+                "raise",
                 "window raise failed pid=${window.pid} tier=$lastTier",
                 failure
             )
-            return RaiseResult(success = false, tier = "$lastTier-error")
+            tierResults += "$lastTier=error:${failure.javaClass.simpleName}"
+            return RaiseResult(
+                success = false,
+                tier = "$lastTier-error",
+                tierResults = tierResults
+            )
         }
     }
 
-    private fun demoteLauncherWindows(api: User32ActivationApi) {
+    private fun demoteLauncherWindows(api: User32ActivationApi, attemptId: String?) {
         LauncherWindowRegistry.snapshot().forEach { rawHandle ->
             val hwnd = HWND(Pointer(rawHandle))
             val demoted = api.SetWindowPos(
@@ -199,9 +225,32 @@ object WindowRaiser {
                 SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE
             )
             if (!demoted) {
-                EnforcementLog.warn("Launcher", "failed to demote launcher window hwnd=$rawHandle")
+                warnAttemptOnce(
+                    attemptId,
+                    "demote",
+                    "failed to demote launcher window hwnd=$rawHandle"
+                )
             }
         }
+    }
+
+    private fun warnAttemptOnce(
+        attemptId: String?,
+        category: String,
+        message: String,
+        failure: Throwable? = null
+    ) {
+        if (attemptId != null && !loggedAttemptIssues.add("$attemptId:$category")) return
+        val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
+        val detail = failure?.let {
+            val safeMessage = it.message
+                ?.replace(Regex("[\\r\\n\\t]+"), " ")
+                ?.take(160)
+                .orEmpty()
+            " error=${it.javaClass.simpleName}" +
+                if (safeMessage.isBlank()) "" else " detail=$safeMessage"
+        }.orEmpty()
+        EnforcementLog.warn("Launcher", "$prefix$message$detail")
     }
 
     private fun setForegroundWithAttachedInput(api: User32ActivationApi, target: HWND): Boolean {

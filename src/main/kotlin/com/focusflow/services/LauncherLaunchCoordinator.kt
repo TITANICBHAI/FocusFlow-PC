@@ -36,7 +36,11 @@ sealed interface SpawnResult {
     data class Failed(val message: String, val canRetry: Boolean = true) : SpawnResult
 }
 
-data class RaiseResult(val success: Boolean, val tier: String)
+data class RaiseResult(
+    val success: Boolean,
+    val tier: String,
+    val tierResults: List<String> = emptyList()
+)
 
 /**
  * OS operations used by the launch state machine. The coordinator calls these
@@ -47,18 +51,29 @@ interface LaunchPlatform {
     fun nowMs(): Long
     fun findInstances(app: FocusLauncherApp): List<RunningInstance>
     fun findWindows(pids: Set<Long>): List<WindowRef>
+    fun findWindows(pids: Set<Long>, attemptId: String): List<WindowRef> =
+        findWindows(pids)
     fun spawn(app: FocusLauncherApp): SpawnResult
+    fun spawn(app: FocusLauncherApp, attemptId: String): SpawnResult = spawn(app)
     suspend fun raise(window: WindowRef): RaiseResult
+    suspend fun raise(window: WindowRef, attemptId: String): RaiseResult = raise(window)
     fun focusFlowElevated(): Boolean? = null
+    fun lastForegroundLockCall(): String? = null
+    fun processIsAlive(pid: Long): Boolean? = null
+    fun finishAttempt(attemptId: String) {}
 }
 
 class LauncherLaunchCoordinator(
     private val platform: LaunchPlatform,
     private val scope: CoroutineScope,
     private val isAllowed: (FocusLauncherApp) -> Boolean = { true },
-    private val onRaised: (FocusLauncherApp) -> Unit = {}
+    private val onRaised: (FocusLauncherApp) -> Unit = {},
+    private val logInfo: (String) -> Unit = { EnforcementLog.info("Launcher", it) }
 ) {
     companion object {
+        private val attemptSequence = java.util.concurrent.atomic.AtomicLong()
+        private const val MAX_POLL_CHANGE_LOGS = 2
+
         const val WINDOW_WAIT_MS = 20_000L
         const val SPAWN_BUDGET_MS = 20_000L
         const val WINDOW_POLL_MS = 150L
@@ -80,6 +95,36 @@ class LauncherLaunchCoordinator(
         }
     }
 
+    private enum class AttemptFailureCode {
+        SpawnFailed,
+        NoWindow,
+        RaiseFailed,
+        Internal,
+        Cancelled
+    }
+
+    private class AttemptTrace(
+        val id: String,
+        val app: FocusLauncherApp,
+        val startedAtMs: Long
+    ) {
+        val summaryLogged = AtomicBoolean(false)
+        val windowsSeen = linkedSetOf<WindowRef>()
+        val tierResults = mutableListOf<String>()
+        var snapshotMs: Long? = null
+        var spawnMs: Long? = null
+        var firstWindowMs: Long? = null
+        var raiseStartedAtMs: Long? = null
+        var raiseMs: Long? = null
+        var spawnPid: Long? = null
+        var trackedPids: Set<Long> = emptySet()
+        var focusFlowElevated: Boolean? = null
+        var lastObservedPids: Set<Long>? = null
+        var lastObservedWindows: Set<WindowRef>? = null
+        var pollChangeLogs = 0
+        var suppressedPollChanges = 0
+    }
+
     private val lock = Any()
     private val _states = MutableStateFlow<Map<String, LaunchState>>(emptyMap())
     val states: StateFlow<Map<String, LaunchState>> = _states.asStateFlow()
@@ -88,7 +133,6 @@ class LauncherLaunchCoordinator(
     private val failureResetJobs = mutableMapOf<String, Job>()
     private val lastSpawnAtMs = mutableMapOf<String, Long>()
     private val waitOnlyRetryKeys = mutableSetOf<String>()
-    private val elevationLogged = AtomicBoolean(false)
 
     @Volatile
     private var generation = 0L
@@ -118,17 +162,22 @@ class LauncherLaunchCoordinator(
             val waitOnlyRetry = waitOnlyRetryKeys.remove(key)
             val requestGeneration = generation
             val launchStartedAt = platform.nowMs()
-            _states.update { it + (key to LaunchState.Launching(launchStartedAt)) }
-            log(
-                "state app=${app.processName} ${current ?: LaunchState.Idle} -> " +
-                    "Launching atMs=$launchStartedAt retryWaitOnly=$waitOnlyRetry"
+            val trace = AttemptTrace(
+                id = "launcher-${attemptSequence.incrementAndGet()}",
+                app = app,
+                startedAtMs = launchStartedAt
             )
+            _states.update { it + (key to LaunchState.Launching(launchStartedAt)) }
+            logAttempt(trace, "event=begin retryWaitOnly=$waitOnlyRetry")
 
             val job = scope.launch(start = CoroutineStart.LAZY) {
-                executeRequest(app, key, requestGeneration, waitOnlyRetry)
+                executeRequest(app, key, requestGeneration, waitOnlyRetry, trace)
             }
             jobs[key] = job
-            job.invokeOnCompletion {
+            job.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    completeAttempt(trace, AttemptFailureCode.Cancelled)
+                }
                 synchronized(lock) {
                     if (jobs[key] === job) jobs.remove(key)
                 }
@@ -136,7 +185,6 @@ class LauncherLaunchCoordinator(
             job.start()
         }
 
-        logElevationOnce()
         return true
     }
 
@@ -161,20 +209,32 @@ class LauncherLaunchCoordinator(
         app: FocusLauncherApp,
         key: String,
         requestGeneration: Long,
-        waitOnlyRetry: Boolean
+        waitOnlyRetry: Boolean,
+        trace: AttemptTrace
     ) {
-        val attemptStartedAt = platform.nowMs()
         try {
+            trace.focusFlowElevated = runCatching { platform.focusFlowElevated() }.getOrNull()
             if (!isCurrent(app, requestGeneration)) return
 
-            val instances = platform.findInstances(app)
-            log("instances app=${app.processName} count=${instances.size} pids=${instances.map { it.pid }}")
-            val pids = instances.mapTo(mutableSetOf()) { it.pid }
-            val windows = platform.findWindows(pids)
+            val snapshotStartedAt = platform.nowMs()
+            val (instances, pids, windows) = try {
+                val foundInstances = platform.findInstances(app)
+                val foundPids = foundInstances.mapTo(mutableSetOf()) { it.pid }
+                val foundWindows = platform.findWindows(foundPids, trace.id)
+                Triple(foundInstances, foundPids, foundWindows)
+            } finally {
+                trace.snapshotMs = elapsedSince(snapshotStartedAt)
+            }
+            trace.trackedPids = pids.toSet()
+            observe(trace, pids, windows, "snapshot", forceLog = true)
+            logAttempt(
+                trace,
+                "phase=snapshot durationMs=${trace.snapshotMs} " +
+                    "instances=${instances.size} pids=${formatPids(pids)} windows=${windows.size}"
+            )
 
             if (windows.isNotEmpty()) {
-                log("window found app=${app.processName} afterMs=${platform.nowMs() - attemptStartedAt}")
-                raiseWithRetries(app, key, windows.first(), attemptStartedAt, requestGeneration)
+                raiseWithRetries(app, key, windows.first(), requestGeneration, trace)
                 return
             }
 
@@ -189,25 +249,25 @@ class LauncherLaunchCoordinator(
             }
 
             if (waitOnlyRetry || hasRecentInstance || withinSpawnBudget) {
-                if (waitOnlyRetry) {
-                    log("retry app=${app.processName} will only wait/focus; no spawn")
-                } else if (hasRecentInstance) {
-                    log("app=${app.processName} already has a recent instance; waiting for its window")
-                } else {
-                    log("app=${app.processName} spawn budget active; waiting before another spawn")
+                val waitReason = when {
+                    waitOnlyRetry -> "retry"
+                    hasRecentInstance -> "recent-instance"
+                    else -> "spawn-budget"
                 }
-                val window = awaitWindow(app, pids, requestGeneration)
+                logAttempt(trace, "phase=awaitWindow start reason=$waitReason")
+                val window = awaitWindow(app, pids, requestGeneration, trace)
                 if (window == null) {
                     fail(
                         key,
                         requestGeneration,
+                        trace,
                         "${app.displayName} is taking longer than usual",
+                        AttemptFailureCode.NoWindow,
                         canRetry = true,
                         waitOnlyNextRetry = !waitOnlyRetry
                     )
                 } else {
-                    log("window found app=${app.processName} afterMs=${platform.nowMs() - attemptStartedAt}")
-                    raiseWithRetries(app, key, window, attemptStartedAt, requestGeneration)
+                    raiseWithRetries(app, key, window, requestGeneration, trace)
                 }
                 return
             }
@@ -216,32 +276,39 @@ class LauncherLaunchCoordinator(
                 if (generation != requestGeneration) return
                 lastSpawnAtMs[key] = platform.nowMs()
             }
-            log("spawn attempt app=${app.processName} atMs=${platform.nowMs()}")
-            when (val result = platform.spawn(app)) {
+            val spawnStartedAt = platform.nowMs()
+            val result = platform.spawn(app, trace.id)
+            trace.spawnMs = elapsedSince(spawnStartedAt)
+            logAttempt(trace, "phase=spawn durationMs=${trace.spawnMs} result=${spawnResultName(result)}")
+            when (result) {
                 is SpawnResult.Failed -> {
-                    log("spawn failed app=${app.processName} reason=${result.message}")
                     fail(
                         key,
                         requestGeneration,
+                        trace,
                         result.message,
+                        AttemptFailureCode.SpawnFailed,
                         canRetry = result.canRetry
                     )
                 }
                 is SpawnResult.Started -> {
-                    log("spawn started app=${app.processName} pid=${result.pid}")
+                    trace.spawnPid = result.pid
                     pids += result.pid
-                    val window = awaitWindow(app, pids, requestGeneration)
+                    trace.trackedPids = pids.toSet()
+                    logAttempt(trace, "event=spawned pid=${result.pid}")
+                    val window = awaitWindow(app, pids, requestGeneration, trace)
                     if (window == null) {
                         fail(
                             key,
                             requestGeneration,
+                            trace,
                             "${app.displayName} is taking longer than usual",
+                            AttemptFailureCode.NoWindow,
                             canRetry = true,
                             waitOnlyNextRetry = !waitOnlyRetry
                         )
                     } else {
-                        log("window found app=${app.processName} afterMs=${platform.nowMs() - attemptStartedAt}")
-                        raiseWithRetries(app, key, window, attemptStartedAt, requestGeneration)
+                        raiseWithRetries(app, key, window, requestGeneration, trace)
                     }
                 }
             }
@@ -250,15 +317,27 @@ class LauncherLaunchCoordinator(
         } catch (failure: Exception) {
             val reason = failure.message?.takeIf(String::isNotBlank)
                 ?: "Launch failed (${failure.javaClass.simpleName})"
-            EnforcementLog.warn("Launcher", "launch failed app=${app.processName}", failure)
-            fail(key, requestGeneration, reason, canRetry = true)
+            logAttemptWarning(trace, "launch failed", failure)
+            fail(
+                key,
+                requestGeneration,
+                trace,
+                reason,
+                AttemptFailureCode.Internal,
+                canRetry = true
+            )
+        } finally {
+            if (!trace.summaryLogged.get()) {
+                completeAttempt(trace, AttemptFailureCode.Cancelled)
+            }
         }
     }
 
     private suspend fun awaitWindow(
         app: FocusLauncherApp,
         initialPids: Set<Long>,
-        requestGeneration: Long
+        requestGeneration: Long,
+        trace: AttemptTrace
     ): WindowRef? {
         val startedAt = platform.nowMs()
         var pids = initialPids.toMutableSet()
@@ -266,18 +345,26 @@ class LauncherLaunchCoordinator(
 
         while (true) {
             if (!isCurrent(app, requestGeneration)) return null
-            val windows = platform.findWindows(pids)
-            if (windows.isNotEmpty()) return windows.first()
+            val windows = platform.findWindows(pids, trace.id)
+            observe(trace, pids, windows, "awaitWindow")
+            if (windows.isNotEmpty()) {
+                logAttempt(trace, "phase=awaitWindow result=window elapsedMs=${elapsedSince(startedAt)}")
+                return windows.first()
+            }
 
             val now = platform.nowMs()
             val elapsed = now - startedAt
             val remaining = WINDOW_WAIT_MS - elapsed
-            if (remaining <= 0L) return null
+            if (remaining <= 0L) {
+                logAttempt(trace, "phase=awaitWindow result=timeout elapsedMs=$elapsed")
+                return null
+            }
 
             if (now - lastProcessRefreshAt >= PROCESS_REFRESH_MS) {
                 val instances = platform.findInstances(app)
-                log("refresh instances app=${app.processName} count=${instances.size}")
-                pids = instances.mapTo(mutableSetOf()) { it.pid }
+                val refreshedPids = instances.mapTo(mutableSetOf()) { it.pid }
+                observe(trace, refreshedPids, emptyList(), "awaitWindow-refresh")
+                pids = refreshedPids
                 lastProcessRefreshAt = now
             }
             delay(minOf(WINDOW_POLL_MS, remaining))
@@ -288,35 +375,45 @@ class LauncherLaunchCoordinator(
         app: FocusLauncherApp,
         key: String,
         initialWindow: WindowRef,
-        attemptStartedAt: Long,
-        requestGeneration: Long
+        requestGeneration: Long,
+        trace: AttemptTrace
     ) {
+        if (trace.raiseStartedAtMs == null) trace.raiseStartedAtMs = platform.nowMs()
         var window = initialWindow
-        repeat(MAX_RAISE_ATTEMPTS) { index ->
-            if (!isCurrent(app, requestGeneration)) return
-            val result = platform.raise(window)
-            log(
-                "raise app=${app.processName} pid=${window.pid} tier=${result.tier} " +
-                    "success=${result.success} attempt=${index + 1}"
-            )
-            if (result.success) {
+        try {
+            repeat(MAX_RAISE_ATTEMPTS) { index ->
                 if (!isCurrent(app, requestGeneration)) return
-                runCatching { onRaised(app) }
-                    .onFailure { EnforcementLog.warn("Launcher", "post-raise callback failed app=${app.processName}", it) }
-                log("state app=${app.processName} Launching -> Idle afterMs=${platform.nowMs() - attemptStartedAt}")
-                setIdle(key, requestGeneration)
-                return
+                val result = platform.raise(window, trace.id)
+                if (result.tierResults.isNotEmpty()) {
+                    trace.tierResults += result.tierResults
+                } else {
+                    trace.tierResults += "${result.tier}=${result.success}"
+                }
+                if (result.success) {
+                    if (!isCurrent(app, requestGeneration)) return
+                    runCatching { onRaised(app) }
+                        .onFailure { logAttemptWarning(trace, "post-raise callback failed", it) }
+                    if (setIdle(key, requestGeneration)) {
+                        completeAttempt(trace, null)
+                    }
+                    return
+                }
+                if (index < MAX_RAISE_ATTEMPTS - 1) {
+                    delay(RAISE_RETRY_DELAY_MS)
+                    val refreshed = platform.findWindows(setOf(window.pid), trace.id)
+                    observe(trace, setOf(window.pid), refreshed, "raise-refresh")
+                    if (refreshed.isNotEmpty()) window = refreshed.first()
+                }
             }
-            if (index < MAX_RAISE_ATTEMPTS - 1) {
-                delay(RAISE_RETRY_DELAY_MS)
-                val refreshed = platform.findWindows(setOf(window.pid))
-                if (refreshed.isNotEmpty()) window = refreshed.first()
-            }
+        } finally {
+            trace.raiseMs = elapsedSince(trace.raiseStartedAtMs ?: platform.nowMs())
         }
         fail(
             key,
             requestGeneration,
+            trace,
             "Couldn't bring ${app.displayName} to the front",
+            AttemptFailureCode.RaiseFailed,
             canRetry = true
         )
     }
@@ -324,54 +421,152 @@ class LauncherLaunchCoordinator(
     private fun fail(
         key: String,
         requestGeneration: Long,
+        trace: AttemptTrace,
         reason: String,
+        failureCode: AttemptFailureCode,
         canRetry: Boolean,
         waitOnlyNextRetry: Boolean = false
     ) {
         val failed = LaunchState.Failed(reason, canRetry)
+        var failedCurrentAttempt = false
         synchronized(lock) {
             if (generation != requestGeneration) return
             if (waitOnlyNextRetry) waitOnlyRetryKeys += key
             _states.update { it + (key to failed) }
-            log("state app=$key Launching -> Failed canRetry=$canRetry reason=$reason")
             failureResetJobs.remove(key)?.cancel()
             val resetJob = scope.launch(start = CoroutineStart.LAZY) {
                 delay(FAILURE_DISPLAY_MS)
                 synchronized(lock) {
                     if (generation == requestGeneration && _states.value[key] == failed) {
                         _states.update { it + (key to LaunchState.Idle) }
-                        log("state app=$key Failed -> Idle afterMs=$FAILURE_DISPLAY_MS")
                     }
                     failureResetJobs.remove(key)
                 }
             }
             failureResetJobs[key] = resetJob
             resetJob.start()
+            failedCurrentAttempt = true
+        }
+        if (failedCurrentAttempt) completeAttempt(trace, failureCode, reason)
+    }
+
+    private fun setIdle(key: String, requestGeneration: Long): Boolean =
+        synchronized(lock) {
+            if (generation != requestGeneration) return@synchronized false
+            _states.update { it + (key to LaunchState.Idle) }
+            waitOnlyRetryKeys.remove(key)
+            true
+        }
+
+    private fun observe(
+        trace: AttemptTrace,
+        pids: Set<Long>,
+        windows: List<WindowRef>,
+        phase: String
+    ) {
+        val currentPids = pids.toSortedSet()
+        val currentWindows = windows.toSet()
+        val pidsChanged = trace.lastObservedPids != null && trace.lastObservedPids != currentPids
+        val windowsChanged =
+            trace.lastObservedWindows != null && trace.lastObservedWindows != currentWindows
+
+        trace.trackedPids = currentPids
+        trace.windowsSeen += currentWindows
+        if (currentWindows.isNotEmpty() && trace.firstWindowMs == null) {
+            trace.firstWindowMs = elapsedSince(trace.startedAtMs)
+        }
+
+        if (pidsChanged || windowsChanged) {
+            if (trace.pollChangeLogs < MAX_POLL_CHANGE_LOGS) {
+                logAttempt(
+                    trace,
+                    "event=poll-change phase=$phase elapsedMs=${elapsedSince(trace.startedAtMs)} " +
+                        "pids=${formatPids(currentPids)} windows=${formatWindows(currentWindows)}"
+                )
+                trace.pollChangeLogs += 1
+            } else {
+                trace.suppressedPollChanges += 1
+            }
+        }
+
+        trace.lastObservedPids = currentPids
+        trace.lastObservedWindows = currentWindows
+    }
+
+    private fun completeAttempt(
+        trace: AttemptTrace,
+        failureCode: AttemptFailureCode?,
+        detail: String? = null
+    ) {
+        if (!trace.summaryLogged.compareAndSet(false, true)) return
+
+        val totalMs = elapsedSince(trace.startedAtMs)
+        val spawnAlive = trace.spawnPid?.let { pid ->
+            runCatching { platform.processIsAlive(pid) }.getOrNull()?.toString() ?: "unknown"
+        } ?: "not-spawned"
+        val foregroundLockCall =
+            runCatching { platform.lastForegroundLockCall() }.getOrNull() ?: "unknown"
+        val result = failureCode?.let { "Failed(code=${it.name})" } ?: "Opened"
+        val summary = buildString {
+            append("attemptId=").append(trace.id)
+            append(" summary=true")
+            append(" exe=").append(sanitizeLogField(trace.app.processName))
+            append(" result=").append(result)
+            append(" totalMs=").append(totalMs)
+            append(" snapshotMs=").append(trace.snapshotMs ?: "unknown")
+            append(" spawnMs=").append(trace.spawnMs ?: "not-started")
+            append(" firstWindowMs=").append(trace.firstWindowMs ?: "not-seen")
+            append(" raiseMs=").append(trace.raiseMs ?: "not-started")
+            append(" spawnPid=").append(trace.spawnPid ?: "none")
+            append(" spawnAlive=").append(spawnAlive)
+            append(" trackedPids=").append(formatPids(trace.trackedPids))
+            append(" windowsSeen=").append(formatWindows(trace.windowsSeen))
+            append(" focusFlowElevated=").append(trace.focusFlowElevated ?: "unknown")
+            append(" foregroundLockCall=").append(sanitizeLogField(foregroundLockCall))
+            append(" tierResults=").append(formatLogList(trace.tierResults))
+            append(" suppressedPollChanges=").append(trace.suppressedPollChanges)
+            detail?.takeIf(String::isNotBlank)?.let {
+                append(" detail=").append(sanitizeLogField(it).take(160))
+            }
+        }
+        try {
+            logInfo(summary)
+        } finally {
+            runCatching { platform.finishAttempt(trace.id) }
         }
     }
 
-    private fun setIdle(key: String, requestGeneration: Long) {
-        synchronized(lock) {
-            if (generation != requestGeneration) return
-            _states.update { it + (key to LaunchState.Idle) }
-            waitOnlyRetryKeys.remove(key)
-        }
+    private fun logAttempt(trace: AttemptTrace, message: String) {
+        runCatching { logInfo("attemptId=${trace.id} $message") }
     }
+
+    private fun logAttemptWarning(trace: AttemptTrace, message: String, failure: Throwable) {
+        val detail = failure.message?.let(::sanitizeLogField)?.take(160).orEmpty()
+        val suffix = if (detail.isBlank()) "" else " detail=$detail"
+        EnforcementLog.warn(
+            "Launcher",
+            "attemptId=${trace.id} $message error=${failure.javaClass.simpleName}$suffix"
+        )
+    }
+
+    private fun elapsedSince(startedAtMs: Long): Long =
+        (platform.nowMs() - startedAtMs).coerceAtLeast(0L)
+
+    private fun formatPids(pids: Collection<Long>): String =
+        pids.sorted().joinToString(prefix = "[", postfix = "]")
+
+    private fun formatWindows(windows: Collection<WindowRef>): String =
+        windows.sortedWith(compareBy(WindowRef::pid, WindowRef::handle))
+            .joinToString(prefix = "[", postfix = "]") { "${it.pid}:${it.handle}" }
+
+    private fun formatLogList(values: Collection<String>): String =
+        values.joinToString(prefix = "[", postfix = "]") { sanitizeLogField(it) }
+
+    private fun sanitizeLogField(value: String): String =
+        value.replace(Regex("[\\r\\n\\t]+"), " ").replace(Regex("\\s{2,}"), " ")
 
     private fun isCurrent(app: FocusLauncherApp, requestGeneration: Long): Boolean =
         generation == requestGeneration && isAllowed(app)
-
-    private fun logElevationOnce() {
-        if (!elevationLogged.compareAndSet(false, true)) return
-        scope.launch {
-            val elevated = runCatching { platform.focusFlowElevated() }.getOrNull()
-            if (elevated != null) log("FocusFlow elevated=$elevated")
-        }
-    }
-
-    private fun log(message: String) {
-        EnforcementLog.info("Launcher", message)
-    }
 
     private fun keyFor(processName: String): String = processName.lowercase(Locale.ROOT)
 }
