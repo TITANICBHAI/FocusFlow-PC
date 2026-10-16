@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -26,7 +27,18 @@ sealed interface LaunchState {
 data class RunningInstance(
     val pid: Long,
     val startedAtMs: Long,
-    val processName: String
+    val processName: String,
+    val parentPid: Long? = null,
+    val creationTimeMs: Long? = startedAtMs,
+    val executablePath: String? = null
+)
+
+data class ProcessSnapshotEntry(
+    val pid: Long,
+    val parentPid: Long? = null,
+    val creationTimeMs: Long? = null,
+    val processName: String = "",
+    val executablePath: String? = null
 )
 
 data class WindowRef(val handle: Long, val pid: Long)
@@ -51,6 +63,17 @@ interface LaunchPlatform {
     fun nowMs(): Long
     fun findInstances(app: FocusLauncherApp): List<RunningInstance>
     fun findWindows(pids: Set<Long>): List<WindowRef>
+    fun processSnapshot(app: FocusLauncherApp): List<ProcessSnapshotEntry> =
+        findInstances(app).map { instance ->
+            ProcessSnapshotEntry(
+                pid = instance.pid,
+                parentPid = instance.parentPid,
+                creationTimeMs = instance.creationTimeMs,
+                processName = instance.processName,
+                executablePath = instance.executablePath
+            )
+        }
+    fun resolveProcessPath(process: ProcessSnapshotEntry): String? = process.executablePath
     fun findWindows(pids: Set<Long>, attemptId: String): List<WindowRef> =
         findWindows(pids)
     fun spawn(app: FocusLauncherApp): SpawnResult
@@ -60,7 +83,17 @@ interface LaunchPlatform {
     fun focusFlowElevated(): Boolean? = null
     fun lastForegroundLockCall(): String? = null
     fun processIsAlive(pid: Long): Boolean? = null
+    fun processIsAlive(pid: Long, creationTimeMs: Long?): Boolean? = processIsAlive(pid)
     fun finishAttempt(attemptId: String) {}
+
+    suspend fun processSnapshotAsync(app: FocusLauncherApp): List<ProcessSnapshotEntry> =
+        withContext(Dispatchers.IO) { processSnapshot(app) }
+
+    suspend fun findWindowsAsync(pids: Set<Long>, attemptId: String): List<WindowRef> =
+        withContext(Dispatchers.IO) { findWindows(pids, attemptId) }
+
+    suspend fun spawnAsync(app: FocusLauncherApp, attemptId: String): SpawnResult =
+        withContext(Dispatchers.IO) { spawn(app, attemptId) }
 }
 
 class LauncherLaunchCoordinator(
@@ -216,6 +249,7 @@ class LauncherLaunchCoordinator(
             trace.focusFlowElevated = runCatching { platform.focusFlowElevated() }.getOrNull()
             if (!isCurrent(app, requestGeneration)) return
 
+            logAttempt(trace, "phase=snapshot start")
             val snapshotStartedAt = platform.nowMs()
             val (instances, pids, windows) = try {
                 val foundInstances = platform.findInstances(app)
@@ -254,8 +288,7 @@ class LauncherLaunchCoordinator(
                     hasRecentInstance -> "recent-instance"
                     else -> "spawn-budget"
                 }
-                logAttempt(trace, "phase=awaitWindow start reason=$waitReason")
-                val window = awaitWindow(app, pids, requestGeneration, trace)
+                val window = awaitWindow(app, pids, requestGeneration, trace, waitReason)
                 if (window == null) {
                     fail(
                         key,
@@ -296,7 +329,7 @@ class LauncherLaunchCoordinator(
                     pids += result.pid
                     trace.trackedPids = pids.toSet()
                     logAttempt(trace, "event=spawned pid=${result.pid}")
-                    val window = awaitWindow(app, pids, requestGeneration, trace)
+                    val window = awaitWindow(app, pids, requestGeneration, trace, "spawn")
                     if (window == null) {
                         fail(
                             key,
@@ -337,8 +370,13 @@ class LauncherLaunchCoordinator(
         app: FocusLauncherApp,
         initialPids: Set<Long>,
         requestGeneration: Long,
-        trace: AttemptTrace
+        trace: AttemptTrace,
+        reason: String
     ): WindowRef? {
+        logAttempt(
+            trace,
+            "phase=awaitWindow start reason=$reason pids=${formatPids(initialPids)}"
+        )
         val startedAt = platform.nowMs()
         var pids = initialPids.toMutableSet()
         var lastProcessRefreshAt = startedAt
@@ -378,7 +416,13 @@ class LauncherLaunchCoordinator(
         requestGeneration: Long,
         trace: AttemptTrace
     ) {
-        if (trace.raiseStartedAtMs == null) trace.raiseStartedAtMs = platform.nowMs()
+        if (trace.raiseStartedAtMs == null) {
+            trace.raiseStartedAtMs = platform.nowMs()
+            logAttempt(
+                trace,
+                "phase=raise start pid=${initialWindow.pid} hwnd=${initialWindow.handle}"
+            )
+        }
         var window = initialWindow
         try {
             repeat(MAX_RAISE_ATTEMPTS) { index ->

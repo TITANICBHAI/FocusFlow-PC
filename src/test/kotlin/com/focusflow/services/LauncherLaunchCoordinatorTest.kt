@@ -93,7 +93,16 @@ class LauncherLaunchCoordinatorTest {
         assertNotEquals(attemptIds[0], attemptIds[1])
         attemptIds.forEach { id ->
             assertEquals(1, summaries.count { "attemptId=$id " in it })
+            val attemptLogs = logs.filter { it.startsWith("attemptId=$id ") }
+            assertTrue(attemptLogs.size <= 10, "attempt $id logged ${attemptLogs.size} lines")
         }
+        val openedAttemptId = Regex("attemptId=([^ ]+)")
+            .find(openedSummary)!!
+            .groupValues[1]
+        val openedLogs = logs.filter { it.startsWith("attemptId=$openedAttemptId ") }
+        assertTrue(openedLogs.any { "phase=snapshot start" in it })
+        assertTrue(openedLogs.any { "phase=awaitWindow start reason=spawn" in it })
+        assertTrue(openedLogs.any { "phase=raise start" in it })
         coordinator.cancelAll()
     }
 

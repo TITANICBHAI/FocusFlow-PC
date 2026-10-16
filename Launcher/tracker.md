@@ -50,24 +50,42 @@
 
 ## P0 — Reported launch-reliability failures
 
-**Status:** Not started. Follow the ordered P0 sequence above.
+**Status:** P0.1 complete; combined P0.2/P0.3/P0.4 batch in progress on 2026-10-16; P0.5 not started.
 
 ### P0.1 — Per-attempt launch tracing
 
-**Status:** In progress — 2026-10-16.
+**Status:** Complete — 2026-10-16. Automated acceptance passed on Linux; Windows runtime verification remains open.
 
-### 2026-10-16 — P0.1 — In progress
+### 2026-10-16 — P0.1 — Initial in-progress entry
 
 - **Scope:** Add per-attempt IDs, bounded phase/event logging, exactly one typed terminal summary, foreground-lock call-result logging, and T22 coverage. No P0.2–P0.5 behavior changes.
-- **Current findings:** The coordinator currently emits per-refresh polling logs without attempt IDs; the keyboard hook ignores lock/unlock return values; the existing coordinator test suite has no T22 summary assertion.
+- **Initial findings at entry creation:** The coordinator was reported to emit per-refresh polling logs without attempt IDs; the keyboard hook was reported to ignore lock/unlock return values; the coordinator test suite was reported to lack a T22 summary assertion. The resumed source review below supersedes these findings for the current checkout.
 - **Files read:** `Launcher/plan.md`, `Launcher/tracker.md`, `Launcher/rules.md`, `Launcher/preagent-prompt.md`, `replit.md`, `.agents/memory/focus-launcher-task-brief.md`, `LauncherLaunchCoordinator.kt`, `JvmLauncherLaunchPlatform.kt`, `WindowRaiser.kt`, `GlobalKeyboardHook.kt`, `EnforcementLog.kt`, and `LauncherLaunchCoordinatorTest.kt`.
-- **Working tree:** `main` is ahead of `origin/main` by two commits; the only untracked path is the newly supplied implementation prompt. No application source changes have been made in this batch.
-- **Verification:** Pending.
+- **Working tree at entry creation:** `main` was reported as ahead of `origin/main` by two commits, with the supplied implementation prompt untracked. The resumed review below records the current Git state.
+- **Verification at entry creation:** Pending.
 
-- [ ] Add attempt IDs and phase timings; log meaningful polling changes only.
-- [ ] Emit exactly one terminal summary per attempt with the fields required by plan §4/P0.1.
-- [ ] Record foreground-lock call results; stay within the plan's logging and privacy limits.
-- [ ] **Acceptance:** T22 passes; one failed attempt can be diagnosed by attempt ID with about ten or fewer lines.
+### 2026-10-16 — P0.1 — Resumed for implementation and verification
+
+- **Current source review:** The checked-out coordinator already contains attempt IDs, phase timings, one-summary guarding, bounded poll-change logging, and typed terminal outcomes. `GlobalKeyboardHook` already records and logs both foreground-lock call results. The coordinator test file already includes terminal-summary assertions, including failed and opened attempts, unique IDs, and a per-attempt line-count check.
+- **Working tree:** `main` is ahead of `origin/main` by one commit and clean. This differs from the earlier note's two-commit/untracked-file snapshot; current Git state takes precedence.
+- **Files read this batch:** `LauncherLaunchCoordinator.kt`, `JvmLauncherLaunchPlatform.kt`, `WindowRaiser.kt`, `GlobalKeyboardHook.kt`, `EnforcementLog.kt`, `LauncherLaunchCoordinatorTest.kt`, `build.gradle.kts`, and `gradle.properties`, in addition to the plan and project instructions.
+- **Batch-start plan:** Verify current P0.1 behavior against T22 and the logging constraints, then make only necessary P0.1 corrections. No P0.2–P0.5 launch behavior changes.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon` exceeded the 300-second shell timeout after `:processTestResources`; output did not reach `:test` or `BUILD SUCCESSFUL`, and no test XML report was produced. This is not test evidence.
+- **JVM observation:** The explicit `JAVA_HOME` binary reports GraalVM Java 19.0.2, while `gradle --version` reports launcher and daemon JVM 21.0.7. The test-worker JVM remains unverified.
+- **Verification attempt 2 (existing source, before the follow-up changes below):** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain` completed with `BUILD SUCCESSFUL in 2m 27s`. Inspected XML: 60 suites, 237 tests, 0 failures, 0 errors, 0 skipped; `LauncherLaunchCoordinatorTest` had 10 passing tests.
+- **P0.1 gap found after the passing baseline run:** The coordinator recorded wait results and raise timing, but did not consistently log the `awaitWindow` start on the spawn path or an explicit raise-phase start. Add these phase transitions, retain the existing bounded line count, and assert them in the trace test.
+- **Changes made:** Added a snapshot-start event, one await-window-start event with a reason on each path, and a raise-start event. Extended the trace test to assert phase events and no more than ten captured attempt lines. Added the required plain-language `IMP` item to the 2.0.6 planned changelog.
+- **Final files changed:** `src/main/kotlin/com/focusflow/services/LauncherLaunchCoordinator.kt`, `src/test/kotlin/com/focusflow/services/LauncherLaunchCoordinatorTest.kt`, `src/main/kotlin/com/focusflow/ui/screens/ChangelogScreen.kt`, and `Launcher/tracker.md`. Existing per-attempt IDs, terminal summaries, typed codes, foreground-lock result logging, and T22 coverage were present before this batch; `JvmLauncherLaunchPlatform.kt`, `WindowRaiser.kt`, and `GlobalKeyboardHook.kt` required no code edits.
+- **Final verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain` completed with `BUILD SUCCESSFUL in 45s`. Inspected test XML: 60 suites, 237 tests, 0 failures, 0 errors, 0 skipped; `LauncherLaunchCoordinatorTest` had 10 passing tests. T22 assertions verified one summary per attempt, unique IDs, required summary fields, phase-start events, and at most ten logged lines per attempt. `git diff --check` passed. Existing Kotlin opt-in and deprecation warnings remain.
+- **Report-inspection note:** The first targeted XML lookup used test method names without JUnit's trailing `()` and returned `KeyError`; the corrected lookup confirmed the three trace-related test cases passed.
+- **Evidence limitations and safety:** Linux fake-platform tests do not verify Win32 behavior. No P0.2–P0.5 behavior or enforcement safety path was changed. No §9 Windows checks were run; leave all rows pending. The foreground-lock call-result behavior is source-confirmed, not Windows-runtime-confirmed.
+- **Safety paths re-read after the code changes:** `FocusLauncherService.verifyPin`, `isLaunchAllowed`, `exit`, `startBreak`, `endBreak`, kill-switch activation/deactivation and emergency restore; `KillSwitchService.activate/deactivate`; the PIN-gated launcher exit UI; `NuclearMode` escape-tool name and path checks plus kill selection; and `GlobalKeyboardHook` shortcut suppression and foreground-lock result recording. The diff confirms none of these safety branches were modified.
+- **Constants / decisions:** No launch-budget constants changed; existing `MAX_POLL_CHANGE_LOGS=1` remains. No owner decision was needed; P0.5 D1-B is not part of this batch.
+
+- [x] Add attempt IDs and phase timings; log meaningful polling changes only.
+- [x] Emit exactly one terminal summary per attempt with the fields required by plan §4/P0.1.
+- [x] Record foreground-lock call results; stay within the plan's logging and privacy limits.
+- [x] **Acceptance:** T22 passes; one failed attempt can be diagnosed by attempt ID with about ten or fewer lines.
 - **Implementation note:** Add a dated In progress entry here before editing.
 
 ### P0.2 — Remove sticky retry state
@@ -100,6 +118,16 @@
 ### P0 execution notes
 
 Add dated entries here before and after each meaningful implementation change. Preserve failed checks and document successful reruns.
+
+### 2026-10-16 — P0.2/P0.3/P0.4 combined coordinator refactor — In progress
+
+- **Scope:** Remove sticky retry/spawn-budget decision state; add liveness-based waiting, per-attempt tokens, watchdog and per-app cancellation; track process lineage and improve window selection. Follow the task-specific allowlists in `Launcher/plan.md`. No P0.5 enforcement changes.
+- **Completed dependency:** P0.1 passed its Linux acceptance tests; Windows verification remains pending.
+- **Working tree at batch start:** `main` is one commit ahead of `origin/main`. P0.1 changes are present and uncommitted in `Launcher/tracker.md`, `.agents/memory/gradle-jvm-selection.md`, `LauncherLaunchCoordinator.kt`, `LauncherLaunchCoordinatorTest.kt`, and `ChangelogScreen.kt`; preserve them.
+- **Files inspected:** `LauncherLaunchCoordinator.kt`, `LauncherLaunchCoordinatorTest.kt`, `JvmLauncherLaunchPlatform.kt`, `ProcessSnapshot.kt`, `ProcessCommandCacheTest.kt`, `ProcessNameResolver.kt`, `ProcessNameResolverTest.kt`, `WindowRaiser.kt`, and the `FocusLauncherApp` model.
+- **Current source findings:** P0.2's sticky retry and 20-second spawn-budget flags remain. P0.3 has no independent watchdog, per-attempt token, or per-app cancellation. P0.4 currently snapshots only name/path-matched instances, replaces tracked PIDs during polling, has no parent/creation-time lineage, and sorts windows by PID/handle.
+- **Plan acceptance note:** P0.4 lists T8 while its allowlist permits only `WindowRaiser.findWindows`; process-based foreground verification belongs to P1.1 and its `raise` path. Do not widen the P0.4 allowlist; record any T8 portion that cannot be satisfied here as deferred to P1.1.
+- **Verification:** Pending.
 
 ## P1 — Correctness and robustness
 
@@ -169,7 +197,7 @@ Add dated entries for each selected task and preserve the plan's out-of-scope bo
 
 ## Automated test scenarios — plan §8
 
-All remain unchecked until the named behavior is tested with the fake platform/virtual time as required by the plan.
+Mark each scenario complete only after its named behavior is tested with the fake platform/virtual time as required by the plan.
 
 - [ ] **T1** Spawn, window appears, raise succeeds; no later-attempt influence remains.
 - [ ] **T2** Dead-on-arrival process exits quickly; next tap spawns.
@@ -192,7 +220,7 @@ All remain unchecked until the named behavior is tested with the fake platform/v
 - [ ] **T19** A setup loader exception does not strand the screen in loading.
 - [ ] **T20** Spawn errors 2, 3, 5, 193, and 740 map to typed, friendly failures.
 - [ ] **T21** Main window supersedes splash; Z-order preference is respected.
-- [ ] **T22** Exactly one terminal summary line is emitted per attempt with its attempt ID.
+- [x] **T22** Exactly one terminal summary line is emitted per attempt with its attempt ID.
 
 ## Manual Windows verification — plan §9
 

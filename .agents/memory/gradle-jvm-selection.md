@@ -5,6 +5,8 @@ description: The Gradle runtime JVM can differ from JAVA_HOME in this workspace.
 
 In this workspace, `JAVA_HOME`, the Gradle launcher/daemon, the test worker, and a `JavaExec` application process can select different JVMs. A test worker and the launched desktop app have each differed from the shell's configured `JAVA_HOME`.
 
+One reproduced case: after exporting the project's GraalVM Java 19 path, `java -version` reported 19.0.2 but `gradle --version` still reported launcher and daemon JVM 21.0.7.
+
 **Why:** Relying on `JAVA_HOME` or the Kotlin toolchain declaration alone could misstate which JVM actually ran a test or application capture.
 
-**How to apply:** Record `java -version` and `gradle --version` separately; for task-specific claims, inspect the test worker or application process itself rather than assuming which JVM Gradle selected.
+**How to apply:** Record `java -version` and `gradle --version` separately; for task-specific claims, inspect the test worker or application process itself rather than assuming which JVM Gradle selected. Explicitly exporting `JAVA_HOME` may not change the Nix Gradle launcher/daemon JVM.

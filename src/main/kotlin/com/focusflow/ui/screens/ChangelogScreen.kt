@@ -42,6 +42,7 @@ internal val CHANGELOG = listOf(
             "IMP" to "Daily recurring tasks will be less likely to create duplicate copies",
             "IMP" to "Backups will be checked before they are trusted or restored; activity exports will handle complete histories more reliably",
             "IMP" to "Stats and history views will work more efficiently with larger records",
+            "IMP" to "Focus Launcher launch diagnostics will make failed app starts easier to investigate",
             "SEC" to "Optional diagnostics will remain under your control and avoid sending identifying details",
             "UPD" to "Windows-specific behavior still needs hands-on verification"
         )
