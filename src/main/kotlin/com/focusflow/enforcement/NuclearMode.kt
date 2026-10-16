@@ -103,6 +103,8 @@ object NuclearMode {
         "\\windows\\system32\\wbem\\wmic.exe"
     )
 
+    private val unresolvedLauncherEscapeNames = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private val ownPid: Long = ProcessHandle.current().pid()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var monitorJob: Job? = null
@@ -208,6 +210,22 @@ object NuclearMode {
         } catch (_: Exception) { emptySet() }
     }
 
+    /** Shared name/path test used by the launcher policy and Nuclear Mode. */
+    internal fun isEscapeTool(processName: String, executablePath: String? = null): Boolean {
+        val name = processName.trim()
+            .substringAfterLast('\\')
+            .substringAfterLast('/')
+            .lowercase()
+        val nameMatch = name in escapeProcesses && shouldBlockInstallerProcess(name)
+        val pathMatch = executablePath
+            ?.lowercase()
+            ?.replace("/", "\\")
+            ?.let { path ->
+                knownEscapePathSuffixes.any(path::endsWith) && shouldBlockInstallerProcess(name)
+            } == true
+        return nameMatch || pathMatch
+    }
+
     /**
      * Installer processes are part of the direct EXE/MSI protection only.
      * Store/MSIX removal is owned by Windows and must not be interfered with.
@@ -234,6 +252,19 @@ object NuclearMode {
         // child-process cleanup guarantees as normal enforcement.
         killProcessesByName(found)
 
+        logEscapeAttempts(found)
+    }
+
+    private fun killAndLogTargeted(found: Map<Long, String>) {
+        if (found.isEmpty()) return
+        found.forEach { (pid, processName) ->
+            try { ProcessHandle.of(pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
+            killProcessByPid(pid, processName)
+        }
+        logEscapeAttempts(found.values.toSet())
+    }
+
+    private fun logEscapeAttempts(found: Set<String>) {
         // Tally and periodically persist escape attempts
         found.forEach { exe ->
             val count = escapeCounts.merge(exe, 1, Int::plus) ?: 1
@@ -281,7 +312,58 @@ object NuclearMode {
         if (KillSwitchService.isActive.value) return
         val byName = getRunningEscapeProcesses()
         val byPath = getEscapeProcessesByPath()
-        killAndLog(byName + byPath)
+        val found = byName + byPath
+        val launcherOwnUtilityExemption =
+            ProcessMonitor.launcherAllowedProcesses.isNotEmpty() &&
+                com.focusflow.services.LauncherChainAllowance.isEnabled
+        if (!launcherOwnUtilityExemption) {
+            unresolvedLauncherEscapeNames.clear()
+            killAndLog(found)
+            return
+        }
+        if (found.isEmpty()) {
+            unresolvedLauncherEscapeNames.clear()
+            return
+        }
+
+        val ownPid = ProcessHandle.current().pid()
+        val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+        val matchedNames = HashSet<String>()
+        val targets = LinkedHashMap<Long, String>()
+        for (process in snapshot) {
+            val path = com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
+            val name = process.processName.ifBlank {
+                path?.substringAfterLast('\\')?.substringAfterLast('/') ?: ""
+            }.substringAfterLast('\\').substringAfterLast('/').lowercase()
+            if (name !in found && !isEscapeTool(name, path)) continue
+            matchedNames += name
+
+            val decision = com.focusflow.services.LauncherKioskPolicy.decide(
+                process = process,
+                snapshot = snapshot,
+                allowedProcessNames = ProcessMonitor.launcherAllowedProcesses,
+                allowedExecutablePaths = ProcessMonitor.launcherAllowedAppExecutablePaths,
+                safeProcessNames = ProcessMonitor.launcherSafeProcesses,
+                ownPid = ownPid,
+                systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
+                chainAllowanceEnabled = true,
+                resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
+            )
+            if (decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK) {
+                targets[process.pid] = name
+            }
+        }
+
+        // If a tasklist/path match could not be tied to a PID, wait one tick
+        // before falling back to the existing name-wide kill. This avoids
+        // killing a FocusFlow-owned helper on an incomplete first snapshot.
+        val unresolvedNames = found - matchedNames
+        unresolvedLauncherEscapeNames.keys.removeIf { it !in unresolvedNames }
+        val namesReadyToKill = unresolvedNames.filter { name ->
+            !unresolvedLauncherEscapeNames.add(name)
+        }.toSet()
+        killAndLogTargeted(targets)
+        killAndLog(namesReadyToKill)
     }
 
     // ── Public API ────────────────────────────────────────────────────────────

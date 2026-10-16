@@ -112,12 +112,66 @@ object ProcessMonitor {
      */
     @Volatile var launcherAllowedProcesses: Set<String> = emptySet()
 
+    /** Full executable paths for the selected roots, keyed by normalized name. */
+    @Volatile private var launcherAllowedAppPaths: Map<String, String> = emptyMap()
+    internal val launcherAllowedAppExecutablePaths: Map<String, String>
+        get() = launcherAllowedAppPaths
+
+    /** Cached on the polling worker; native foreground callbacks only consult it. */
+    @Volatile private var launcherPolicySnapshot: List<com.focusflow.services.ProcessSnapshotEntry> = emptyList()
+    @Volatile private var launcherPolicySnapshotVersion: Long = 0L
+
     /**
      * Set by FocusLauncherService while a launcher session is active.
      * Called for every foreground change so the launcher can lower itself for
      * allowed apps and reclaim topmost ordering for other processes.
      */
-    @Volatile var onLauncherForegroundChanged: ((processName: String) -> Unit)? = null
+    @Volatile var onLauncherForegroundChanged: ((processName: String, pid: Long) -> Unit)? = null
+
+    fun setLauncherAllowedApps(apps: List<com.focusflow.services.FocusLauncherApp>) {
+        launcherAllowedProcesses = apps.map { it.processName.lowercase() }.toSet()
+        launcherAllowedAppPaths = apps
+            .filter { it.exePath.isNotBlank() }
+            .associate { it.processName.lowercase() to it.exePath }
+    }
+
+    fun clearLauncherAllowedApps() {
+        launcherAllowedProcesses = emptySet()
+        launcherAllowedAppPaths = emptyMap()
+        launcherPolicySnapshot = emptyList()
+    }
+
+    /**
+     * Read-only cached policy query for AWT/WinEvent callbacks. It never
+     * enumerates processes or opens process handles on the callback thread.
+     */
+    internal fun isLauncherProcessAllowed(processName: String, pid: Long): Boolean {
+        val allowed = launcherAllowedProcesses
+        if (allowed.isEmpty()) return true
+        val snapshot = launcherPolicySnapshot
+        val candidate = snapshot.firstOrNull { it.pid == pid }
+            ?: com.focusflow.services.ProcessSnapshotEntry(pid = pid, processName = processName)
+        return com.focusflow.services.LauncherKioskPolicy.decide(
+            process = candidate,
+            snapshot = snapshot,
+            allowedProcessNames = allowed,
+            allowedExecutablePaths = launcherAllowedAppPaths,
+            safeProcessNames = launcherSafeProcesses,
+            ownPid = ProcessHandle.current().pid(),
+            systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
+            chainAllowanceEnabled = com.focusflow.services.LauncherChainAllowance.isEnabled,
+            snapshotVersion = launcherPolicySnapshotVersion
+        ) != com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK
+    }
+
+    @Synchronized
+    private fun refreshLauncherPolicySnapshot(): List<com.focusflow.services.ProcessSnapshotEntry> {
+        val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+        launcherPolicySnapshot = snapshot
+        launcherPolicySnapshotVersion += 1L
+        com.focusflow.services.LauncherKioskPolicy.onNewSnapshot(snapshot)
+        return snapshot
+    }
 
     /**
      * System processes that are always safe in launcher mode — never kill these.
@@ -339,7 +393,7 @@ object ProcessMonitor {
         // The launcher needs every foreground transition, including allowed
         // processes. Do this before the enforcement cooldown gate.
         if (launcherAllowedProcesses.isNotEmpty()) {
-            onLauncherForegroundChanged?.invoke(processName)
+            onLauncherForegroundChanged?.invoke(processName, pid)
         }
 
         val now   = System.currentTimeMillis()
@@ -561,31 +615,42 @@ object ProcessMonitor {
         val ownPid = ProcessHandle.current().pid()
         val now    = System.currentTimeMillis()
         try {
-            ProcessHandle.allProcesses()
-                .filter { ph -> ph.isAlive && ph.pid() != ownPid && ph.info().command().isPresent }
-                .forEach { ph ->
-                    // Re-read launcherAllowedProcesses on every iteration.
-                    // If exit() fired mid-sweep (clearing the set), stop killing
-                    // immediately rather than using the stale snapshot captured
-                    // at the top of tickPoll().
-                    val currentAllowed = launcherAllowedProcesses
-                    if (currentAllowed.isEmpty()) return@forEach
+            val snapshot = refreshLauncherPolicySnapshot()
+            for (process in snapshot) {
+                // Re-read the active allow-set on every iteration. If exit()
+                // clears it mid-sweep, stop using the stale snapshot at once.
+                val currentAllowed = launcherAllowedProcesses
+                if (currentAllowed.isEmpty()) break
+                if (process.pid == ownPid) continue
 
-                    val exeName = ph.info().command().orElse(null)
-                        ?.substringAfterLast('\\')
-                        ?.substringAfterLast('/')
-                        ?.lowercase() ?: return@forEach
-                    if (exeName !in launcherSafeProcesses && exeName !in currentAllowed) {
-                        if (tryAcquireCooldown("sweep:$exeName", now)) {
-                            // Two-layer kill for maximum reliability:
-                            //   1. destroyForcibly() — instant JVM-level SIGKILL, no subprocess overhead
-                            //   2. taskkill /F /PID  — backup for processes running at higher integrity
-                            //      (e.g. launched via "Run as administrator") that JVM cannot destroy
-                            try { ph.destroyForcibly() } catch (_: Exception) {}
-                            killProcessByPid(ph.pid(), exeName)
-                        }
-                    }
+                val resolvedPath = com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
+                val exeName = process.processName
+                    .ifBlank { resolvedPath?.substringAfterLast('\\')?.substringAfterLast('/') ?: "" }
+                    .substringAfterLast('\\')
+                    .substringAfterLast('/')
+                    .lowercase()
+                val decision = com.focusflow.services.LauncherKioskPolicy.decide(
+                    process = process,
+                    snapshot = snapshot,
+                    allowedProcessNames = currentAllowed,
+                    allowedExecutablePaths = launcherAllowedAppPaths,
+                    safeProcessNames = launcherSafeProcesses,
+                    ownPid = ownPid,
+                    systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
+                    chainAllowanceEnabled = com.focusflow.services.LauncherChainAllowance.isEnabled,
+                    snapshotVersion = launcherPolicySnapshotVersion,
+                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
+                )
+                if (
+                    decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK &&
+                    tryAcquireCooldown("sweep:${process.pid}", now)
+                ) {
+                    // Target this PID only: name-wide taskkill could also
+                    // terminate a separately proven FocusFlow-owned helper.
+                    try { ProcessHandle.of(process.pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
+                    killProcessByPid(process.pid, exeName.takeIf { it.isNotBlank() })
                 }
+            }
         } catch (e: Exception) {
             // The entire kiosk sweep loop crashed silently. This is critical:
             // while launcherSweep() is dead, background processes go unkilled.
@@ -633,33 +698,49 @@ object ProcessMonitor {
         // ApplicationFrameHost.exe is still caught and killed.
         val launcherAllowed = launcherAllowedProcesses
         if (launcherAllowed.isNotEmpty()) {
-            // When the UWP frame host is foreground, resolve the actual hosted
-            // child process and check it against the launcher allowlist.
+            // When the UWP frame host is foreground, resolve its actual child;
+            // the shared policy decides whether that child is a root, helper,
+            // safe process, or a block target.
             val launcherTarget = if (lower == uwpFrameHost) {
-                resolveDisallowedUwpProcess(launcherAllowed, pid)
+                resolveUwpLauncherProcess(pid)
             } else {
                 ProcessTarget(processName, pid)
             }
             if (launcherTarget != null) {
                 val launcherResolved = launcherTarget.name
-                val launcherResolvedLower = launcherResolved.lowercase()
-                if (launcherResolvedLower !in launcherSafeProcesses && launcherResolvedLower !in launcherAllowed) {
-                    if (tryAcquireCooldown("launcher:$launcherResolvedLower", now)) {
-                        // Two-layer kill (same logic as launcherSweep):
-                        //   1. destroyForcibly() via PID — instant, zero subprocess overhead
-                        //   2. taskkill /F /PID or /IM — handles elevated processes JVM cannot reach
-                        if (launcherTarget.pid > 0L) {
-                            try { ProcessHandle.of(launcherTarget.pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
-                            killProcessByPid(launcherTarget.pid, launcherResolved)
-                        } else {
-                            killProcessByName(launcherResolved)
-                        }
-                        _blockedAttempts.update { it + 1 }
+                val snapshot = launcherPolicySnapshot
+                val entry = snapshot.firstOrNull { it.pid == launcherTarget.pid }
+                    ?: com.focusflow.services.ProcessSnapshotEntry(
+                        pid = launcherTarget.pid,
+                        processName = launcherResolved
+                    )
+                val decision = com.focusflow.services.LauncherKioskPolicy.decide(
+                    process = entry,
+                    snapshot = snapshot,
+                    allowedProcessNames = launcherAllowed,
+                    allowedExecutablePaths = launcherAllowedAppPaths,
+                    safeProcessNames = launcherSafeProcesses,
+                    ownPid = ProcessHandle.current().pid(),
+                    systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
+                    chainAllowanceEnabled = com.focusflow.services.LauncherChainAllowance.isEnabled,
+                    snapshotVersion = launcherPolicySnapshotVersion,
+                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
+                )
+                if (
+                    decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK &&
+                    tryAcquireCooldown("launcher:${launcherTarget.pid}", now)
+                ) {
+                    if (launcherTarget.pid > 0L) {
+                        try { ProcessHandle.of(launcherTarget.pid).orElse(null)?.destroyForcibly() } catch (_: Exception) {}
+                        killProcessByPid(launcherTarget.pid, launcherResolved)
+                    } else {
+                        killProcessByName(launcherResolved)
                     }
-                    // The launcher decision handled this process. Do not run normal
-                    // blocking a second time after it has already been terminated.
+                    _blockedAttempts.update { it + 1 }
                     return
                 }
+                // ALLOW and DEFER both continue through ordinary focus rules.
+                // DEFER waits for a new background snapshot before deciding.
             }
             // An allowed launcher app is still processed by the normal enforcement
             // path below. Launcher mode must not become a bypass for always-on
@@ -795,16 +876,8 @@ object ProcessMonitor {
         } catch (_: Exception) { null }
     }
 
-    /**
-     * Launcher-mode UWP resolution: finds the first running process that is NOT
-     * in [allowed] and NOT in [launcherSafeProcesses].
-     *
-     * Used when ApplicationFrameHost.exe is the foreground window in kiosk mode —
-     * the standard [resolveUwpHostedProcess] requires a non-empty blocked set to
-     * work, but in pure launcher mode the regular block list is empty. This
-     * variant scans ALL running processes and returns one that should be killed.
-     */
-    private fun resolveDisallowedUwpProcess(allowed: Set<String>, hostPid: Long): ProcessTarget? {
+    /** Finds an actual foreground child hosted by ApplicationFrameHost. */
+    private fun resolveUwpLauncherProcess(hostPid: Long): ProcessTarget? {
         return try {
             if (hostPid <= 0L) return null
             ProcessHandle.allProcesses()
@@ -819,11 +892,7 @@ object ProcessMonitor {
                     val name = command.substringAfterLast('\\')
                         .substringAfterLast('/')
                         .lowercase()
-                    if (name !in launcherSafeProcesses && name !in allowed) {
-                        ProcessTarget(name, ph.pid())
-                    } else {
-                        null
-                    }
+                    ProcessTarget(name, ph.pid())
                 }
                 .firstOrNull()
         } catch (_: Exception) { null }

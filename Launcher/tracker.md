@@ -171,6 +171,19 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Implementation files:** Pending final code inspection; expected scope is enforcement launcher branches, launcher service, the two launcher/settings screens, app navigation, and focused allowance/policy tests only.
 - **Verification:** Pending.
 
+### 2026-10-17 — P0.5 — Implementation batch started
+
+- **Authorization and scope:** The owner explicitly asked to start P0.5 and restated the manually enabled Settings toggle, explanatory Steam example, mandatory Global PIN, free disable, fresh PIN gate on every launcher entry, direct Settings link, and persistent live status after first enable. No P1/P2 work is included.
+- **Plan clarification:** Make the setup-then-re-enter-PIN sequence and the “return to Focus Launcher and click Enter again” behavior explicit. Add the central Global PIN removal hook to the P0.5 file allowlist so every removal path forces the opt-in off.
+- **Plan updates applied:** Expanded P0.5 to allow the narrowly scoped Global PIN removal hook; specified fail-closed setup/verification, fresh verification before the normal launcher flow, a direct Settings route with no auto-resume, and persistent “enabled once” status. Updated the pre-agent verification reference from T1–T22 to T1–T26.
+- **Scope clarification:** The shared process policy also decides whether a launcher-launched foreground window should raise the kiosk overlay; otherwise the Steam example could pass process enforcement but still be covered by FocusFlow. No broader overlay redesign is included.
+- **Implementation progress:** Added typed opt-in persistence, verified-PIN enable/entry checks, the Global PIN removal hook, shared launcher process policy, enforcement/reclaim/overlay integration, Settings toggle/setup UI, entry gate with direct Settings navigation, persistent live status, localized copy, and focused service/policy tests. Full verification is still pending.
+- **Failed verification attempt:** `:compileKotlin` reached the Kotlin compile task but the shell command timed out at five minutes without a final result. This is not passing evidence; rerun after the remaining edits.
+- **Initial source review:** No shared kiosk policy/chain-allowance service exists. Current sweep and foreground checks use only process names and the safe-name set; the Settings route has no direct navigation callback from Focus Launcher. Global PIN removal can also occur through the shared reset method, not only the Settings dialog.
+- **Files read before editing:** `replit.md`, `Launcher/plan.md`, `Launcher/tracker.md`, `Launcher/rules.md`, `Launcher/preagent-prompt.md`, `.agents/memory/focus-launcher-task-brief.md`, `FocusLauncherService.kt`, `GlobalPin.kt`, `PinGateDialog.kt`, `GlobalPinSetupDialog.kt`, `ProcessMonitor.kt`, `WinEventHook.kt`, `NuclearMode.kt`, `SettingsScreen.kt`, `FocusLauncherScreen.kt`, `App.kt`, `Database.kt`, `ProcessSnapshot.kt`, and `WinApiBindings.kt`.
+- **Working tree at batch start:** Clean.
+- **Verification:** Pending. All Windows runtime rows remain owner-only.
+
 ## P1 — Correctness and robustness
 
 **Status:** Not started. Respect the dependencies stated in the plan.

@@ -79,6 +79,7 @@ object GlobalPin {
         when (val result = verifyResult(rawPin)) {
             PinVerificationResult.ACCEPTED -> {
                 Database.writeSetting(KEY, "").requireSuccess("clear Global PIN")
+                LauncherChainAllowance.onGlobalPinRemoved()
                 PinVerificationResult.ACCEPTED
             }
             else -> result
@@ -94,8 +95,9 @@ object GlobalPin {
      */
     fun resetWithoutPin() {
         val pinWrite = Database.writeSetting(KEY, "")
-        val declinedWrite = Database.writeSetting(DECLINED_KEY, "false")
         pinWrite.requireSuccess("reset Global PIN")
+        LauncherChainAllowance.onGlobalPinRemoved()
+        val declinedWrite = Database.writeSetting(DECLINED_KEY, "false")
         declinedWrite.requireSuccess("reset Global PIN setup choice")
     }
 

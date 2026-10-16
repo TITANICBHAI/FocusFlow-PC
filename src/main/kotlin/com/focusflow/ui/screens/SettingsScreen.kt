@@ -85,6 +85,12 @@ fun SettingsScreen(
     var globalPinSet          by remember { mutableStateOf(false) }
     var showGlobalPinDialog   by remember { mutableStateOf(false) }
     var globalPinRemovalRequested by remember { mutableStateOf(false) }
+    var showLauncherChainSetup by remember { mutableStateOf(false) }
+    var showLauncherChainPinGate by remember { mutableStateOf(false) }
+    var launcherChainPin by remember { mutableStateOf("") }
+    var launcherChainChecking by remember { mutableStateOf(false) }
+    var launcherChainError by remember { mutableStateOf<String?>(null) }
+    val launcherChainState by com.focusflow.services.LauncherChainAllowance.state.collectAsState()
     var showOverlayPinGate    by remember { mutableStateOf(false) }
     var showStartupPinGate    by remember { mutableStateOf(false) }
     // Session PIN change dialog
@@ -122,6 +128,7 @@ fun SettingsScreen(
             val showOverlay = withContext(Dispatchers.IO) { Database.getSetting("block_overlay_enabled") != "false" }
             val nPinSet     = withContext(Dispatchers.IO) { NuclearPin.isSet() }
             val gPinSet     = withContext(Dispatchers.IO) { GlobalPin.isSet() }
+            withContext(Dispatchers.IO) { com.focusflow.services.LauncherChainAllowance.refresh() }
             alwaysOn        = ao
             startWithWin    = sww
             soundEnabled    = sound
@@ -150,6 +157,41 @@ fun SettingsScreen(
             SoundAversion.blockAlertStyle = aversionSound
             focusLockUntilTimer = lockUntil
             crashReportsEnabled = crashRep
+        }
+    }
+
+    fun disableLauncherChainAllowance() {
+        scope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                com.focusflow.services.LauncherChainAllowance.disable()
+            }
+            launcherChainError = if (saved) null else strings.launcherChainUnavailable
+        }
+    }
+
+    fun requestLauncherChainEnable() {
+        scope.launch {
+            val current = withContext(Dispatchers.IO) {
+                com.focusflow.services.LauncherChainAllowance.refresh()
+            }
+            if (!current.readable) {
+                launcherChainError = strings.launcherChainUnavailable
+                return@launch
+            }
+            if (current.enabled) return@launch
+            when (withContext(Dispatchers.IO) { GlobalPin.state() }) {
+                com.focusflow.services.PinState.SET -> {
+                    launcherChainError = null
+                    launcherChainPin = ""
+                    showLauncherChainPinGate = true
+                }
+                com.focusflow.services.PinState.NOT_SET -> {
+                    launcherChainError = null
+                    showLauncherChainSetup = true
+                }
+                com.focusflow.services.PinState.UNKNOWN ->
+                    launcherChainError = strings.launcherChainUnavailable
+            }
         }
     }
 
@@ -247,6 +289,53 @@ fun SettingsScreen(
                     onChange = { showNuclearPinSetup = true },
                     onRemove = { showNuclearPinSetup = true }
                 )
+            }
+        }
+
+        item {
+            SectionCard(title = strings.settingsLauncherChainAllowance) {
+                Text(
+                    strings.settingsLauncherChainAllowanceDesc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface2
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (launcherChainState.enabled) strings.launcherChainStatusOn
+                        else strings.launcherChainStatusOff,
+                        color = if (launcherChainState.enabled) Purple80 else OnSurface2,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (launcherChainState.readable) {
+                        Switch(
+                            checked = launcherChainState.enabled,
+                            onCheckedChange = { enabled ->
+                                launcherChainError = null
+                                if (enabled) requestLauncherChainEnable()
+                                else disableLauncherChainAllowance()
+                            }
+                        )
+                    } else {
+                        TextButton(onClick = ::disableLauncherChainAllowance) {
+                            Text(strings.btnDisable)
+                        }
+                    }
+                }
+                if (!launcherChainState.readable) {
+                    Text(
+                        strings.launcherChainUnavailable,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Error
+                    )
+                }
+                launcherChainError?.let { message ->
+                    Text(message, style = MaterialTheme.typography.bodySmall, color = Error)
+                }
             }
         }
 
@@ -1033,6 +1122,101 @@ fun SettingsScreen(
     }
 
     // ── Global PIN manage dialog ──────────────────────────────────────────────
+    if (showLauncherChainSetup) {
+        com.focusflow.ui.components.GlobalPinSetupDialog(
+            onDismiss = {
+                showLauncherChainSetup = false
+                launcherChainPin = ""
+            },
+            onComplete = {
+                showLauncherChainSetup = false
+                launcherChainPin = ""
+                showLauncherChainPinGate = true
+                reload()
+            }
+        )
+    }
+
+    if (showLauncherChainPinGate) {
+        AlertDialog(
+            onDismissRequest = {
+                showLauncherChainPinGate = false
+                launcherChainPin = ""
+                launcherChainChecking = false
+            },
+            containerColor = Surface2,
+            shape = RoundedCornerShape(20.dp),
+            title = {
+                Text(strings.settingsPinRequired, color = OnSurface, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        strings.settingsLauncherChainAllowance,
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedTextField(
+                        value = launcherChainPin,
+                        onValueChange = { launcherChainPin = it },
+                        label = { Text(strings.settingsPinLabel) },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                        )
+                    )
+                    launcherChainError?.let { message ->
+                        Text(message, color = Error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = launcherChainPin.isNotBlank() && !launcherChainChecking,
+                    onClick = {
+                        launcherChainChecking = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                com.focusflow.services.LauncherChainAllowance.enable(launcherChainPin)
+                            }
+                            launcherChainChecking = false
+                            when (result) {
+                                com.focusflow.services.LauncherChainAllowance.EnableResult.ENABLED -> {
+                                    showLauncherChainPinGate = false
+                                    launcherChainPin = ""
+                                    launcherChainError = null
+                                }
+                                com.focusflow.services.LauncherChainAllowance.EnableResult.INCORRECT_PIN -> {
+                                    launcherChainPin = ""
+                                    launcherChainError = strings.settingsIncorrectPin
+                                }
+                                com.focusflow.services.LauncherChainAllowance.EnableResult.PIN_NOT_CONFIGURED -> {
+                                    showLauncherChainPinGate = false
+                                    launcherChainPin = ""
+                                    showLauncherChainSetup = true
+                                }
+                                com.focusflow.services.LauncherChainAllowance.EnableResult.PIN_UNAVAILABLE,
+                                com.focusflow.services.LauncherChainAllowance.EnableResult.STORAGE_UNAVAILABLE ->
+                                    launcherChainError = strings.launcherChainUnavailable
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                ) { Text(strings.settingsConfirm) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showLauncherChainPinGate = false
+                        launcherChainPin = ""
+                        launcherChainError = null
+                    }
+                ) { Text(strings.btnCancel, color = OnSurface2) }
+            }
+        )
+    }
+
     if (showGlobalPinDialog) {
         GlobalPinManageDialog(
             pinAlreadySet       = globalPinSet,

@@ -46,7 +46,7 @@ The plan's defaults and safety invariants are binding. For P0.5, use decision D1
 
 ## Verification and evidence
 
-- Use the plan's fake `LaunchPlatform` and virtual-time scenarios T1–T22; search for existing coverage before adding tests.
+- Use the plan's fake `LaunchPlatform` and virtual-time scenarios T1–T26; search for existing coverage before adding tests.
 - Record exact commands, results, files read/changed, failures/reruns, and outstanding owner decisions in `Launcher/tracker.md`. Add phase reports when a phase is completed.
 - Require final Gradle test task results and inspect generated reports before marking automated tests complete. Compilation alone is not test evidence.
 - Clearly distinguish source-confirmed, inferred, and runtime-unverified claims. Never call Windows-specific behavior verified without Windows evidence.

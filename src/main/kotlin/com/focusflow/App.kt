@@ -515,7 +515,9 @@ fun App() {
                                         currentScreen = Screen.BLOCK_APPS
                                     }
                                 )
-                                Screen.FOCUS_LAUNCHER  -> FocusLauncherScreen()
+                                Screen.FOCUS_LAUNCHER  -> FocusLauncherScreen(
+                                    onNavigateToSettings = { currentScreen = Screen.SETTINGS }
+                                )
                                 Screen.BLOCK_APPS      -> AppBlockerScreen(
                                     onNavigateToBlockDefense = { currentScreen = Screen.BLOCK_DEFENSE },
                                     initialTab = blockerInitialTab,

@@ -397,6 +397,8 @@ data class AppStringsC(
     val settingsBeforeLong: String,
     val settingsProcessesCsv: String,
     val settingsProcessNameHint: String,
+    val settingsLauncherChainAllowance: String,
+    val settingsLauncherChainAllowanceDesc: String,
     val launcherTitle: String,
     val launcherSubtitle: String,
     val launcherAppsToInclude: String,
@@ -404,6 +406,11 @@ data class AppStringsC(
     val launcherSearchApps: String,
     val launcherSessionDuration: String,
     val launcherEnterLauncher: String,
+    val launcherChainStatusOn: String,
+    val launcherChainStatusOff: String,
+    val launcherChainPinGateBody: String,
+    val launcherChainTurnOffSettings: String,
+    val launcherChainUnavailable: String,
     val launcherNoTimeLimit: String,
     val launcherNoAppsYet: String,
     val launcherSelectAtLeastOne: String,
@@ -1067,6 +1074,13 @@ class AppStrings(
     val launcherSearchApps: String get() = appstringsc.launcherSearchApps
     val launcherSessionDuration: String get() = appstringsc.launcherSessionDuration
     val launcherEnterLauncher: String get() = appstringsc.launcherEnterLauncher
+    val settingsLauncherChainAllowance: String get() = appstringsc.settingsLauncherChainAllowance
+    val settingsLauncherChainAllowanceDesc: String get() = appstringsc.settingsLauncherChainAllowanceDesc
+    val launcherChainStatusOn: String get() = appstringsc.launcherChainStatusOn
+    val launcherChainStatusOff: String get() = appstringsc.launcherChainStatusOff
+    val launcherChainPinGateBody: String get() = appstringsc.launcherChainPinGateBody
+    val launcherChainTurnOffSettings: String get() = appstringsc.launcherChainTurnOffSettings
+    val launcherChainUnavailable: String get() = appstringsc.launcherChainUnavailable
     val launcherNoTimeLimit: String get() = appstringsc.launcherNoTimeLimit
     val launcherNoAppsYet: String get() = appstringsc.launcherNoAppsYet
     val launcherSelectAtLeastOne: String get() = appstringsc.launcherSelectAtLeastOne

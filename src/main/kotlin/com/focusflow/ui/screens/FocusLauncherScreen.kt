@@ -70,7 +70,7 @@ private fun resolveDurationMinutes(durationIndex: Int, customDurationMinutes: In
     }
 
 @Composable
-fun FocusLauncherScreen() {
+fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
     val strings = LocalizationManager.strings
 
     var selectedApps     by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -94,6 +94,13 @@ fun FocusLauncherScreen() {
     var noticesLoaded by remember { mutableStateOf(false) }
     var launcherPresets    by remember { mutableStateOf<List<FocusLauncherPreset>>(emptyList()) }
     var showPresetDialog   by remember { mutableStateOf(false) }
+    var showChainEntryGate by remember { mutableStateOf(false) }
+    var chainEntryPin by remember { mutableStateOf("") }
+    var chainEntryError by remember { mutableStateOf<String?>(null) }
+    var chainGateUnavailable by remember { mutableStateOf(false) }
+    var chainEntryChecking by remember { mutableStateOf(false) }
+    var chainAllowancePinVerified by remember { mutableStateOf(false) }
+    var showEntryBlockedMessage by remember { mutableStateOf(false) }
 
     val durationMinutes = resolveDurationMinutes(durationIndex, customDurationMinutes)
 
@@ -102,6 +109,7 @@ fun FocusLauncherScreen() {
 
     val isActive  by FocusLauncherService.isActive.collectAsState()
     val canBreak  by FocusLauncherService.canTakeBreak.collectAsState()
+    val chainAllowanceState by com.focusflow.services.LauncherChainAllowance.state.collectAsState()
     val scope     = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val filteredAvailableApps = remember(searchQuery, availableApps) {
@@ -116,7 +124,41 @@ fun FocusLauncherScreen() {
         }
     }
 
+    fun proceedToLauncherConfirmation() {
+        if (!isAdmin && isWindows) {
+            showAdminWarning = true
+        } else {
+            confirmEnter = true
+        }
+    }
+
+    fun requestLauncherEntry() {
+        chainAllowancePinVerified = false
+        scope.launch {
+            val state = withContext(Dispatchers.IO) {
+                com.focusflow.services.LauncherChainAllowance.refresh()
+            }
+            when {
+                !state.readable -> {
+                    chainGateUnavailable = true
+                    chainEntryError = strings.launcherChainUnavailable
+                    showChainEntryGate = true
+                }
+                state.enabled -> {
+                    chainGateUnavailable = false
+                    chainEntryError = null
+                    chainEntryPin = ""
+                    showChainEntryGate = true
+                }
+                else -> proceedToLauncherConfirmation()
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            com.focusflow.services.LauncherChainAllowance.refresh()
+        }
         val apps = withContext(Dispatchers.IO) {
             InstalledAppsScanner.getCuratedApps()
                 .map { FocusLauncherApp(it.processName, it.displayName, it.exePath) }
@@ -176,6 +218,39 @@ fun FocusLauncherScreen() {
                         color = OnSurface, fontWeight = FontWeight.Bold)
                     Text(strings.launcherSubtitle,
                         style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                }
+            }
+        }
+
+        if (chainAllowanceState.everEnabled) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Surface2)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        strings.settingsLauncherChainAllowance,
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        when {
+                            !chainAllowanceState.readable -> strings.launcherChainUnavailable
+                            chainAllowanceState.enabled -> strings.launcherChainStatusOn
+                            else -> strings.launcherChainStatusOff
+                        },
+                        color = when {
+                            !chainAllowanceState.readable -> Warning
+                            chainAllowanceState.enabled -> Purple80
+                            else -> OnSurface2
+                        },
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }
@@ -702,16 +777,7 @@ fun FocusLauncherScreen() {
                 it.processName.lowercase() in selectedApps
             }
             Button(
-                onClick = {
-                    // Gate on admin elevation: registry lockdown and fast-user-switching
-                    // block both need admin rights.  Show a warning first so the user
-                    // can relaunch elevated before entering a session they can't escape cleanly.
-                    if (!isAdmin && isWindows) {
-                        showAdminWarning = true
-                    } else {
-                        confirmEnter = true
-                    }
-                },
+                onClick = ::requestLauncherEntry,
                 enabled  = appsForSession.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape    = RoundedCornerShape(14.dp),
@@ -837,7 +903,10 @@ fun FocusLauncherScreen() {
     // and HideFastUserSwitching (HKLM) silently skip — leaving two escape routes open.
     if (showAdminWarning) {
         AlertDialog(
-            onDismissRequest = { showAdminWarning = false },
+            onDismissRequest = {
+                showAdminWarning = false
+                chainAllowancePinVerified = false
+            },
             containerColor   = Surface2,
             shape            = RoundedCornerShape(20.dp),
             icon = {
@@ -914,12 +983,117 @@ fun FocusLauncherScreen() {
         )
     }
 
+    // ── Optional chain allowance entry gate ──────────────────────────────────
+    if (showChainEntryGate) {
+        AlertDialog(
+            onDismissRequest = {
+                showChainEntryGate = false
+                chainEntryPin = ""
+                chainEntryError = null
+                chainGateUnavailable = false
+                chainAllowancePinVerified = false
+            },
+            containerColor = Surface2,
+            shape = RoundedCornerShape(20.dp),
+            title = {
+                Text(strings.settingsPinRequired, color = OnSurface, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(strings.launcherChainPinGateBody, color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall)
+                    if (!chainGateUnavailable) {
+                        OutlinedTextField(
+                            value = chainEntryPin,
+                            onValueChange = { chainEntryPin = it },
+                            label = { Text(strings.settingsPinLabel) },
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                            )
+                        )
+                    }
+                    chainEntryError?.let { message ->
+                        Text(message, color = Warning, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                if (!chainGateUnavailable) {
+                    Button(
+                        enabled = chainEntryPin.isNotBlank() && !chainEntryChecking,
+                        onClick = {
+                            chainEntryChecking = true
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    com.focusflow.services.LauncherChainAllowance.verifyEntryPin(chainEntryPin)
+                                }
+                                chainEntryChecking = false
+                                when (result) {
+                                    com.focusflow.services.LauncherChainAllowance.EntryResult.PIN_ACCEPTED -> {
+                                        chainAllowancePinVerified = true
+                                        showChainEntryGate = false
+                                        chainEntryPin = ""
+                                        chainEntryError = null
+                                        proceedToLauncherConfirmation()
+                                    }
+                                    com.focusflow.services.LauncherChainAllowance.EntryResult.STRICT_ALLOW_LIST -> {
+                                        chainAllowancePinVerified = false
+                                        showChainEntryGate = false
+                                        chainEntryPin = ""
+                                        proceedToLauncherConfirmation()
+                                    }
+                                    com.focusflow.services.LauncherChainAllowance.EntryResult.INCORRECT_PIN -> {
+                                        chainEntryPin = ""
+                                        chainEntryError = strings.settingsIncorrectPin
+                                    }
+                                    com.focusflow.services.LauncherChainAllowance.EntryResult.UNAVAILABLE -> {
+                                        chainGateUnavailable = true
+                                        chainEntryPin = ""
+                                        chainEntryError = strings.launcherChainUnavailable
+                                    }
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Purple80)
+                    ) { Text(strings.pinGateConfirm) }
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            showChainEntryGate = false
+                            chainEntryPin = ""
+                            chainEntryError = null
+                            chainAllowancePinVerified = false
+                            onNavigateToSettings()
+                        }
+                    ) { Text(strings.launcherChainTurnOffSettings, color = Purple80) }
+                    TextButton(
+                        onClick = {
+                            showChainEntryGate = false
+                            chainEntryPin = ""
+                            chainEntryError = null
+                            chainGateUnavailable = false
+                            chainAllowancePinVerified = false
+                        }
+                    ) { Text(strings.btnCancel, color = OnSurface2) }
+                }
+            }
+        )
+    }
+
     // ── Confirm dialog ────────────────────────────────────────────────────────
     if (confirmEnter) {
         val appsForSession = availableApps.filter { it.processName.lowercase() in selectedApps }
 
         AlertDialog(
-            onDismissRequest = { confirmEnter = false },
+            onDismissRequest = {
+                confirmEnter = false
+                chainAllowancePinVerified = false
+            },
             containerColor   = Surface2,
             shape            = RoundedCornerShape(20.dp),
             title = {
@@ -961,7 +1135,10 @@ fun FocusLauncherScreen() {
                 ) { Text(strings.launcherEnterLauncher) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmEnter = false }) {
+                TextButton(onClick = {
+                    confirmEnter = false
+                    chainAllowancePinVerified = false
+                }) {
                     Text(strings.btnCancel, color = OnSurface2)
                 }
             }
@@ -1018,16 +1195,50 @@ fun FocusLauncherScreen() {
                             it.processName.lowercase() in selectedApps
                         }
                         scope.launch(Dispatchers.IO) {
-                            FocusLauncherService.enter(
+                            val entered = FocusLauncherService.enter(
                                 apps = appsForSession,
                                 durationMinutes = durationMinutes,
                                 breaksAllowed = breaksAllowed,
-                                breakSeconds = breakDurationMins * 60
+                                breakSeconds = breakDurationMins * 60,
+                                chainAllowancePinVerified = chainAllowancePinVerified
                             )
+                            withContext(Dispatchers.Main) {
+                                chainAllowancePinVerified = false
+                                if (!entered) showEntryBlockedMessage = true
+                            }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                 ) { Text("I've noted it — Start") }
+            }
+        )
+    }
+
+    if (showEntryBlockedMessage) {
+        AlertDialog(
+            onDismissRequest = { showEntryBlockedMessage = false },
+            containerColor = Surface2,
+            shape = RoundedCornerShape(20.dp),
+            title = { Text(strings.settingsPinRequired, color = OnSurface, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    strings.launcherChainUnavailable,
+                    color = OnSurface2,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showEntryBlockedMessage = false
+                        onNavigateToSettings()
+                    }
+                ) { Text(strings.launcherChainTurnOffSettings, color = Purple80) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEntryBlockedMessage = false }) {
+                    Text(strings.btnCancel, color = OnSurface2)
+                }
             }
         )
     }

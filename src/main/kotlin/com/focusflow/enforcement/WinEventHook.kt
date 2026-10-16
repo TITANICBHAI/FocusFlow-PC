@@ -149,18 +149,12 @@ object WinEventHook : com.focusflow.services.allowance.ForegroundEventSource {
                             ?.lowercase()
 
                         // ── Focus reclamation ────────────────────────────────
-                        // If kiosk mode is active and a process that is NOT in
-                        // the allowed set and NOT a known-safe system process has
-                        // just stolen foreground, immediately force our window
-                        // back to the front.  The keyboard hook prevents the user
-                        // from reaching this state via keyboard; this covers the
-                        // rare case of a process doing SetForegroundWindow itself.
+                        // Use the shared cached kiosk policy so opted-in launcher
+                        // descendants are not reclaimed just because their process
+                        // name differs from the selected app.
                         val allowed = ProcessMonitor.launcherAllowedProcesses
                         if (allowed.isNotEmpty() && pid != ownPid && exeName != null) {
-                            val isAllowed = exeName in allowed
-                            val isSafe    = exeName in ProcessMonitor.launcherSafeProcesses
-
-                            if (!isAllowed && !isSafe) {
+                            if (!ProcessMonitor.isLauncherProcessAllowed(exeName, pid)) {
                                 focusFlowHwnd?.let { ours ->
                                     try { WinHookUser32.INSTANCE.SetForegroundWindow(ours) }
                                     catch (_: Exception) {}
