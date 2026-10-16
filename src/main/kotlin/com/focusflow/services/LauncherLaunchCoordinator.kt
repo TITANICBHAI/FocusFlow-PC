@@ -226,7 +226,7 @@ class LauncherLaunchCoordinator(
                 trace.snapshotMs = elapsedSince(snapshotStartedAt)
             }
             trace.trackedPids = pids.toSet()
-            observe(trace, pids, windows, "snapshot", forceLog = true)
+            observe(trace, pids, windows, "snapshot")
             logAttempt(
                 trace,
                 "phase=snapshot durationMs=${trace.snapshotMs} " +
@@ -394,6 +394,7 @@ class LauncherLaunchCoordinator(
                     runCatching { onRaised(app) }
                         .onFailure { logAttemptWarning(trace, "post-raise callback failed", it) }
                     if (setIdle(key, requestGeneration)) {
+                        trace.raiseMs = elapsedSince(trace.raiseStartedAtMs ?: platform.nowMs())
                         completeAttempt(trace, null)
                     }
                     return
@@ -554,6 +555,12 @@ class LauncherLaunchCoordinator(
 
     private fun formatPids(pids: Collection<Long>): String =
         pids.sorted().joinToString(prefix = "[", postfix = "]")
+
+    private fun spawnResultName(result: SpawnResult): String =
+        when (result) {
+            is SpawnResult.Started -> "started"
+            is SpawnResult.Failed -> "failed"
+        }
 
     private fun formatWindows(windows: Collection<WindowRef>): String =
         windows.sortedWith(compareBy(WindowRef::pid, WindowRef::handle))
