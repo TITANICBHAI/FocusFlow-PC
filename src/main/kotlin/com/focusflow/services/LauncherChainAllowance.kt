@@ -78,7 +78,11 @@ object LauncherChainAllowance {
             }
             is Database.SettingWrite.Failed -> {
                 mutableState.value = current.copy(enabled = false, readable = false)
-                EnforcementLog.warn("Launcher chain allowance could not be saved: ${write.error}")
+                EnforcementLog.warn(
+                    "LauncherChainAllowance",
+                    "Could not save launcher chain allowance",
+                    write.cause
+                )
                 EnableResult.STORAGE_UNAVAILABLE
             }
         }
@@ -96,7 +100,11 @@ object LauncherChainAllowance {
             }
             is Database.SettingWrite.Failed -> {
                 mutableState.value = State(enabled = false, everEnabled = everEnabled, readable = false)
-                EnforcementLog.warn("Launcher chain allowance could not be disabled in storage: ${write.error}")
+                EnforcementLog.warn(
+                    "LauncherChainAllowance",
+                    "Could not disable launcher chain allowance in storage",
+                    write.cause
+                )
                 false
             }
         }
@@ -168,7 +176,11 @@ object LauncherChainAllowance {
             val write = Database.writeSetting(ENABLED_KEY, "false")
             val readable = write == Database.SettingWrite.Ok
             if (!readable && write is Database.SettingWrite.Failed) {
-                EnforcementLog.warn("Inconsistent launcher chain allowance could not be disabled: ${write.error}")
+                EnforcementLog.warn(
+                    "LauncherChainAllowance",
+                    "Could not disable inconsistent launcher chain allowance",
+                    write.cause
+                )
             }
             return State(enabled = false, everEnabled = false, readable = readable)
                 .also { mutableState.value = it }
@@ -181,7 +193,11 @@ object LauncherChainAllowance {
                 val write = Database.writeSetting(ENABLED_KEY, "false")
                 val readable = write == Database.SettingWrite.Ok
                 if (!readable && write is Database.SettingWrite.Failed) {
-                    EnforcementLog.warn("Removed Global PIN could not disable launcher chain allowance: ${write.error}")
+                    EnforcementLog.warn(
+                        "LauncherChainAllowance",
+                        "Could not disable launcher chain allowance after Global PIN removal",
+                        write.cause
+                    )
                 }
                 State(enabled = false, everEnabled = true, readable = readable)
                     .also { mutableState.value = it }

@@ -126,13 +126,15 @@ object ProcessMonitor {
      * Called for every foreground change so the launcher can lower itself for
      * allowed apps and reclaim topmost ordering for other processes.
      */
-    @Volatile var onLauncherForegroundChanged: ((processName: String, pid: Long) -> Unit)? = null
+    @Volatile var onLauncherForegroundChanged: ((processName: String) -> Unit)? = null
+    @Volatile var onLauncherProcessForegroundChanged: ((processName: String, pid: Long) -> Unit)? = null
 
     fun setLauncherAllowedApps(apps: List<com.focusflow.services.FocusLauncherApp>) {
         launcherAllowedProcesses = apps.map { it.processName.lowercase() }.toSet()
-        launcherAllowedAppPaths = apps
-            .filter { it.exePath.isNotBlank() }
-            .associate { it.processName.lowercase() to it.exePath }
+        launcherAllowedAppPaths = apps.mapNotNull { app ->
+            app.exePath?.takeIf { it.isNotBlank() }
+                ?.let { app.processName.lowercase() to it }
+        }.toMap()
     }
 
     fun clearLauncherAllowedApps() {
@@ -393,7 +395,8 @@ object ProcessMonitor {
         // The launcher needs every foreground transition, including allowed
         // processes. Do this before the enforcement cooldown gate.
         if (launcherAllowedProcesses.isNotEmpty()) {
-            onLauncherForegroundChanged?.invoke(processName, pid)
+            onLauncherForegroundChanged?.invoke(processName)
+            onLauncherProcessForegroundChanged?.invoke(processName, pid)
         }
 
         val now   = System.currentTimeMillis()

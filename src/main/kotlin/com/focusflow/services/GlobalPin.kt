@@ -78,8 +78,10 @@ object GlobalPin {
     fun clearResult(rawPin: String): PinVerificationResult =
         when (val result = verifyResult(rawPin)) {
             PinVerificationResult.ACCEPTED -> {
-                Database.writeSetting(KEY, "").requireSuccess("clear Global PIN")
-                LauncherChainAllowance.onGlobalPinRemoved()
+                synchronized(LauncherChainAllowance) {
+                    Database.writeSetting(KEY, "").requireSuccess("clear Global PIN")
+                    LauncherChainAllowance.onGlobalPinRemoved()
+                }
                 PinVerificationResult.ACCEPTED
             }
             else -> result
@@ -94,9 +96,11 @@ object GlobalPin {
      * Also resets the "declined" flag so the setup dialog will be offered again.
      */
     fun resetWithoutPin() {
-        val pinWrite = Database.writeSetting(KEY, "")
-        pinWrite.requireSuccess("reset Global PIN")
-        LauncherChainAllowance.onGlobalPinRemoved()
+        synchronized(LauncherChainAllowance) {
+            val pinWrite = Database.writeSetting(KEY, "")
+            pinWrite.requireSuccess("reset Global PIN")
+            LauncherChainAllowance.onGlobalPinRemoved()
+        }
         val declinedWrite = Database.writeSetting(DECLINED_KEY, "false")
         declinedWrite.requireSuccess("reset Global PIN setup choice")
     }

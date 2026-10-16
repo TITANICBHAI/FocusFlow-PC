@@ -358,7 +358,7 @@ object NuclearMode {
         // before falling back to the existing name-wide kill. This avoids
         // killing a FocusFlow-owned helper on an incomplete first snapshot.
         val unresolvedNames = found - matchedNames
-        unresolvedLauncherEscapeNames.keys.removeIf { it !in unresolvedNames }
+        unresolvedLauncherEscapeNames.removeIf { it !in unresolvedNames }
         val namesReadyToKill = unresolvedNames.filter { name ->
             !unresolvedLauncherEscapeNames.add(name)
         }.toSet()

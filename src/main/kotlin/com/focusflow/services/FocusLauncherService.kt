@@ -134,6 +134,10 @@ object FocusLauncherService {
      * Allowed apps are usable below the launcher; all other foreground apps
      * bring the launcher back to the top.
      */
+    fun onForegroundChanged(processName: String) {
+        onForegroundChanged(processName, 0L)
+    }
+
     fun onForegroundChanged(processName: String, pid: Long) {
         if (!_isActive.value || _breakActive.value) return
         _overlayVisible.value = !ProcessMonitor.isLauncherProcessAllowed(processName, pid)
@@ -193,7 +197,8 @@ object FocusLauncherService {
         persistSession()
 
         ProcessMonitor.setLauncherAllowedApps(apps)
-        ProcessMonitor.onLauncherForegroundChanged = ::onForegroundChanged
+        ProcessMonitor.onLauncherForegroundChanged = { name -> onForegroundChanged(name) }
+        ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
 
         // silent = true: NuclearMode is an implementation detail of kiosk mode;
         // the user should not see "Nuclear Mode ON" when entering Focus Launcher.
@@ -245,6 +250,7 @@ object FocusLauncherService {
 
         stopTaskbarGuard()
         ProcessMonitor.onLauncherForegroundChanged = null
+        ProcessMonitor.onLauncherProcessForegroundChanged = null
 
         breakJob?.cancel()
         sessionTimerJob?.cancel()
@@ -526,7 +532,8 @@ object FocusLauncherService {
         _breakActive.value = true
         _breakRemainingSeconds.value = remaining
         _overlayVisible.value = false
-        ProcessMonitor.onLauncherForegroundChanged = ::onForegroundChanged
+        ProcessMonitor.onLauncherForegroundChanged = { name -> onForegroundChanged(name) }
+        ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
         ProcessMonitor.clearLauncherAllowedApps()
         if (NuclearMode.isActive) NuclearMode.disable(silent = true)
         GlobalKeyboardHook.disable()
@@ -546,7 +553,8 @@ object FocusLauncherService {
 
     private fun reenableLauncherRestrictions() {
         ProcessMonitor.setLauncherAllowedApps(_sessionApps.value)
-        ProcessMonitor.onLauncherForegroundChanged = ::onForegroundChanged
+        ProcessMonitor.onLauncherForegroundChanged = { name -> onForegroundChanged(name) }
+        ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
         NuclearMode.enable(silent = true)
         GlobalKeyboardHook.enable()
         RegistryLockdown.enable()
