@@ -94,6 +94,26 @@ class ProcessLineageTrackerTest {
     }
 
     @Test
+    fun spawnedPidReuseBeforeFirstSnapshotIsRejectedByCreationTime() {
+        val tracker = ProcessLineageTracker(app, chainStartedAtMs = 100L)
+        tracker.addSpawnPid(50L, creationTimeMs = 150L)
+
+        assertEquals(
+            emptySet(),
+            tracker.update(
+                listOf(
+                    ProcessSnapshotEntry(
+                        pid = 50L,
+                        creationTimeMs = 200L,
+                        processName = "unrelated.exe",
+                        executablePath = "C:\\Other\\unrelated.exe"
+                    )
+                )
+            )
+        )
+    }
+
+    @Test
     fun recognizesSquirrelHandoffUnderTheInstallRoot() {
         val discord = FocusLauncherApp(
             processName = "Discord.exe",

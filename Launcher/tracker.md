@@ -140,6 +140,18 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle :compileKotlin --no-daemon --console=plain` failed at `:compileKotlin` with `ProcessSnapshot.kt:54:17 Variable 'SNAPSHOT_TTL_MS' must be initialized`. Moved the constant above the cache initializer; rerun pending.
 - **Verification attempt 2:** The same command completed with `BUILD SUCCESSFUL` in 2m 7s. Existing CsvExport and Compose icon deprecation warnings remain; acceptance tests are still pending.
 
+### 2026-10-17 — P0.2/P0.3/P0.4 — Resumed verification and completion
+
+- **Scope:** Finish and verify only P0.2, P0.3, and P0.4. P0.5 and all P1 work remain out of scope.
+- **Working tree:** `main` at `a44531a`; source tree is clean apart from the user's two newly attached text files. Preserve both attachments.
+- **Current code review:** The prior batch's implementation is present in the coordinator, platform, process snapshot, window enumeration, and tests. Re-check stale-worker boundaries and PID identity tracking before marking any acceptance complete.
+- **Plan boundary:** P0.4's T8 foreground-by-process portion remains deferred to P1.1; do not change `WindowRaiser.raise` or otherwise widen the allowlist.
+- **Implementation update:** The spawned PID now carries its captured creation time into lineage tracking; asynchronous snapshot/window/spawn/raise returns re-check the active attempt token before continuing. Spawn debounce uses monotonic time so wall-clock changes cannot extend it. Added regression coverage for PID reuse before the first snapshot, a stale worker returning from a blocked snapshot, cancellation during window wait, backward wall-clock movement, and T5's ten-minute delay. Changed `LauncherLaunchCoordinator.kt`, `JvmLauncherLaunchPlatform.kt`, `ProcessSnapshot.kt`, `LauncherLaunchCoordinatorTest.kt`, and `ProcessLineageTrackerTest.kt`. Verification pending.
+- **Verification attempt 1:** Targeted Gradle tests (`LauncherLaunchCoordinatorTest`, `ProcessLineageTrackerTest`, `ProcessCommandCacheTest`) exceeded the 300-second shell timeout after `:compileKotlin` and `:processTestResources`; no test task result or XML report was produced. No Gradle/Kotlin worker remained afterward. Treat as incomplete, not a test failure; retry pending.
+- **Verification attempt 2:** The background targeted test run failed in `compileTestKotlin` with `LauncherLaunchCoordinatorTest.kt:716:9 'monotonicNowMs' overrides nothing`. The interface method was added while this run was already compiling, so source and test compilation observed different revisions. No tests ran; rerun after edits settle.
+- **Verification attempt 3:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --tests com.focusflow.services.LauncherLaunchCoordinatorTest --tests com.focusflow.services.ProcessLineageTrackerTest --tests com.focusflow.services.ProcessCommandCacheTest` completed with `BUILD SUCCESSFUL` in 1m 45s. Inspected XML: 32 tests across the three targeted suites, 0 failures, 0 errors, 0 skipped. Full `:test` remains pending.
+- **Verification:** Pending this resumed batch.
+
 ## P1 — Correctness and robustness
 
 **Status:** Not started. Respect the dependencies stated in the plan.

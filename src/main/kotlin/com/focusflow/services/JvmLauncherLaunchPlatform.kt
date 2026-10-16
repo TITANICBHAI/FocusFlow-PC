@@ -57,7 +57,10 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
 
             val process = processBuilder.start()
-            SpawnResult.Started(process.pid())
+            val creationTimeMs = runCatching {
+                process.toHandle().info().startInstant().orElse(null)?.toEpochMilli()
+            }.getOrNull()
+            SpawnResult.Started(process.pid(), creationTimeMs)
         } catch (failure: Exception) {
             val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
             val detail = failure.message

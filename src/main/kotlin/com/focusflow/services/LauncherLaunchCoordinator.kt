@@ -63,7 +63,7 @@ internal fun orderLauncherWindows(windows: List<WindowRef>): List<WindowRef> =
         )
 
 sealed interface SpawnResult {
-    data class Started(val pid: Long) : SpawnResult
+    data class Started(val pid: Long, val creationTimeMs: Long? = null) : SpawnResult
     data class Failed(val message: String, val canRetry: Boolean = true) : SpawnResult
 }
 
@@ -80,6 +80,7 @@ data class RaiseResult(
  */
 interface LaunchPlatform {
     fun nowMs(): Long
+    fun monotonicNowMs(): Long = System.nanoTime() / 1_000_000L
     fun findInstances(app: FocusLauncherApp): List<RunningInstance>
     fun findWindows(pids: Set<Long>): List<WindowRef>
     fun unsupportedReason(app: FocusLauncherApp): String? = null
@@ -205,7 +206,7 @@ class LauncherLaunchCoordinator(
     private val watchdogJobs = mutableMapOf<String, Job>()
     private val failureResetJobs = mutableMapOf<String, Job>()
     private val failedAttemptIds = mutableMapOf<String, String>()
-    private val lastSpawnAtMs = mutableMapOf<String, Long>()
+    private val lastSpawnAtMonotonicMs = mutableMapOf<String, Long>()
     private val timedOutChains = mutableMapOf<String, Set<ProcessIdentity>>()
 
     /**
@@ -231,8 +232,10 @@ class LauncherLaunchCoordinator(
 
             failureResetJobs.remove(key)?.cancel()
             failedAttemptIds.remove(key)
-            val now = platform.nowMs()
-            lastSpawnAtMs.entries.removeIf { now - it.value >= SPAWN_DEBOUNCE_MS }
+            val now = platform.monotonicNowMs()
+            lastSpawnAtMonotonicMs.entries.removeIf {
+                now >= it.value && now - it.value >= SPAWN_DEBOUNCE_MS
+            }
             val launchStartedAt = platform.nowMs()
             val trace = AttemptTrace(
                 id = "launcher-${attemptSequence.incrementAndGet()}",
@@ -285,7 +288,7 @@ class LauncherLaunchCoordinator(
             failureResetJobs.values.forEach(Job::cancel)
             failureResetJobs.clear()
             failedAttemptIds.clear()
-            lastSpawnAtMs.clear()
+            lastSpawnAtMonotonicMs.clear()
             timedOutChains.clear()
             _states.value = emptyMap()
         }
@@ -306,7 +309,7 @@ class LauncherLaunchCoordinator(
             failureResetJobs.remove(key)?.cancel()
             failedAttemptIds.remove(key)
             timedOutChains.remove(key)
-            lastSpawnAtMs.remove(key)
+            lastSpawnAtMonotonicMs.remove(key)
             _states.update { it - key }
         }
         worker?.cancel()
@@ -343,10 +346,12 @@ class LauncherLaunchCoordinator(
             val snapshotStartedAt = platform.nowMs()
             val (snapshot, pids, windows) = try {
                 val foundSnapshot = platform.processSnapshotAsync(app)
+                if (!isCurrent(app, key, trace)) return
                 val foundPids = tracker.update(foundSnapshot)
                 val foundWindows = orderLauncherWindows(
                     platform.findWindowsAsync(foundPids, trace.id)
                 )
+                if (!isCurrent(app, key, trace)) return
                 Triple(foundSnapshot, foundPids, foundWindows)
             } finally {
                 trace.snapshotMs = elapsedSince(snapshotStartedAt)
@@ -390,9 +395,12 @@ class LauncherLaunchCoordinator(
                 return
             }
 
-            val now = platform.nowMs()
-            val lastSpawnAt = synchronized(lock) { lastSpawnAtMs[key] }
-            if (lastSpawnAt != null && now - lastSpawnAt < SPAWN_DEBOUNCE_MS) {
+            val now = platform.monotonicNowMs()
+            val lastSpawnAt = synchronized(lock) { lastSpawnAtMonotonicMs[key] }
+            if (lastSpawnAt != null &&
+                now >= lastSpawnAt &&
+                now - lastSpawnAt < SPAWN_DEBOUNCE_MS
+            ) {
                 fail(
                     key,
                     trace,
@@ -405,6 +413,7 @@ class LauncherLaunchCoordinator(
 
             val spawnStartedAt = platform.nowMs()
             val result = platform.spawnAsync(app, trace.id)
+            if (!isCurrent(app, key, trace)) return
             trace.spawnMs = elapsedSince(spawnStartedAt)
             logAttempt(trace, "phase=spawn durationMs=${trace.spawnMs} result=${spawnResultName(result)}")
             when (result) {
@@ -419,11 +428,12 @@ class LauncherLaunchCoordinator(
                 }
                 is SpawnResult.Started -> {
                     trace.spawnPid = result.pid
+                    trace.spawnCreationTimeMs = result.creationTimeMs
                     synchronized(lock) {
                         if (activeAttempts[key] !== trace) return
-                        lastSpawnAtMs[key] = platform.nowMs()
+                        lastSpawnAtMonotonicMs[key] = platform.monotonicNowMs()
                     }
-                    tracker.addSpawnPid(result.pid)
+                    tracker.addSpawnPid(result.pid, result.creationTimeMs)
                     updateTraceProcesses(trace, tracker)
                     logAttempt(trace, "event=spawned pid=${result.pid}")
                     handleWindowWait(
@@ -512,6 +522,7 @@ class LauncherLaunchCoordinator(
             val now = platform.nowMs()
             if (now - lastProcessRefreshAt >= PROCESS_REFRESH_MS) {
                 val snapshot = platform.processSnapshotAsync(app)
+                if (!isCurrent(app, key, trace)) return AwaitWindowResult.Superseded
                 tracker.update(snapshot)
                 updateTraceProcesses(trace, tracker)
                 lastProcessRefreshAt = now
@@ -519,6 +530,7 @@ class LauncherLaunchCoordinator(
 
             val pids = tracker.livePids()
             val windows = orderLauncherWindows(platform.findWindowsAsync(pids, trace.id))
+            if (!isCurrent(app, key, trace)) return AwaitWindowResult.Superseded
             observe(trace, pids, windows, "awaitWindow")
             val best = windows.firstOrNull()
             if (best == null) {
@@ -576,6 +588,7 @@ class LauncherLaunchCoordinator(
             repeat(MAX_RAISE_ATTEMPTS) { index ->
                 if (!isCurrent(app, key, trace)) return
                 val result = platform.raise(window, trace.id)
+                if (!isCurrent(app, key, trace)) return
                 if (result.tierResults.isNotEmpty()) {
                     trace.tierResults += result.tierResults
                 } else {
@@ -592,9 +605,11 @@ class LauncherLaunchCoordinator(
                 }
                 if (index < MAX_RAISE_ATTEMPTS - 1) {
                     delay(RAISE_RETRY_DELAY_MS)
+                    if (!isCurrent(app, key, trace)) return
                     val refreshed = orderLauncherWindows(
                         platform.findWindowsAsync(setOf(window.pid), trace.id)
                     )
+                    if (!isCurrent(app, key, trace)) return
                     observe(trace, setOf(window.pid), refreshed, "raise-refresh")
                     refreshed.firstOrNull()?.let { window = it }
                 }
@@ -720,7 +735,8 @@ class LauncherLaunchCoordinator(
     ) {
         trace.trackedPids = tracker.livePids()
         trace.trackedIdentities = tracker.identities()
-        trace.spawnCreationTimeMs = trace.spawnPid?.let { tracker.process(it)?.creationTimeMs }
+        trace.spawnCreationTimeMs = trace.spawnCreationTimeMs
+            ?: trace.spawnPid?.let { tracker.process(it)?.creationTimeMs }
     }
 
     private fun liveTimedOutIdentities(

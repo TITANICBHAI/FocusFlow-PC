@@ -173,8 +173,13 @@ internal class ProcessLineageTracker(
     private val expectedPath = normalizePath(app.exePath)
     private val installRoot = installRoot(app.exePath)
 
-    fun addSpawnPid(pid: Long) {
-        if (pid > 0L) tracked.putIfAbsent(pid, ProcessSnapshotEntry(pid = pid))
+    fun addSpawnPid(pid: Long, creationTimeMs: Long? = null) {
+        if (pid > 0L) {
+            tracked.putIfAbsent(
+                pid,
+                ProcessSnapshotEntry(pid = pid, creationTimeMs = creationTimeMs)
+            )
+        }
     }
 
     fun update(snapshot: List<ProcessSnapshotEntry>): Set<Long> {

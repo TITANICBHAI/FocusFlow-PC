@@ -204,6 +204,27 @@ class LauncherLaunchCoordinatorTest {
     }
 
     @Test
+    fun backwardWallClockDoesNotExtendSpawnDebounce() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnedProcessAlive = false
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(4_000L)
+        runCurrent()
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+
+        platform.clockOffsetMs = -10_000L
+        assertTrue(coordinator.request(app))
+        runCurrent()
+
+        assertEquals(2, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
     fun existingWindowIsRaisedWithoutSpawning() = runTest {
         val platform = FakeLaunchPlatform(this).apply {
             instances += RunningInstance(42L, nowMs(), app.processName)
@@ -306,11 +327,99 @@ class LauncherLaunchCoordinatorTest {
         assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
         assertEquals(1, platform.spawnCount)
 
+        advanceTimeBy(10 * 60_000L)
+        runCurrent()
         assertTrue(coordinator.request(app))
         runCurrent()
 
         assertEquals(2, platform.spawnCount)
         assertIs<LaunchState.Launching>(coordinator.states.value[app.processName])
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun watchdogInvalidatesWorkerReturningFromSnapshotBeforeItCanSpawn() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val platform = FakeLaunchPlatform(this).apply {
+            snapshotGate = gate
+            snapshotGateIsNonCancellable = true
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(
+            LauncherLaunchCoordinator.WINDOW_WAIT_MS +
+                LauncherLaunchCoordinator.WATCHDOG_MARGIN_MS
+        )
+        runCurrent()
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+
+        platform.snapshotGate = null
+        platform.windowAppearsAtMs = platform.nowMs()
+        assertTrue(coordinator.request(app))
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS)
+        runCurrent()
+        assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        assertEquals(1, platform.spawnCount)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        assertEquals(1, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun cancelDuringAwaitLeavesNoStateOrLateRaise() = runTest {
+        val logs = mutableListOf<String>()
+        val platform = FakeLaunchPlatform(this)
+        val coordinator = coordinator(platform, backgroundScope, logs)
+
+        coordinator.request(app)
+        runCurrent()
+        assertEquals(1, platform.spawnCount)
+
+        coordinator.cancel(app)
+        runCurrent()
+        advanceTimeBy(5_000L)
+        runCurrent()
+
+        assertTrue(coordinator.states.value.isEmpty())
+        assertTrue(platform.raisedWindows.isEmpty())
+        assertEquals(1, logs.count { " summary=true " in " $it " })
+        assertTrue(logs.single { " summary=true " in " $it " }
+            .contains("result=Failed(code=Cancelled)"))
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun cancelDuringSpawnCannotPublishLateState() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val logs = mutableListOf<String>()
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnGate = gate
+            spawnGateIsNonCancellable = true
+        }
+        val coordinator = coordinator(platform, backgroundScope, logs)
+
+        coordinator.request(app)
+        runCurrent()
+        assertEquals(0, platform.spawnCount)
+
+        coordinator.cancel(app)
+        runCurrent()
+        assertTrue(coordinator.states.value.isEmpty())
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(1, platform.spawnCount)
+        assertTrue(coordinator.states.value.isEmpty())
+        assertEquals(1, logs.count { " summary=true " in " $it " })
+        assertTrue(logs.single { " summary=true " in " $it " }
+            .contains("result=Failed(code=Cancelled)"))
         coordinator.cancelAll()
     }
 
@@ -621,6 +730,9 @@ class LauncherLaunchCoordinatorTest {
         var windowSchedule: ((Long, Set<Long>) -> List<WindowRef>)? = null
         var snapshotGate: CompletableDeferred<Unit>? = null
         var snapshotGateIsNonCancellable = false
+        var spawnGate: CompletableDeferred<Unit>? = null
+        var spawnGateIsNonCancellable = false
+        var clockOffsetMs = 0L
         var unsupportedLaunchReason: String? = null
         var raiseGate: CompletableDeferred<Unit>? = null
         var raiseGateIsNonCancellable = false
@@ -628,7 +740,9 @@ class LauncherLaunchCoordinatorTest {
         var findInstancesFailure: Exception? = null
         var windowPollsForSpawnedPid = 0
 
-        override fun nowMs(): Long = testScope.testScheduler.currentTime
+        override fun nowMs(): Long = testScope.testScheduler.currentTime + clockOffsetMs
+
+        override fun monotonicNowMs(): Long = testScope.testScheduler.currentTime
 
         override fun findInstances(app: FocusLauncherApp): List<RunningInstance> {
             findInstancesFailure?.let { throw it }
@@ -698,8 +812,19 @@ class LauncherLaunchCoordinatorTest {
             return result
         }
 
-        override suspend fun spawnAsync(app: FocusLauncherApp, attemptId: String): SpawnResult =
-            spawn(app)
+        override suspend fun spawnAsync(app: FocusLauncherApp, attemptId: String): SpawnResult {
+            val gate = spawnGate
+            if (gate != null) {
+                if (spawnGateIsNonCancellable) {
+                    return withContext(NonCancellable) {
+                        gate.await()
+                        spawn(app)
+                    }
+                }
+                gate.await()
+            }
+            return spawn(app)
+        }
 
         override suspend fun raise(window: WindowRef): RaiseResult {
             val gate = raiseGate
