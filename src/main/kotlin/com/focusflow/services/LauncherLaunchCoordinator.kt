@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.enforcement.EnforcementLog
+import com.focusflow.enforcement.ProcessMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
@@ -22,7 +25,33 @@ import kotlin.coroutines.coroutineContext
 sealed interface LaunchState {
     data object Idle : LaunchState
     data class Launching(val startedAtMs: Long) : LaunchState
-    data class Failed(val reason: String, val canRetry: Boolean) : LaunchState
+    data class Failed(
+        val code: LaunchFailureCode,
+        val reason: String,
+        val canRetry: Boolean
+    ) : LaunchState
+}
+
+enum class LaunchFailureCode {
+    NotAllowed,
+    BlockedByRule,
+    NotFound,
+    NeedsElevation,
+    AccessDenied,
+    StoreAppUnsupported,
+    UnsupportedCandidate,
+    SpawnFailed,
+    ExitedEarly,
+    NoWindow,
+    RaiseFailed,
+    Cancelled,
+    Internal
+}
+
+enum class ExecutablePreflightResult {
+    Supported,
+    NotFound,
+    UnsupportedCandidate
 }
 
 data class RunningInstance(
@@ -70,7 +99,9 @@ sealed interface SpawnResult {
 data class RaiseResult(
     val success: Boolean,
     val tier: String,
-    val tierResults: List<String> = emptyList()
+    val tierResults: List<String> = emptyList(),
+    val foregroundPid: Long? = null,
+    val foregroundRootOwnerHandle: Long? = null
 )
 
 /**
@@ -84,6 +115,34 @@ interface LaunchPlatform {
     fun findInstances(app: FocusLauncherApp): List<RunningInstance>
     fun findWindows(pids: Set<Long>): List<WindowRef>
     fun unsupportedReason(app: FocusLauncherApp): String? = null
+    fun validateExecutable(app: FocusLauncherApp): ExecutablePreflightResult {
+        val path = app.exePath?.trim()?.takeIf(String::isNotEmpty)
+            ?: return ExecutablePreflightResult.NotFound
+        val basename = path.replace('\\', '/').substringAfterLast('/')
+        val basenameWithoutExtension = basename.substringBeforeLast('.', basename)
+        val suspiciousCandidate = Regex(
+            "(?i)(^|[._ -])(uninstall(?:er)?|unins\\w*|updater?|installer|setup)([._ -]|$)"
+        ).containsMatchIn(basenameWithoutExtension)
+        if (suspiciousCandidate) return ExecutablePreflightResult.UnsupportedCandidate
+
+        val isWindowsHost = System.getProperty("os.name")
+            ?.startsWith("Windows", ignoreCase = true) == true
+        if (isWindowsHost) {
+            val extension = basename.substringAfterLast('.', "").lowercase(Locale.ROOT)
+            if (extension !in setOf("exe", "com")) {
+                return ExecutablePreflightResult.UnsupportedCandidate
+            }
+            val executable = File(path)
+            if (!executable.isFile || !executable.canRead()) {
+                return ExecutablePreflightResult.NotFound
+            }
+        }
+        return ExecutablePreflightResult.Supported
+    }
+
+    suspend fun validateExecutableAsync(app: FocusLauncherApp): ExecutablePreflightResult =
+        withContext(Dispatchers.IO) { validateExecutable(app) }
+
     fun processSnapshot(app: FocusLauncherApp): List<ProcessSnapshotEntry> =
         findInstances(app).map { instance ->
             ProcessSnapshotEntry(
@@ -122,7 +181,10 @@ class LauncherLaunchCoordinator(
     private val scope: CoroutineScope,
     private val isAllowed: (FocusLauncherApp) -> Boolean = { true },
     private val onRaised: (FocusLauncherApp) -> Unit = {},
-    private val logInfo: (String) -> Unit = { EnforcementLog.info("Launcher", it) }
+    private val logInfo: (String) -> Unit = { EnforcementLog.info("Launcher", it) },
+    private val ruleBlockReason: (FocusLauncherApp) -> String? = {
+        ProcessMonitor.launcherBlockReason(it.processName)
+    }
 ) {
     companion object {
         private val attemptSequence = java.util.concurrent.atomic.AtomicLong()
@@ -137,8 +199,10 @@ class LauncherLaunchCoordinator(
         const val WINDOW_POLL_MS = 150L
         const val PROCESS_REFRESH_MS = 500L
         const val FAILURE_DISPLAY_MS = 6_000L
-        const val RAISE_RETRY_DELAY_MS = 150L
+        const val PREFLIGHT_CHECK_TIMEOUT_MS = 500L
+        const val RAISE_RETRY_DELAY_MS = 100L
         const val MAX_RAISE_ATTEMPTS = 3
+        const val RAISE_PHASE_BUDGET_MS = 2_500L
 
         private const val ATTEMPT_WATCHDOG_MS = WINDOW_WAIT_MS + WATCHDOG_MARGIN_MS
 
@@ -156,6 +220,12 @@ class LauncherLaunchCoordinator(
     }
 
     private enum class AttemptFailureCode {
+        NotAllowed,
+        BlockedByRule,
+        NotFound,
+        NeedsElevation,
+        AccessDenied,
+        UnsupportedCandidate,
         SpawnFailed,
         SpawnDebounced,
         StoreAppUnsupported,
@@ -216,11 +286,6 @@ class LauncherLaunchCoordinator(
     fun request(app: FocusLauncherApp): Boolean {
         val key = app.processName.lowercase(Locale.ROOT)
         synchronized(lock) {
-            if (!isAllowed(app)) {
-                logInfo("Ignored launch for non-session app=${app.processName}")
-                return false
-            }
-
             val current = _states.value[key]
             if (current is LaunchState.Launching) {
                 logInfo("Ignored duplicate click app=${app.processName}")
@@ -331,6 +396,27 @@ class LauncherLaunchCoordinator(
             trace.focusFlowElevated = runCatching { platform.focusFlowElevated() }.getOrNull()
             if (!isCurrent(app, key, trace)) return
 
+            if (!isAllowed(app)) {
+                fail(
+                    key,
+                    trace,
+                    "This app is no longer available in the current Focus Launcher session.",
+                    AttemptFailureCode.NotAllowed,
+                    canRetry = false
+                )
+                return
+            }
+            ruleBlockReason(app)?.let { reason ->
+                fail(
+                    key,
+                    trace,
+                    "Blocked by FocusFlow: $reason.",
+                    AttemptFailureCode.BlockedByRule,
+                    canRetry = true
+                )
+                return
+            }
+
             platform.unsupportedReason(app)?.let { reason ->
                 fail(
                     key,
@@ -411,6 +497,65 @@ class LauncherLaunchCoordinator(
                 return
             }
 
+            val executableCheck = withTimeoutOrNull(PREFLIGHT_CHECK_TIMEOUT_MS) {
+                platform.validateExecutableAsync(app)
+            }
+            if (!isCurrent(app, key, trace)) return
+            when (executableCheck) {
+                null -> {
+                    fail(
+                        key,
+                        trace,
+                        "FocusFlow couldn't verify this app path quickly enough. No launch was started.",
+                        AttemptFailureCode.Internal,
+                        canRetry = true
+                    )
+                    return
+                }
+                ExecutablePreflightResult.NotFound -> {
+                    fail(
+                        key,
+                        trace,
+                        "The app executable path is missing or unreadable.",
+                        AttemptFailureCode.NotFound,
+                        canRetry = false
+                    )
+                    return
+                }
+                ExecutablePreflightResult.UnsupportedCandidate -> {
+                    fail(
+                        key,
+                        trace,
+                        "This app candidate is not supported by Focus Launcher.",
+                        AttemptFailureCode.UnsupportedCandidate,
+                        canRetry = false
+                    )
+                    return
+                }
+                ExecutablePreflightResult.Supported -> Unit
+            }
+
+            if (!isAllowed(app)) {
+                fail(
+                    key,
+                    trace,
+                    "This app is no longer available in the current Focus Launcher session.",
+                    AttemptFailureCode.NotAllowed,
+                    canRetry = false
+                )
+                return
+            }
+            ruleBlockReason(app)?.let { reason ->
+                fail(
+                    key,
+                    trace,
+                    "Blocked by FocusFlow: $reason.",
+                    AttemptFailureCode.BlockedByRule,
+                    canRetry = true
+                )
+                return
+            }
+
             val spawnStartedAt = platform.nowMs()
             val result = platform.spawnAsync(app, trace.id)
             if (!isCurrent(app, key, trace)) return
@@ -418,11 +563,21 @@ class LauncherLaunchCoordinator(
             logAttempt(trace, "phase=spawn durationMs=${trace.spawnMs} result=${spawnResultName(result)}")
             when (result) {
                 is SpawnResult.Failed -> {
+                    val spawnFailure = classifySpawnFailure(result.message)
+                    logAttempt(
+                        trace,
+                        "phase=spawn result=failed rawOsError=${sanitizeLogField(result.message).take(160)}"
+                    )
+                    logAttemptWarning(
+                        trace,
+                        "spawn failed; raw OS error retained in the log",
+                        IllegalStateException(result.message)
+                    )
                     fail(
                         key,
                         trace,
-                        result.message,
-                        AttemptFailureCode.SpawnFailed,
+                        spawnFailure.reason,
+                        spawnFailure.code,
                         canRetry = result.canRetry
                     )
                 }
@@ -474,7 +629,7 @@ class LauncherLaunchCoordinator(
     ) {
         when (result) {
             is AwaitWindowResult.Found ->
-                raiseWithRetries(app, key, result.window, trace)
+                raiseWithRetries(app, key, result.window, tracker, trace)
             AwaitWindowResult.ExitedEarly ->
                 fail(
                     key,
@@ -574,6 +729,7 @@ class LauncherLaunchCoordinator(
         app: FocusLauncherApp,
         key: String,
         initialWindow: WindowRef,
+        tracker: ProcessLineageTracker,
         trace: AttemptTrace
     ) {
         if (trace.raiseStartedAtMs == null) {
@@ -583,20 +739,72 @@ class LauncherLaunchCoordinator(
                 "phase=raise start pid=${initialWindow.pid} hwnd=${initialWindow.handle}"
             )
         }
-        var window = initialWindow
+        val raiseStartedAtMonotonicMs = platform.monotonicNowMs()
+        var sawCandidate = false
+        var failureCode = AttemptFailureCode.RaiseFailed
         try {
-            repeat(MAX_RAISE_ATTEMPTS) { index ->
+            for (index in 0 until MAX_RAISE_ATTEMPTS) {
                 if (!isCurrent(app, key, trace)) return
-                val result = platform.raise(window, trace.id)
+
+                val remainingBeforeSnapshot = RAISE_PHASE_BUDGET_MS -
+                    (platform.monotonicNowMs() - raiseStartedAtMonotonicMs)
+                if (remainingBeforeSnapshot <= 0L) break
+                val snapshot = withTimeoutOrNull(remainingBeforeSnapshot) {
+                    platform.processSnapshotAsync(app)
+                } ?: break
+                if (!isCurrent(app, key, trace)) return
+                tracker.update(snapshot)
+                updateTraceProcesses(trace, tracker)
+
+                val trackedPids = tracker.livePids()
+                val remainingBeforeWindows = RAISE_PHASE_BUDGET_MS -
+                    (platform.monotonicNowMs() - raiseStartedAtMonotonicMs)
+                if (remainingBeforeWindows <= 0L) break
+                val windows = withTimeoutOrNull(remainingBeforeWindows) {
+                    orderLauncherWindows(platform.findWindowsAsync(trackedPids, trace.id))
+                } ?: break
+                if (!isCurrent(app, key, trace)) return
+                observe(trace, trackedPids, windows, "raise-reselect")
+                val window = windows.firstOrNull()
+                if (window == null) {
+                    failureCode = AttemptFailureCode.NoWindow
+                    trace.tierResults += "raise-attempt-${index + 1}=no-window"
+                    if (index < MAX_RAISE_ATTEMPTS - 1) {
+                        val remaining = RAISE_PHASE_BUDGET_MS -
+                            (platform.monotonicNowMs() - raiseStartedAtMonotonicMs)
+                        if (remaining > 0L) delay(minOf(RAISE_RETRY_DELAY_MS, remaining))
+                    }
+                    continue
+                }
+                sawCandidate = true
+                failureCode = AttemptFailureCode.RaiseFailed
+
+                val remainingBeforeRaise = RAISE_PHASE_BUDGET_MS -
+                    (platform.monotonicNowMs() - raiseStartedAtMonotonicMs)
+                if (remainingBeforeRaise <= 0L) break
+                val result = withTimeoutOrNull(remainingBeforeRaise) {
+                    platform.raise(window, trace.id)
+                } ?: break
                 if (!isCurrent(app, key, trace)) return
                 if (result.tierResults.isNotEmpty()) {
                     trace.tierResults += result.tierResults
                 } else {
                     trace.tierResults += "${result.tier}=${result.success}"
                 }
-                if (result.success) {
+
+                val foregroundBelongsToChain =
+                    result.foregroundPid != null && result.foregroundPid in trackedPids
+                val foregroundOwnedByTarget =
+                    result.foregroundRootOwnerHandle == window.handle
+                if (foregroundBelongsToChain || foregroundOwnedByTarget) {
+                    trace.tierResults += if (foregroundBelongsToChain) {
+                        "foreground-owner=tracked-pid"
+                    } else {
+                        "foreground-owner=target-root"
+                    }
                     if (finishSuccess(key, trace)) {
-                        trace.raiseMs = elapsedSince(trace.raiseStartedAtMs ?: platform.nowMs())
+                        trace.raiseMs =
+                            platform.monotonicNowMs() - raiseStartedAtMonotonicMs
                         runCatching { onRaised(app) }
                             .onFailure { logAttemptWarning(trace, "post-raise callback failed", it) }
                         completeAttempt(trace, null)
@@ -604,24 +812,27 @@ class LauncherLaunchCoordinator(
                     return
                 }
                 if (index < MAX_RAISE_ATTEMPTS - 1) {
-                    delay(RAISE_RETRY_DELAY_MS)
+                    val remaining = RAISE_PHASE_BUDGET_MS -
+                        (platform.monotonicNowMs() - raiseStartedAtMonotonicMs)
+                    if (remaining <= 0L) break
+                    delay(minOf(RAISE_RETRY_DELAY_MS, remaining))
                     if (!isCurrent(app, key, trace)) return
-                    val refreshed = orderLauncherWindows(
-                        platform.findWindowsAsync(setOf(window.pid), trace.id)
-                    )
-                    if (!isCurrent(app, key, trace)) return
-                    observe(trace, setOf(window.pid), refreshed, "raise-refresh")
-                    refreshed.firstOrNull()?.let { window = it }
                 }
             }
         } finally {
-            trace.raiseMs = elapsedSince(trace.raiseStartedAtMs ?: platform.nowMs())
+            trace.raiseMs = platform.monotonicNowMs() - raiseStartedAtMonotonicMs
+        }
+        if (!sawCandidate) failureCode = AttemptFailureCode.NoWindow
+        val reason = if (failureCode == AttemptFailureCode.NoWindow) {
+            "${app.displayName} no longer has a window to raise."
+        } else {
+            "Couldn't bring ${app.displayName} to the front"
         }
         fail(
             key,
             trace,
-            "Couldn't bring ${app.displayName} to the front",
-            AttemptFailureCode.RaiseFailed,
+            reason,
+            failureCode,
             canRetry = true
         )
     }
@@ -634,7 +845,11 @@ class LauncherLaunchCoordinator(
         canRetry: Boolean,
         staleIdentities: Set<ProcessIdentity> = emptySet()
     ) {
-        val failed = LaunchState.Failed(reason, canRetry)
+        val failed = LaunchState.Failed(
+            code = publicFailureCode(failureCode),
+            reason = reason,
+            canRetry = canRetry
+        )
         var accepted = false
         synchronized(lock) {
             if (activeAttempts[key] !== trace) return
@@ -666,6 +881,69 @@ class LauncherLaunchCoordinator(
         if (accepted) completeAttempt(trace, failureCode, reason)
     }
 
+    private data class ClassifiedSpawnFailure(
+        val code: AttemptFailureCode,
+        val reason: String
+    )
+
+    private fun classifySpawnFailure(message: String): ClassifiedSpawnFailure {
+        val errorCode = Regex("(?i)(?:createprocess\\s+)?error\\s*=\\s*(\\d{1,4})")
+            .find(message)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+        return when {
+            message.contains("Microsoft Store", ignoreCase = true) ->
+                ClassifiedSpawnFailure(
+                    AttemptFailureCode.StoreAppUnsupported,
+                    "Microsoft Store apps cannot be launched from Focus Launcher yet."
+                )
+            errorCode == 2 || errorCode == 3 ->
+                ClassifiedSpawnFailure(
+                    AttemptFailureCode.NotFound,
+                    "The app executable could not be found."
+                )
+            errorCode == 5 ->
+                ClassifiedSpawnFailure(
+                    AttemptFailureCode.AccessDenied,
+                    "Windows denied access to this app."
+                )
+            errorCode == 193 ->
+                ClassifiedSpawnFailure(
+                    AttemptFailureCode.UnsupportedCandidate,
+                    "This file is not a supported Windows app."
+                )
+            errorCode == 740 ->
+                ClassifiedSpawnFailure(
+                    AttemptFailureCode.NeedsElevation,
+                    "This app requires administrator access."
+                )
+            else ->
+                ClassifiedSpawnFailure(
+                    AttemptFailureCode.SpawnFailed,
+                    "Couldn't start this app. Tap to retry."
+                )
+        }
+    }
+
+    private fun publicFailureCode(code: AttemptFailureCode): LaunchFailureCode =
+        when (code) {
+            AttemptFailureCode.NotAllowed -> LaunchFailureCode.NotAllowed
+            AttemptFailureCode.BlockedByRule -> LaunchFailureCode.BlockedByRule
+            AttemptFailureCode.NotFound -> LaunchFailureCode.NotFound
+            AttemptFailureCode.NeedsElevation -> LaunchFailureCode.NeedsElevation
+            AttemptFailureCode.AccessDenied -> LaunchFailureCode.AccessDenied
+            AttemptFailureCode.StoreAppUnsupported -> LaunchFailureCode.StoreAppUnsupported
+            AttemptFailureCode.UnsupportedCandidate -> LaunchFailureCode.UnsupportedCandidate
+            AttemptFailureCode.SpawnFailed,
+            AttemptFailureCode.SpawnDebounced -> LaunchFailureCode.SpawnFailed
+            AttemptFailureCode.ExitedEarly -> LaunchFailureCode.ExitedEarly
+            AttemptFailureCode.NoWindow -> LaunchFailureCode.NoWindow
+            AttemptFailureCode.RaiseFailed -> LaunchFailureCode.RaiseFailed
+            AttemptFailureCode.Cancelled -> LaunchFailureCode.Cancelled
+            AttemptFailureCode.Internal -> LaunchFailureCode.Internal
+        }
+
     private fun finishSuccess(key: String, trace: AttemptTrace): Boolean =
         synchronized(lock) {
             if (activeAttempts[key] !== trace) return@synchronized false
@@ -694,7 +972,11 @@ class LauncherLaunchCoordinator(
     }
 
     private fun watchdogExpired(key: String, trace: AttemptTrace) {
-        val failed = LaunchState.Failed("Launch timed out. Tap to retry.", canRetry = true)
+        val failed = LaunchState.Failed(
+            code = LaunchFailureCode.NoWindow,
+            reason = "Launch timed out waiting for the app window. Tap to retry.",
+            canRetry = true
+        )
         val worker: Job?
         val accepted = synchronized(lock) {
             if (activeAttempts[key] !== trace) return

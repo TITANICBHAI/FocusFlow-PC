@@ -46,10 +46,10 @@ object WindowRaiser {
     private const val SWP_NOMOVE = 0x0002
     private const val SWP_NOACTIVATE = 0x0010
     private const val SWP_SHOWWINDOW = 0x0040
-    private const val ASFW_ANY = -1
+    private const val SWP_ASYNCWINDOWPOS = 0x4000
     private const val VK_MENU = 0x12
     private const val KEYEVENTF_KEYUP = 0x0002
-    private const val FOREGROUND_VERIFY_DELAY_MS = 300L
+    private const val FOREGROUND_VERIFY_DELAY_MS = 200L
 
     private val hwndTop = HWND(Pointer(0L))
     private val hwndNotTopmost = HWND(Pointer(-2L))
@@ -75,7 +75,7 @@ object WindowRaiser {
         fun GetWindowTextLengthW(hwnd: HWND): Int
         fun GetWindowTextW(hwnd: HWND, text: CharArray, maxCount: Int): Int
         fun GetSystemMetrics(index: Int): Int
-        fun ShowWindow(hwnd: HWND, command: Int): Boolean
+        fun ShowWindowAsync(hwnd: HWND, command: Int): Boolean
         fun SetWindowPos(
             hwnd: HWND,
             insertAfter: HWND?,
@@ -194,10 +194,11 @@ object WindowRaiser {
         val hwnd = HWND(Pointer(window.handle))
         var lastTier = "SetForegroundWindow"
         val tierResults = mutableListOf<String>()
+        var foreground = ForegroundObservation(null, null)
         try {
             demoteLauncherWindows(api, attemptId)
 
-            if (api.IsIconic(hwnd)) api.ShowWindow(hwnd, SW_RESTORE)
+            if (api.IsIconic(hwnd)) api.ShowWindowAsync(hwnd, SW_RESTORE)
             api.SetWindowPos(
                 hwnd,
                 hwndTop,
@@ -205,23 +206,40 @@ object WindowRaiser {
                 0,
                 0,
                 0,
-                SWP_NOMOVE or SWP_NOSIZE or SWP_SHOWWINDOW
+                SWP_NOMOVE or SWP_NOSIZE or SWP_SHOWWINDOW or SWP_ASYNCWINDOWPOS
             )
 
+            delay(FOREGROUND_VERIFY_DELAY_MS)
+            foreground = foregroundObservation(api)
+            if (foreground.processId == window.pid ||
+                foreground.rootOwnerHandle == window.handle
+            ) {
+                tierResults += "already-foreground"
+                return RaiseResult(
+                    success = true,
+                    tier = "AlreadyForeground",
+                    tierResults = tierResults,
+                    foregroundPid = foreground.processId,
+                    foregroundRootOwnerHandle = foreground.rootOwnerHandle
+                )
+            }
+
             val strategies = listOf<Pair<String, () -> Boolean>>(
-                "SetForegroundWindow" to { api.SetForegroundWindow(hwnd) },
-                "AllowSetForegroundWindow" to {
-                    api.AllowSetForegroundWindow(ASFW_ANY)
-                    api.SetForegroundWindow(hwnd)
+                "AllowTargetForeground" to {
+                    api.AllowSetForegroundWindow(window.pid.toInt())
                 },
+                "SetForegroundWindow" to { api.SetForegroundWindow(hwnd) },
                 "AttachThreadInput" to { setForegroundWithAttachedInput(api, hwnd) },
                 "SyntheticAlt" to {
                     api.keybd_event(VK_MENU.toByte(), 0, 0, null)
                     api.keybd_event(VK_MENU.toByte(), 0, KEYEVENTF_KEYUP, null)
                     api.SetForegroundWindow(hwnd)
-                }
+                },
             )
 
+            // The kiosk foreground lock remains engaged throughout this method.
+            // Grant foreground permission only to the selected app process; never
+            // use LSFW_UNLOCK or ASFW_ANY in the raise path.
             for ((tier, action) in strategies) {
                 lastTier = tier
                 if (!action()) {
@@ -229,14 +247,28 @@ object WindowRaiser {
                     continue
                 }
                 delay(FOREGROUND_VERIFY_DELAY_MS)
-                val foreground = api.GetForegroundWindow()
-                if (foreground != null && Pointer.nativeValue(foreground.pointer) == window.handle) {
-                    tierResults += "$tier=verified"
-                    return RaiseResult(success = true, tier = tier, tierResults = tierResults)
+                foreground = foregroundObservation(api)
+                if (foreground.processId == window.pid ||
+                    foreground.rootOwnerHandle == window.handle
+                ) {
+                    tierResults += "$tier=target-process-or-root-owner"
+                    return RaiseResult(
+                        success = true,
+                        tier = tier,
+                        tierResults = tierResults,
+                        foregroundPid = foreground.processId,
+                        foregroundRootOwnerHandle = foreground.rootOwnerHandle
+                    )
                 }
-                tierResults += "$tier=not-foreground"
+                tierResults += "$tier=not-target-process-or-root-owner"
             }
-            return RaiseResult(success = false, tier = lastTier, tierResults = tierResults)
+            return RaiseResult(
+                success = false,
+                tier = lastTier,
+                tierResults = tierResults,
+                foregroundPid = foreground.processId,
+                foregroundRootOwnerHandle = foreground.rootOwnerHandle
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -250,7 +282,9 @@ object WindowRaiser {
             return RaiseResult(
                 success = false,
                 tier = "$lastTier-error",
-                tierResults = tierResults
+                tierResults = tierResults,
+                foregroundPid = foreground.processId,
+                foregroundRootOwnerHandle = foreground.rootOwnerHandle
             )
         }
     }
@@ -265,7 +299,7 @@ object WindowRaiser {
                 0,
                 0,
                 0,
-                SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE
+                SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE or SWP_ASYNCWINDOWPOS
             )
             if (!demoted) {
                 warnAttemptOnce(
@@ -316,6 +350,32 @@ object WindowRaiser {
         } finally {
             if (attachedTarget) api.AttachThreadInput(currentThread, targetThread, false)
             if (attachedForeground) api.AttachThreadInput(currentThread, foregroundThread, false)
+        }
+    }
+
+    private data class ForegroundObservation(
+        val processId: Long?,
+        val rootOwnerHandle: Long?
+    )
+
+    private fun foregroundObservation(api: User32ActivationApi): ForegroundObservation {
+        val hwnd = api.GetForegroundWindow() ?: return ForegroundObservation(null, null)
+        val processId = IntArray(1)
+        val threadId = api.GetWindowThreadProcessId(hwnd, processId)
+        val pid = if (threadId == 0) null else processId[0].toLong() and 0xFFFF_FFFFL
+        return ForegroundObservation(pid, rootOwnerHandle(api, hwnd))
+    }
+
+    private fun rootOwnerHandle(api: User32ActivationApi, hwnd: HWND): Long? {
+        var root = hwnd
+        val visited = mutableSetOf<Long>()
+        while (true) {
+            val rootHandle = Pointer.nativeValue(root.pointer)
+            if (rootHandle == 0L || !visited.add(rootHandle)) return rootHandle.takeIf { it != 0L }
+            val owner = api.GetWindow(root, GW_OWNER) ?: return rootHandle
+            val ownerHandle = Pointer.nativeValue(owner.pointer)
+            if (ownerHandle == 0L || ownerHandle in visited) return rootHandle
+            root = owner
         }
     }
 

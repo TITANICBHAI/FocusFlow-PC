@@ -46,7 +46,8 @@ class LauncherLaunchCoordinatorTest {
         runCurrent()
 
         val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
-        assertEquals("test spawn failure", failed.reason)
+        assertEquals(LaunchFailureCode.SpawnFailed, failed.code)
+        assertEquals("Couldn't start this app. Tap to retry.", failed.reason)
         assertTrue(failed.canRetry)
         assertEquals(1, platform.spawnCount)
         coordinator.cancelAll()
@@ -240,6 +241,102 @@ class LauncherLaunchCoordinatorTest {
         assertEquals(0, platform.spawnCount)
         assertEquals(listOf(WindowRef(420L, 42L)), platform.raisedWindows)
         assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun foregroundVerificationAcceptsAnotherWindowFromTrackedProcess() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(42L, nowMs(), app.processName)
+            windows += WindowRef(handle = 420L, pid = 42L)
+            raiseSuccess = false
+            foregroundPidOverride = 42L
+            foregroundRootOwnerOverride = 777L
+        }
+        val logs = mutableListOf<String>()
+        val coordinator = coordinator(platform, backgroundScope, logs)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS)
+        runCurrent()
+
+        assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        assertEquals(1, platform.raiseCount)
+        assertEquals(0, platform.spawnCount)
+        assertTrue(logs.any { "foreground-owner=tracked-pid" in it })
+        assertTrue(logs.any { "result=Opened" in it })
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun foreignForegroundIsRejectedAndEachRaiseAttemptReselectsTheWindow() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(42L, nowMs(), app.processName)
+            raiseSuccess = false
+            foregroundPidOverride = 999L
+            windowSchedule = { _, pids ->
+                if (42L in pids) {
+                    listOf(WindowRef(420L + raisedWindows.size, 42L))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(
+            LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS +
+                LauncherLaunchCoordinator.RAISE_RETRY_DELAY_MS *
+                LauncherLaunchCoordinator.MAX_RAISE_ATTEMPTS
+        )
+        runCurrent()
+
+        assertEquals(
+            listOf(420L, 421L, 422L),
+            platform.raisedWindows.map(WindowRef::handle)
+        )
+        assertEquals(0, platform.spawnCount)
+        assertEquals(LauncherLaunchCoordinator.MAX_RAISE_ATTEMPTS, platform.raiseCount)
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertTrue(coordinator.request(app), "a failed raise must allow a fresh click")
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun raisePhaseIsBoundedAndATimedOutRaiseCanBeRetried() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(42L, nowMs(), app.processName)
+            windows += WindowRef(handle = 420L, pid = 42L)
+            raiseDelayMs = 5_000L
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(
+            LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS +
+                LauncherLaunchCoordinator.RAISE_PHASE_BUDGET_MS
+        )
+        runCurrent()
+
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(1, platform.raiseCount)
+        assertTrue(
+            platform.nowMs() <= LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS +
+                LauncherLaunchCoordinator.RAISE_PHASE_BUDGET_MS,
+            "raise work must not exceed its hard budget"
+        )
+
+        platform.raiseDelayMs = 0L
+        assertTrue(coordinator.request(app))
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS)
+        runCurrent()
+        assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        assertEquals(2, platform.raiseCount)
         coordinator.cancelAll()
     }
 
@@ -613,10 +710,143 @@ class LauncherLaunchCoordinatorTest {
         runCurrent()
 
         val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.StoreAppUnsupported, failed.code)
         assertFalse(failed.canRetry)
         assertEquals(0, platform.spawnCount)
         assertTrue(logs.any { "result=Failed(code=StoreAppUnsupported)" in it })
         coordinator.cancelAll()
+    }
+
+    @Test
+    fun blockedAppGetsSpecificPreflightFailureWithoutSpawning() = runTest {
+        val logs = mutableListOf<String>()
+        val platform = FakeLaunchPlatform(this)
+        val coordinator = coordinator(
+            platform,
+            backgroundScope,
+            logs,
+            ruleBlockReason = { "Schedule" }
+        )
+
+        val startedAt = testScheduler.currentTime
+        assertTrue(coordinator.request(app))
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.BlockedByRule, failed.code)
+        assertEquals("Blocked by FocusFlow: Schedule.", failed.reason)
+        assertEquals(0, platform.spawnCount)
+        assertTrue(testScheduler.currentTime - startedAt < 1_000L)
+        assertTrue(logs.any { "result=Failed(code=BlockedByRule)" in it })
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun appRemovedFromSessionFailsWithTypedReasonWithoutSpawning() = runTest {
+        val platform = FakeLaunchPlatform(this)
+        val coordinator = coordinator(
+            platform,
+            backgroundScope,
+            isAllowed = { false }
+        )
+
+        assertTrue(coordinator.request(app))
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NotAllowed, failed.code)
+        assertEquals(0, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun missingExecutableFailsPreflightWithoutSpawning() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            executablePreflightResult = ExecutablePreflightResult.NotFound
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NotFound, failed.code)
+        assertTrue("missing or unreadable" in failed.reason)
+        assertEquals(0, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun updaterCandidateIsRejectedBeforeSpawn() = runTest {
+        val updaterApp = app.copy(
+            processName = "sample-update.exe",
+            exePath = "C:\\Apps\\sample-update.exe"
+        )
+        val platform = FakeLaunchPlatform(this)
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(updaterApp)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(
+            coordinator.states.value[updaterApp.processName]
+        )
+        assertEquals(LaunchFailureCode.UnsupportedCandidate, failed.code)
+        assertEquals(0, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun preflightTimeoutFailsClosedWithoutSpawning() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            executableValidationDelayMs =
+                LauncherLaunchCoordinator.PREFLIGHT_CHECK_TIMEOUT_MS + 1_000L
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.PREFLIGHT_CHECK_TIMEOUT_MS)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.Internal, failed.code)
+        assertEquals(0, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun commonWin32SpawnErrorsMapToFriendlyTypedFailures() = runTest {
+        val cases = listOf(
+            2 to LaunchFailureCode.NotFound,
+            3 to LaunchFailureCode.NotFound,
+            5 to LaunchFailureCode.AccessDenied,
+            193 to LaunchFailureCode.UnsupportedCandidate,
+            740 to LaunchFailureCode.NeedsElevation
+        )
+
+        for ((errorCode, expectedCode) in cases) {
+            val testApp = app.copy(processName = "sample-$errorCode.exe")
+            val logs = mutableListOf<String>()
+            val platform = FakeLaunchPlatform(this).apply {
+                spawnResult = SpawnResult.Failed(
+                    "CreateProcess error=$errorCode, Windows launch failure detail."
+                )
+            }
+            val coordinator = coordinator(platform, backgroundScope, logs)
+
+            coordinator.request(testApp)
+            runCurrent()
+
+            val failed = assertIs<LaunchState.Failed>(
+                coordinator.states.value[testApp.processName]
+            )
+            assertEquals(expectedCode, failed.code)
+            assertFalse("CreateProcess error=" in failed.reason)
+            assertEquals(1, platform.spawnCount)
+            assertTrue(logs.any { "CreateProcess error=$errorCode" in it })
+            coordinator.cancelAll()
+        }
     }
 
     @Test
@@ -707,12 +937,15 @@ class LauncherLaunchCoordinatorTest {
     private fun coordinator(
         platform: FakeLaunchPlatform,
         scope: kotlinx.coroutines.CoroutineScope,
-        logs: MutableList<String>? = null
+        logs: MutableList<String>? = null,
+        isAllowed: (FocusLauncherApp) -> Boolean = { true },
+        ruleBlockReason: (FocusLauncherApp) -> String? = { null }
     ) = LauncherLaunchCoordinator(
         platform = platform,
         scope = scope,
-        isAllowed = { true },
-        logInfo = { line -> logs?.add(line) }
+        isAllowed = isAllowed,
+        logInfo = { line -> logs?.add(line) },
+        ruleBlockReason = ruleBlockReason
     )
 
     private class FakeLaunchPlatform(private val testScope: TestScope) : LaunchPlatform {
@@ -737,6 +970,12 @@ class LauncherLaunchCoordinatorTest {
         var raiseGate: CompletableDeferred<Unit>? = null
         var raiseGateIsNonCancellable = false
         var raiseSuccess = true
+        var raiseDelayMs = 0L
+        var raiseCount = 0
+        var foregroundPidOverride: Long? = null
+        var foregroundRootOwnerOverride: Long? = null
+        var executablePreflightResult: ExecutablePreflightResult? = null
+        var executableValidationDelayMs = 0L
         var findInstancesFailure: Exception? = null
         var windowPollsForSpawnedPid = 0
 
@@ -779,6 +1018,18 @@ class LauncherLaunchCoordinatorTest {
 
         override fun unsupportedReason(app: FocusLauncherApp): String? =
             unsupportedLaunchReason
+
+        override fun validateExecutable(app: FocusLauncherApp): ExecutablePreflightResult =
+            executablePreflightResult ?: super<LaunchPlatform>.validateExecutable(app)
+
+        override suspend fun validateExecutableAsync(
+            app: FocusLauncherApp
+        ): ExecutablePreflightResult {
+            if (executableValidationDelayMs > 0L) {
+                kotlinx.coroutines.delay(executableValidationDelayMs)
+            }
+            return executablePreflightResult ?: validateExecutable(app)
+        }
 
         override fun findWindows(pids: Set<Long>): List<WindowRef> {
             windowSchedule?.let { return it(nowMs(), pids).filter { window -> window.pid in pids } }
@@ -827,6 +1078,7 @@ class LauncherLaunchCoordinatorTest {
         }
 
         override suspend fun raise(window: WindowRef): RaiseResult {
+            raiseCount++
             val gate = raiseGate
             if (gate != null) {
                 if (raiseGateIsNonCancellable) {
@@ -835,8 +1087,14 @@ class LauncherLaunchCoordinatorTest {
                     gate.await()
                 }
             }
+            if (raiseDelayMs > 0L) kotlinx.coroutines.delay(raiseDelayMs)
             raisedWindows += window
-            return RaiseResult(success = raiseSuccess, tier = "fake")
+            return RaiseResult(
+                success = raiseSuccess,
+                tier = "fake",
+                foregroundPid = foregroundPidOverride ?: if (raiseSuccess) window.pid else 999L,
+                foregroundRootOwnerHandle = foregroundRootOwnerOverride
+            )
         }
 
         override fun focusFlowElevated(): Boolean? = true

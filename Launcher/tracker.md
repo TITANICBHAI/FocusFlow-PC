@@ -50,7 +50,7 @@
 
 ## P0 — Reported launch-reliability failures
 
-**Status:** P0.1 and P0.2 complete with Linux automated evidence; P0.3 coordinator behavior is implemented, but T4's visible elapsed-progress notice remains P1.6; P0.4 acceptance remains open for T8/P1.1 and owner-run Windows checks; P0.5 is in progress with the user's manual opt-in and Global PIN requirements.
+**Status:** P0.1 and P0.2 complete with Linux automated evidence; P0.3 coordinator behavior is implemented, but T4's visible elapsed-progress notice remains P1.6; P0.4 acceptance remains open for T8/P1.1 and owner-run Windows checks; P0.5 implementation and Linux acceptance are complete, with Windows rows 4 and 12 still due from the owner.
 
 ### P0.1 — Per-attempt launch tracing
 
@@ -110,14 +110,14 @@
 
 ### P0.5 — Protect launch chains from kiosk enforcement
 
-- [ ] Keep app-chain exceptions disabled by default; enable only through the Settings toggle after Global PIN verification, and allow free disable.
-- [ ] If Global PIN is unset, require setup and a second entry/verification before enabling. If PIN state or database is unavailable, fail closed; removing the Global PIN forces the setting off.
-- [ ] Require fresh Global PIN verification on each Enter Launcher attempt while exceptions are enabled; provide direct Settings navigation to disable, then require a fresh entry click.
-- [ ] Show a live On/Off status in Focus Launcher only after the setting has been manually enabled once.
-- [ ] Implement one shared kiosk process decision and use it in the launcher sweep, foreground enforcement, focus reclaim, and NuclearMode ownership exception.
-- [ ] Apply D1-B lineage/install-root and FocusFlow-owned utility rules without weakening escape-tool name/path detection.
-- [ ] Explain the opt-in's scope and Steam-launched-app example in Settings before enabling.
-- [ ] **Acceptance:** T13, T14, T18, and T23–T26 pass; Windows archetype D and escape-tool row 12 remain for the owner.
+- [x] Keep app-chain exceptions disabled by default; enable only through the Settings toggle after Global PIN verification, and allow free disable.
+- [x] If Global PIN is unset, require setup and a second entry/verification before enabling. If PIN state or database is unavailable, fail closed; removing the Global PIN forces the setting off.
+- [x] Require fresh Global PIN verification on each Enter Launcher attempt while exceptions are enabled; provide direct Settings navigation to disable, then require a fresh entry click.
+- [x] Show a live On/Off status in Focus Launcher only after the setting has been manually enabled once.
+- [x] Implement one shared kiosk process decision and use it in the launcher sweep, foreground enforcement, focus reclaim, and NuclearMode ownership exception.
+- [x] Apply D1-B lineage/install-root and FocusFlow-owned utility rules without weakening escape-tool name/path detection.
+- [x] Explain the opt-in's scope and Steam-launched-app example in Settings before enabling.
+- [x] **Acceptance:** T13, T14, T18, and T23–T26 pass on Linux/source review; Windows archetype D and escape-tool row 12 remain for the owner.
 
 ### P0 execution notes
 
@@ -185,9 +185,25 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Working tree at batch start:** Clean.
 - **Verification:** Pending. All Windows runtime rows remain owner-only.
 
+### 2026-10-17 — P0.5 — Resumed implementation and acceptance audit — Complete
+
+- **Authorization and scope:** The owner explicitly resumed P0.5. Continue only the listed P0.5 work, preserving D1-B and all PIN, kiosk-exit, and escape-tool safety invariants.
+- **Working tree at batch start:** `main` matches `origin/main`; the only untracked path is the newly attached implementation brief. Existing P0.5 implementation and tests are present in the checkout; their presence is not completion evidence.
+- **Initial audit:** `LauncherChainAllowance`, `LauncherKioskPolicy`, Settings/entry UI, Global PIN removal hooks, ProcessMonitor, WinEventHook, and NuclearMode already contain P0.5 changes. Reconcile their behavior and test evidence before deciding which changes are still needed.
+- **Files read this batch:** the P0.5 service implementations and tests; relevant `GlobalPin`, `FocusLauncherService`, `ProcessMonitor`, `WinEventHook`, `NuclearMode`, `SettingsScreen`, `FocusLauncherScreen`, `GlobalPinSetupDialog`, `PinPolicy`, `App.kt`, localization symbols, and P0.5 plan/rules/tracker.
+- **Safety gaps found and corrected:** Chain membership trusted a parent PID without checking that the parent process instance started before its child, allowing PID reuse to falsely prove ancestry. ProcessMonitor also invoked the overlay policy twice per foreground event, including a redundant name-only callback without the foreground PID; removed that duplicate so event-driven overlay decisions use the PID-aware shared policy.
+- **Files changed this batch:** `Launcher/tracker.md`, `src/main/kotlin/com/focusflow/services/LauncherKioskPolicy.kt`, `src/test/kotlin/com/focusflow/services/LauncherKioskPolicyTest.kt`, `src/main/kotlin/com/focusflow/enforcement/ProcessMonitor.kt`, and `src/main/kotlin/com/focusflow/services/FocusLauncherService.kt`. Added the parent/child creation-time consistency check and removed the duplicate legacy callback.
+- **Verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL` in 3m 43s. Fresh XML: 63 suites, 268 tests, 0 failures, 0 errors, 0 skipped; `LauncherKioskPolicyTest` 6/6, `LauncherChainAllowanceTest` 6/6, and `NuclearModeSettingsTest` 3/3. New regression `reusedParentPidCannotMakeAnOlderProcessPartOfTheAllowedChain` passed. `git diff --check` passed.
+- **Flow review:** Verified the Settings setup-then-re-enter-PIN sequence, fresh entry gate and direct Settings route/no auto-entry, persistent `everEnabled` status, Global PIN removal hooks, and fail-closed unavailable-state handling. The existing Compose UI has no interaction-test dependency, so these UI routes were source-reviewed rather than driven by an automated UI test.
+- **Workflow smoke check:** Restarted `Start application`; workflow reports `running` in `:run`, with no errors in the available logs. Replit/Linux does not verify Win32 behavior.
+- **Safety paths re-read after the changes:** `FocusLauncherService.isLaunchAllowed`, PIN-gated `enter`, `exit`, `startBreak`, `endBreak`, kill-switch activation/deactivation, interrupted-session restoration, `SessionPin`, `KillSwitchService`, keyboard suppression/foreground-lock handling, `NuclearMode.isEscapeTool` name/path checks and targeted kills, and the ProcessMonitor foreground/sweep decisions. No session exit, break, kill-switch, or escape-tool rule was weakened.
+- **Constants and owner decisions:** No launch timing constants changed. D1-B remains the default when manually opted in; app-chain exceptions remain off by default.
+- **Outstanding:** All §9 Windows rows remain unchecked. P0.5 owner checks due are row 4 (Steam/Epic/Battle.net/Minecraft launch chains) and row 12 (escape tools and PIN exit). The 2.0.6 changelog was not edited because `ChangelogScreen.kt` is outside P0.5's file allowlist, despite the plan-wide changelog instruction; this scope conflict is recorded for the owner.
+- **Out-of-scope observation:** `LauncherLaunchCoordinator.onRaised` still bases its immediate post-raise overlay update on the selected tile's process name. This is the separately scoped P2.2 item; no change was made here.
+
 ## P1 — Correctness and robustness
 
-**Status:** Not started. Respect the dependencies stated in the plan.
+**Status:** P1.1 and P1.2 implementation in progress. Respect their plan allowlists and leave Windows verification to the owner.
 
 ### P1.1 — Raise reliability
 
@@ -228,6 +244,13 @@ Add dated entries here before and after each meaningful implementation change. P
 
 Add dated entries for each selected task. Record dependencies, changed files, checks, failures, and open Windows checks.
 
+### 2026-10-17 — P1.1/P1.2 — Implementation started
+
+- **Authorization and dependencies:** The owner selected P1.1 Raise reliability and P1.2 Pre-flight checks and typed failures. P1.1 builds on the P0.4 launch/window pipeline; P1.2 uses the current Focus Launcher allow predicate and ProcessMonitor's active in-memory enforcement sets. P1.3/P1.4 remain out of scope except the P1.2 pre-flight rejection explicitly required for unsupported launch candidates.
+- **Initial evidence:** `WindowRaiser` currently checks only exact-HWND foreground equality, uses synchronous `ShowWindow`/`SetWindowPos`, and runs four 300 ms tiers inside each of three coordinator attempts. Retries enumerate only the last window PID. The GlobalKeyboardHook already records lock/unlock results. The coordinator silently rejects a now-disallowed app in `request()`, the Store-app check is the only current unsupported-candidate pre-flight, active block sets have no reason accessor, and tile labels use free-text substring matching while spawn text includes raw OS details.
+- **Files read before editing:** P1.1/P1.2 plan and tracker sections; `LauncherLaunchCoordinator.kt`, `WindowRaiser.kt`, `GlobalKeyboardHook.kt`, `ProcessMonitor.kt`, `JvmLauncherLaunchPlatform.kt`, `LauncherContent.kt`, and `LauncherLaunchCoordinatorTest.kt`; relevant P0.5 memory and Gradle verification notes.
+- **Scope/verification boundary:** Follow the P1.1/P1.2 allowlists; use Linux fake-platform tests for T8/T9/T10/T20, but leave all Windows archetype verification to the owner. No implementation edits have been made yet.
+
 ## P2 — Hardening and polish
 
 **Status:** Not started.
@@ -267,16 +290,20 @@ Mark each scenario complete only after its named behavior is tested with the fak
 - [ ] **T10** FocusFlow-blocked app fails pre-flight without a spawn call.
 - [ ] **T11** Old windowless/tray instance results in one spawn and successful open.
 - [x] **T12** `cancelAll()` and per-app cancel work in every phase without lingering jobs/state.
-- [ ] **T13** Chain members survive; unrelated/renamed escape tools remain blocked.
-- [ ] **T14** FocusFlow-owned system utility is exempt only under the specified ownership proof.
+- [x] **T13** Chain members survive; unrelated/renamed escape tools remain blocked.
+- [x] **T14** FocusFlow-owned system utility is exempt only under the specified ownership proof.
 - [x] **T15** Two same-frame taps produce one spawn.
 - [x] **T16** Reused PID with a different creation time is not in the chain.
 - [x] **T17** Unreadable process remains tracked by PID and can own a found window.
-- [ ] **T18** Unresolvable lineage is not killed on first sighting; next snapshot decides.
+- [x] **T18** Unresolvable lineage is not killed on first sighting; next snapshot decides.
 - [ ] **T19** A setup loader exception does not strand the screen in loading.
 - [ ] **T20** Spawn errors 2, 3, 5, 193, and 740 map to typed, friendly failures.
 - [x] **T21** Main window supersedes splash; Z-order preference is respected.
 - [x] **T22** Exactly one terminal summary line is emitted per attempt with its attempt ID.
+- [x] **T23** Chain-exception setting defaults off; setup is followed by a second Global PIN entry; enabling requires verification and disabling is free.
+- [x] **T24** Every launcher-entry click refreshes the setting and requires a fresh PIN while enabled; Settings navigation does not auto-enter.
+- [x] **T25** Launcher On/Off status stays hidden until the first successful manual enable, then follows the live state.
+- [x] **T26** Global PIN removal disables the exception; unavailable PIN/database state never enables it or bypasses the entry gate.
 
 ## Manual Windows verification — plan §9
 

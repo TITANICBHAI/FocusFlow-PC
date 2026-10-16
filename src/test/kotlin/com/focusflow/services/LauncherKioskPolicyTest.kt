@@ -48,6 +48,23 @@ class LauncherKioskPolicyTest {
     }
 
     @Test
+    fun reusedParentPidCannotMakeAnOlderProcessPartOfTheAllowedChain() {
+        val root = steam().copy(creationTimeMs = 500L)
+        val olderUnrelatedProcess = ProcessSnapshotEntry(
+            pid = 11L,
+            parentPid = root.pid,
+            creationTimeMs = 400L,
+            processName = "other.exe",
+            executablePath = "C:\\Other\\other.exe"
+        )
+
+        assertEquals(
+            LauncherKioskPolicy.Decision.BLOCK,
+            decide(olderUnrelatedProcess, listOf(root, olderUnrelatedProcess), enabled = true)
+        )
+    }
+
+    @Test
     fun escapeToolsRemainBlockedEvenWhenTheyAreInAnAllowedLaunchChain() {
         val root = steam()
         val taskManager = ProcessSnapshotEntry(

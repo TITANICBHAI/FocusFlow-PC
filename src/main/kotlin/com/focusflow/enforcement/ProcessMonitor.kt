@@ -126,7 +126,6 @@ object ProcessMonitor {
      * Called for every foreground change so the launcher can lower itself for
      * allowed apps and reclaim topmost ordering for other processes.
      */
-    @Volatile var onLauncherForegroundChanged: ((processName: String) -> Unit)? = null
     @Volatile var onLauncherProcessForegroundChanged: ((processName: String, pid: Long) -> Unit)? = null
 
     fun setLauncherAllowedApps(apps: List<com.focusflow.services.FocusLauncherApp>) {
@@ -364,6 +363,34 @@ object ProcessMonitor {
     }
 
     /**
+     * Read-only, cache-only explanation for launcher pre-flight. Keep this
+     * path non-blocking: the launch coordinator must not query the database
+     * before deciding whether to create a process.
+     */
+    fun launcherBlockReason(processName: String): String? {
+        val normalized = processName
+            .substringAfterLast('\\')
+            .substringAfterLast('/')
+            .trim()
+        if (normalized.isEmpty()) return null
+        fun contains(set: Set<String>) = set.any { it.equals(normalized, ignoreCase = true) }
+
+        return when {
+            contains(scheduleBlockedProcesses) -> "Schedule"
+            contains(standaloneBlockedProcesses) -> "Timed block"
+            contains(dailyAllowanceBlockedProcesses) -> "Daily limit"
+            sessionActive && contains(sessionExtraBlockedProcesses) -> "Focus session"
+            alwaysOnEnabled && contains(cachedEnabledProcesses) -> "Always-on block"
+            sessionActive && contains(cachedEnabledProcesses) -> "Focus session"
+            VpnBlocker.isEnabledForEnforcement &&
+                VpnBlocker.getAllBlockedProcesses().any {
+                    it.equals(normalized, ignoreCase = true)
+                } -> "VPN block"
+            else -> null
+        }
+    }
+
+    /**
      * Atomic cooldown gate. Returns true if this key has not fired within COOLDOWN_MS
      * AND atomically records the current timestamp so concurrent callers cannot both pass.
      *
@@ -395,7 +422,6 @@ object ProcessMonitor {
         // The launcher needs every foreground transition, including allowed
         // processes. Do this before the enforcement cooldown gate.
         if (launcherAllowedProcesses.isNotEmpty()) {
-            onLauncherForegroundChanged?.invoke(processName)
             onLauncherProcessForegroundChanged?.invoke(processName, pid)
         }
 

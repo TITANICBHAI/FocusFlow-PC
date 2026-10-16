@@ -197,7 +197,6 @@ object FocusLauncherService {
         persistSession()
 
         ProcessMonitor.setLauncherAllowedApps(apps)
-        ProcessMonitor.onLauncherForegroundChanged = { name -> onForegroundChanged(name) }
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
 
         // silent = true: NuclearMode is an implementation detail of kiosk mode;
@@ -249,7 +248,6 @@ object FocusLauncherService {
         sessionPinHash = ""
 
         stopTaskbarGuard()
-        ProcessMonitor.onLauncherForegroundChanged = null
         ProcessMonitor.onLauncherProcessForegroundChanged = null
 
         breakJob?.cancel()
@@ -532,7 +530,6 @@ object FocusLauncherService {
         _breakActive.value = true
         _breakRemainingSeconds.value = remaining
         _overlayVisible.value = false
-        ProcessMonitor.onLauncherForegroundChanged = { name -> onForegroundChanged(name) }
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
         ProcessMonitor.clearLauncherAllowedApps()
         if (NuclearMode.isActive) NuclearMode.disable(silent = true)
@@ -553,7 +550,6 @@ object FocusLauncherService {
 
     private fun reenableLauncherRestrictions() {
         ProcessMonitor.setLauncherAllowedApps(_sessionApps.value)
-        ProcessMonitor.onLauncherForegroundChanged = { name -> onForegroundChanged(name) }
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
         NuclearMode.enable(silent = true)
         GlobalKeyboardHook.enable()

@@ -415,13 +415,23 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
     }
 }
 
-private fun launchFailureLabel(failure: LaunchState.Failed): String = when {
-    failure.reason.contains("Microsoft Store app", ignoreCase = true) ->
-        "Microsoft Store app unsupported"
-    failure.reason.contains("taking longer", ignoreCase = true) ->
-        "Taking longer than usual — tap to check again"
-    else -> "Couldn't open — tap to retry"
-}
+private fun launchFailureLabel(failure: LaunchState.Failed): String =
+    when (failure.code) {
+        com.focusflow.services.LaunchFailureCode.NotAllowed -> "Not available"
+        com.focusflow.services.LaunchFailureCode.BlockedByRule -> "Blocked by FocusFlow"
+        com.focusflow.services.LaunchFailureCode.NotFound -> "App not found"
+        com.focusflow.services.LaunchFailureCode.NeedsElevation -> "Needs admin"
+        com.focusflow.services.LaunchFailureCode.AccessDenied -> "Access denied"
+        com.focusflow.services.LaunchFailureCode.StoreAppUnsupported ->
+            "Store app unsupported"
+        com.focusflow.services.LaunchFailureCode.UnsupportedCandidate -> "Unsupported app"
+        com.focusflow.services.LaunchFailureCode.SpawnFailed -> "Couldn't start"
+        com.focusflow.services.LaunchFailureCode.ExitedEarly -> "Closed early"
+        com.focusflow.services.LaunchFailureCode.NoWindow -> "No window appeared"
+        com.focusflow.services.LaunchFailureCode.RaiseFailed -> "Couldn't bring forward"
+        com.focusflow.services.LaunchFailureCode.Cancelled -> "Launch cancelled"
+        com.focusflow.services.LaunchFailureCode.Internal -> "Launch failed"
+    }
 
 @Composable
 private fun BreakScreen() {

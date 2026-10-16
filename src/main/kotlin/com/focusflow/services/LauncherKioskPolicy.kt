@@ -152,12 +152,20 @@ object LauncherKioskPolicy {
         snapshot: List<ProcessSnapshotEntry>,
         allowedRootPids: Set<Long>
     ): Boolean? {
-        var parentPid = process.parentPid ?: return null
+        var child = process
+        var parentPid = child.parentPid ?: return null
         val byPid = snapshot.associateBy { it.pid }
         val visited = HashSet<Long>()
         while (parentPid > 0 && visited.add(parentPid)) {
-            if (parentPid in allowedRootPids) return true
             val parent = byPid[parentPid] ?: return null
+            val childCreatedAt = child.creationTimeMs ?: return null
+            val parentCreatedAt = parent.creationTimeMs ?: return null
+            // A PID can be reused after a launcher exits. If the current
+            // process occupying that PID started after this child, it cannot
+            // be the child's ancestor and must not grant a chain exemption.
+            if (parentCreatedAt > childCreatedAt) return false
+            if (parentPid in allowedRootPids) return true
+            child = parent
             parentPid = parent.parentPid ?: return null
         }
         return false
