@@ -50,7 +50,7 @@
 
 ## P0 — Reported launch-reliability failures
 
-**Status:** P0.1 complete; combined P0.2/P0.3/P0.4 batch in progress on 2026-10-16; P0.5 not started.
+**Status:** P0.1 and P0.2 complete with Linux automated evidence; P0.3 coordinator behavior is implemented, but T4's visible elapsed-progress notice remains P1.6; P0.4 acceptance remains open for T8/P1.1 and owner-run Windows checks; P0.5 not started.
 
 ### P0.1 — Per-attempt launch tracing
 
@@ -90,22 +90,22 @@
 
 ### P0.2 — Remove sticky retry state
 
-- [ ] Decide spawn versus attach from live process state; remove wait-only and spawn-budget decision flags.
-- [ ] Keep only a short per-app debounce that prevents duplicate spawns without forcing a wait.
-- [ ] **Acceptance:** T1, T2, T5, T6, and T15 pass.
+- [x] Decide spawn versus attach from live process state; remove wait-only and spawn-budget decision flags.
+- [x] Keep only a short per-app debounce that prevents duplicate spawns without forcing a wait.
+- [x] **Acceptance:** T1, T2, T5, T6, and T15 pass.
 
 ### P0.3 — Liveness-based wait and watchdog
 
-- [ ] Add liveness-based waiting, typed early exit/no-window outcomes, per-attempt tokens, watchdog, and per-app cancellation.
-- [ ] Ensure stale workers cannot write state for a newer attempt and cancellation leaves no state/jobs behind.
-- [ ] **Acceptance:** T2, T3, T4, T7, and T12 pass.
+- [x] Add liveness-based waiting, typed early exit/no-window outcomes, per-attempt tokens, watchdog, and per-app cancellation.
+- [x] Ensure stale workers cannot write state for a newer attempt and cancellation leaves no state/jobs behind.
+- [ ] **Acceptance:** T2, T3, T4, T7, and T12 pass; the user-visible elapsed-progress notice in T4 is deferred to P1.6.
 
 ### P0.4 — Process lineage and window selection
 
-- [ ] Add/reuse a shared process snapshot with PID, parent PID, creation time, image name, and lazy cached full paths.
-- [ ] Track the spawn PID, descendants, and matching live instances as a union; reject PID reuse by creation time.
-- [ ] Preserve window enumeration order and select/re-evaluate the best candidate as specified in the plan.
-- [ ] Handle Store/UWP windows as specified or fail immediately and clearly.
+- [x] Add/reuse a shared process snapshot with PID, parent PID, creation time, image name, and lazy cached full paths.
+- [x] Track the spawn PID, descendants, and matching live instances as a union; reject PID reuse by creation time.
+- [x] Preserve window enumeration order and select/re-evaluate the best candidate as specified in the plan.
+- [x] Handle Store/UWP windows as specified or fail immediately and clearly.
 - [ ] **Acceptance:** T3, T8, T16, T17, and T21 pass; applicable Windows archetypes B–D and F are recorded for owner verification.
 
 ### P0.5 — Protect launch chains from kiosk enforcement
@@ -151,7 +151,12 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Verification attempt 2:** The background targeted test run failed in `compileTestKotlin` with `LauncherLaunchCoordinatorTest.kt:716:9 'monotonicNowMs' overrides nothing`. The interface method was added while this run was already compiling, so source and test compilation observed different revisions. No tests ran; rerun after edits settle.
 - **Verification attempt 3:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --tests com.focusflow.services.LauncherLaunchCoordinatorTest --tests com.focusflow.services.ProcessLineageTrackerTest --tests com.focusflow.services.ProcessCommandCacheTest` completed with `BUILD SUCCESSFUL` in 1m 45s. Inspected XML: 32 tests across the three targeted suites, 0 failures, 0 errors, 0 skipped. Full `:test` remains pending.
 - **Verification attempt 4:** `gradle :test --no-daemon --console=plain` returned without a visible Gradle build summary; generated XML still contained only the three filtered suites (32 tests), so this does not establish a full-suite result. Retry with forced test-task execution pending.
-- **Verification:** Pending this resumed batch.
+- **Final verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL` in 2m 49s. Inspected fresh XML: 61 suites, 256 tests, 0 failures, 0 errors, 0 skipped; the launch coordinator suite had 24 passing tests, lineage 5, and process cache 3. `git diff --check` passed. Source search confirmed no wait-only retry/spawn-budget identifiers remain.
+- **JVM observation:** With the configured `JAVA_HOME`, `java -version` reported GraalVM 19.0.2; `gradle --version` reported launcher/daemon JDK 21.0.7, and the running app process also used JDK 21.0.7. The test-worker JVM was not captured.
+- **Workflow smoke check:** Restarted `Start application`; `getWorkflowStatus` reported `running` in `:run`, with no errors in the latest workflow logs. No Windows runtime behavior was exercised.
+- **Safety review:** Re-read `FocusLauncherService.isLaunchAllowed`, PIN verification and exit, break and kill-switch paths, `SessionPin`, `ProcessMonitor` launcher sweep, and `NuclearMode` name/path escape-tool lists. No enforcement/PIN code was changed.
+- **Final status:** P0.2 is complete and verified on Linux. P0.3 coordinator behavior is implemented and T2/T3/T4-core/T7/T12 pass, but its acceptance remains open for the visible elapsed-progress notice assigned to P1.6. P0.4 implementation checks and T3/T16/T17/T21 pass, but its acceptance stays open because T8 belongs to P1.1 per the allowlist and Windows archetypes B–D/F still require owner verification. P0.5 and all P1 work remain untouched.
+- **Constants:** `WINDOW_WAIT_MS=60000`, `CHAIN_GONE_GRACE_MS=3000`, `ATTACH_WINDOW_MS=90000`, `SPAWN_DEBOUNCE_MS=2000`, `WATCHDOG_MARGIN_MS=5000`, `WINDOW_SELECTION_SETTLE_MS=300`, `WINDOW_POLL_MS=150`, `PROCESS_REFRESH_MS=500`.
 
 ## P1 — Correctness and robustness
 
@@ -223,27 +228,27 @@ Add dated entries for each selected task and preserve the plan's out-of-scope bo
 
 Mark each scenario complete only after its named behavior is tested with the fake platform/virtual time as required by the plan.
 
-- [ ] **T1** Spawn, window appears, raise succeeds; no later-attempt influence remains.
-- [ ] **T2** Dead-on-arrival process exits quickly; next tap spawns.
-- [ ] **T3** Stub exits and a same-root/descendant hand-off process appears.
-- [ ] **T4** Slow live process opens on the first attempt with soft progress and no early failure.
-- [ ] **T5** After a hard-cap failure and delay, next tap spawns rather than waits.
-- [ ] **T6** Close shortly after opening; next tap spawns immediately.
-- [ ] **T7** Hung native call is bounded by watchdog; stale worker cannot alter newer attempt.
+- [x] **T1** Spawn, window appears, raise succeeds; no later-attempt influence remains.
+- [x] **T2** Dead-on-arrival process exits quickly; next tap spawns.
+- [x] **T3** Stub exits and a same-root/descendant hand-off process appears.
+- [ ] **T4** Slow live process opens on the first attempt with soft progress and no early failure. Core liveness is tested; the visible elapsed-progress notice is P1.6.
+- [x] **T5** After a hard-cap failure and delay, next tap spawns rather than waits.
+- [x] **T6** Close shortly after opening; next tap spawns immediately.
+- [x] **T7** Hung native call is bounded by watchdog; stale worker cannot alter newer attempt.
 - [ ] **T8** Foreground verification accepts another HWND of the chain and rejects another process.
 - [ ] **T9** Failed raise tiers end within budget and allow a fresh retry.
 - [ ] **T10** FocusFlow-blocked app fails pre-flight without a spawn call.
 - [ ] **T11** Old windowless/tray instance results in one spawn and successful open.
-- [ ] **T12** `cancelAll()` and per-app cancel work in every phase without lingering jobs/state.
+- [x] **T12** `cancelAll()` and per-app cancel work in every phase without lingering jobs/state.
 - [ ] **T13** Chain members survive; unrelated/renamed escape tools remain blocked.
 - [ ] **T14** FocusFlow-owned system utility is exempt only under the specified ownership proof.
-- [ ] **T15** Two same-frame taps produce one spawn.
-- [ ] **T16** Reused PID with a different creation time is not in the chain.
-- [ ] **T17** Unreadable process remains tracked by PID and can own a found window.
+- [x] **T15** Two same-frame taps produce one spawn.
+- [x] **T16** Reused PID with a different creation time is not in the chain.
+- [x] **T17** Unreadable process remains tracked by PID and can own a found window.
 - [ ] **T18** Unresolvable lineage is not killed on first sighting; next snapshot decides.
 - [ ] **T19** A setup loader exception does not strand the screen in loading.
 - [ ] **T20** Spawn errors 2, 3, 5, 193, and 740 map to typed, friendly failures.
-- [ ] **T21** Main window supersedes splash; Z-order preference is respected.
+- [x] **T21** Main window supersedes splash; Z-order preference is respected.
 - [x] **T22** Exactly one terminal summary line is emitted per attempt with its attempt ID.
 
 ## Manual Windows verification — plan §9
