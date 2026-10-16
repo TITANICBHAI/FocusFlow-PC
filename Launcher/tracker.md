@@ -50,7 +50,7 @@
 
 ## P0 — Reported launch-reliability failures
 
-**Status:** P0.1 and P0.2 complete with Linux automated evidence; P0.3 coordinator behavior is implemented, but T4's visible elapsed-progress notice remains P1.6; P0.4 acceptance remains open for T8/P1.1 and owner-run Windows checks; P0.5 not started.
+**Status:** P0.1 and P0.2 complete with Linux automated evidence; P0.3 coordinator behavior is implemented, but T4's visible elapsed-progress notice remains P1.6; P0.4 acceptance remains open for T8/P1.1 and owner-run Windows checks; P0.5 is in progress with the user's manual opt-in and Global PIN requirements.
 
 ### P0.1 — Per-attempt launch tracing
 
@@ -110,10 +110,14 @@
 
 ### P0.5 — Protect launch chains from kiosk enforcement
 
-- [ ] Implement one shared kiosk process decision and use it in the allowed launcher branches.
-- [ ] Apply the plan's lineage/install-root and FocusFlow-owned utility rules without weakening escape-tool name/path detection.
-- [ ] Use the plan's D1-B default unless the owner explicitly changes the decision.
-- [ ] **Acceptance:** T13, T14, and T18 pass; Windows archetype D and escape-tool row 12 remain for the owner.
+- [ ] Keep app-chain exceptions disabled by default; enable only through the Settings toggle after Global PIN verification, and allow free disable.
+- [ ] If Global PIN is unset, require setup and a second entry/verification before enabling. If PIN state or database is unavailable, fail closed; removing the Global PIN forces the setting off.
+- [ ] Require fresh Global PIN verification on each Enter Launcher attempt while exceptions are enabled; provide direct Settings navigation to disable, then require a fresh entry click.
+- [ ] Show a live On/Off status in Focus Launcher only after the setting has been manually enabled once.
+- [ ] Implement one shared kiosk process decision and use it in the launcher sweep, foreground enforcement, focus reclaim, and NuclearMode ownership exception.
+- [ ] Apply D1-B lineage/install-root and FocusFlow-owned utility rules without weakening escape-tool name/path detection.
+- [ ] Explain the opt-in's scope and Steam-launched-app example in Settings before enabling.
+- [ ] **Acceptance:** T13, T14, T18, and T23–T26 pass; Windows archetype D and escape-tool row 12 remain for the owner.
 
 ### P0 execution notes
 
@@ -157,6 +161,15 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Safety review:** Re-read `FocusLauncherService.isLaunchAllowed`, PIN verification and exit, break and kill-switch paths, `SessionPin`, `ProcessMonitor` launcher sweep, and `NuclearMode` name/path escape-tool lists. No enforcement/PIN code was changed.
 - **Final status:** P0.2 is complete and verified on Linux. P0.3 coordinator behavior is implemented and T2/T3/T4-core/T7/T12 pass, but its acceptance remains open for the visible elapsed-progress notice assigned to P1.6. P0.4 implementation checks and T3/T16/T17/T21 pass, but its acceptance stays open because T8 belongs to P1.1 per the allowlist and Windows archetypes B–D/F still require owner verification. P0.5 and all P1 work remain untouched.
 - **Constants:** `WINDOW_WAIT_MS=60000`, `CHAIN_GONE_GRACE_MS=3000`, `ATTACH_WINDOW_MS=90000`, `SPAWN_DEBOUNCE_MS=2000`, `WATCHDOG_MARGIN_MS=5000`, `WINDOW_SELECTION_SETTLE_MS=300`, `WINDOW_POLL_MS=150`, `PROCESS_REFRESH_MS=500`.
+
+### 2026-10-17 — P0.5 — User-approved opt-in and Global PIN gate
+
+- **Scope:** Begin P0.5 using D1-B only when manually enabled. User requires a Settings toggle, clear description with a Steam launch-chain example, free disable, Global PIN verification to enable, a persistent live On/Off launcher status after first enable, and a PIN-or-Settings gate on every Enter Launcher attempt while enabled.
+- **Security behavior:** If Global PIN is unset, require Global PIN setup followed by explicit PIN entry before enabling. Database/PIN read failures block enablement and launcher entry. Removing the Global PIN disables the feature. Escape-tool name and path checks remain higher priority than every chain exemption.
+- **Working tree:** Source implementation from P0.2–P0.4 is present in local project history; no GitHub push is part of this task. Preserve the user's two supplied plan notes.
+- **Plan update:** P0.5 file scope expanded to include the narrowly scoped Settings, Focus Launcher setup, app navigation, and new policy/service code needed for the user-approved flow. No P1.1/P1.3/P1.6 work is authorized here.
+- **Implementation files:** Pending final code inspection; expected scope is enforcement launcher branches, launcher service, the two launcher/settings screens, app navigation, and focused allowance/policy tests only.
+- **Verification:** Pending.
 
 ## P1 — Correctness and robustness
 
