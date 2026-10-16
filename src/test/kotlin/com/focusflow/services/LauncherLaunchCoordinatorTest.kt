@@ -98,6 +98,47 @@ class LauncherLaunchCoordinatorTest {
     }
 
     @Test
+    fun raiseAndInternalFailuresEachEmitOneSummary() = runTest {
+        val logs = mutableListOf<String>()
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(42L, nowMs(), app.processName)
+            windows += WindowRef(handle = 420L, pid = 42L)
+            raiseSuccess = false
+        }
+        val coordinator = coordinator(platform, backgroundScope, logs)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(
+            LauncherLaunchCoordinator.RAISE_RETRY_DELAY_MS *
+                (LauncherLaunchCoordinator.MAX_RAISE_ATTEMPTS - 1)
+        )
+        runCurrent()
+
+        platform.findInstancesFailure = IllegalStateException("test snapshot failure")
+        val internalErrorApp = FocusLauncherApp(
+            processName = "internal-error.exe",
+            displayName = "Internal error",
+            exePath = "C:\\Apps\\internal-error.exe"
+        )
+        coordinator.request(internalErrorApp)
+        runCurrent()
+
+        val summaries = logs.filter { " summary=true " in " $it " }
+        assertEquals(2, summaries.size)
+        val raiseFailed = summaries.single { "exe=sample.exe" in it }
+        val internalFailed = summaries.single { "exe=internal-error.exe" in it }
+        assertTrue("result=Failed(code=RaiseFailed)" in raiseFailed)
+        assertTrue("tierResults=[fake=false, fake=false, fake=false]" in raiseFailed)
+        assertTrue("result=Failed(code=Internal)" in internalFailed)
+        val attemptIds = summaries.map { Regex("attemptId=([^ ]+)").find(it)!!.groupValues[1] }
+        attemptIds.forEach { id ->
+            assertEquals(1, summaries.count { "attemptId=$id " in it })
+        }
+        coordinator.cancelAll()
+    }
+
+    @Test
     fun delayedWindowIsRaisedAfterThreePolls() = runTest {
         val platform = FakeLaunchPlatform(this).apply {
             windowAppearsAtMs = 300L
@@ -136,6 +177,8 @@ class LauncherLaunchCoordinatorTest {
         val firstAttemptLogs = logs.filter { it.startsWith("attemptId=$firstAttemptId ") }
         assertTrue(firstAttemptLogs.size <= 10, "attempt logged ${firstAttemptLogs.size} lines")
         assertEquals(1, firstAttemptLogs.count { " summary=true " in " $it " })
+        assertTrue(firstAttemptLogs.single { " summary=true " in " $it " }
+            .contains("result=Failed(code=NoWindow)"))
 
         assertTrue(coordinator.request(app))
         runCurrent()
@@ -198,11 +241,12 @@ class LauncherLaunchCoordinatorTest {
 
     @Test
     fun cancelAllStopsAWindowRaiseThatHasNotStarted() = runTest {
+        val logs = mutableListOf<String>()
         val platform = FakeLaunchPlatform(this).apply {
             windowAppearsAtMs = 150L
             raiseGate = CompletableDeferred()
         }
-        val coordinator = coordinator(platform, backgroundScope)
+        val coordinator = coordinator(platform, backgroundScope, logs)
 
         coordinator.request(app)
         runCurrent()
@@ -215,6 +259,9 @@ class LauncherLaunchCoordinatorTest {
 
         assertTrue(platform.raisedWindows.isEmpty())
         assertTrue(coordinator.states.value.isEmpty())
+        val summaries = logs.filter { " summary=true " in " $it " }
+        assertEquals(1, summaries.size)
+        assertTrue("result=Failed(code=Cancelled)" in summaries.single())
     }
 
     private fun coordinator(
@@ -237,12 +284,16 @@ class LauncherLaunchCoordinatorTest {
         var spawnedPid: Long? = null
         var windowAppearsAtMs: Long? = null
         var raiseGate: CompletableDeferred<Unit>? = null
+        var raiseSuccess = true
+        var findInstancesFailure: Exception? = null
         var windowPollsForSpawnedPid = 0
 
         override fun nowMs(): Long = testScope.testScheduler.currentTime
 
-        override fun findInstances(app: FocusLauncherApp): List<RunningInstance> =
-            instances.toList()
+        override fun findInstances(app: FocusLauncherApp): List<RunningInstance> {
+            findInstancesFailure?.let { throw it }
+            return instances.toList()
+        }
 
         override fun findWindows(pids: Set<Long>): List<WindowRef> {
             val pid = spawnedPid
@@ -265,7 +316,7 @@ class LauncherLaunchCoordinatorTest {
         override suspend fun raise(window: WindowRef): RaiseResult {
             raiseGate?.await()
             raisedWindows += window
-            return RaiseResult(success = true, tier = "fake")
+            return RaiseResult(success = raiseSuccess, tier = "fake")
         }
 
         override fun focusFlowElevated(): Boolean? = true

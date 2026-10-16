@@ -72,7 +72,7 @@ class LauncherLaunchCoordinator(
 ) {
     companion object {
         private val attemptSequence = java.util.concurrent.atomic.AtomicLong()
-        private const val MAX_POLL_CHANGE_LOGS = 2
+        private const val MAX_POLL_CHANGE_LOGS = 1
 
         const val WINDOW_WAIT_MS = 20_000L
         const val SPAWN_BUDGET_MS = 20_000L
@@ -145,13 +145,13 @@ class LauncherLaunchCoordinator(
         val key = app.processName.lowercase(Locale.ROOT)
         synchronized(lock) {
             if (!isAllowed(app)) {
-                log("Ignored launch for non-session app=${app.processName}")
+                logInfo("Ignored launch for non-session app=${app.processName}")
                 return false
             }
 
             val current = _states.value[key]
             if (current is LaunchState.Launching) {
-                log("Ignored duplicate click app=${app.processName}")
+                logInfo("Ignored duplicate click app=${app.processName}")
                 return false
             }
             if (current is LaunchState.Failed && !current.canRetry) {
