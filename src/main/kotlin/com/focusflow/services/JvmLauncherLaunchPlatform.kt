@@ -14,6 +14,14 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
     override fun findInstances(app: FocusLauncherApp): List<RunningInstance> =
         ProcessSnapshot.findInstances(app, nowMs())
 
+    override fun processSnapshot(app: FocusLauncherApp): List<ProcessSnapshotEntry> =
+        ProcessSnapshot.snapshotProcesses()
+
+    override fun unsupportedReason(app: FocusLauncherApp): String? =
+        (app.exePath ?: app.processName).takeIf(::isWindowsAppsPath)?.let {
+            "Microsoft Store apps cannot be launched from Focus Launcher yet."
+        }
+
     override fun findWindows(pids: Set<Long>): List<WindowRef> =
         WindowRaiser.findWindows(pids)
 
@@ -81,6 +89,9 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
 
     override fun processIsAlive(pid: Long): Boolean? =
         runCatching { ProcessHandle.of(pid).map { it.isAlive }.orElse(false) }.getOrNull()
+
+    override fun processIsAlive(pid: Long, creationTimeMs: Long?): Boolean? =
+        ProcessSnapshot.isAlive(pid, creationTimeMs)
 
     override fun finishAttempt(attemptId: String) {
         WindowRaiser.finishAttempt(attemptId)

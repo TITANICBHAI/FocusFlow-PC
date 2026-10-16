@@ -48,6 +48,8 @@ internal class ProcessSnapshotCache(
  * cached by PID plus creation time so PID reuse cannot inherit stale metadata.
  */
 internal object ProcessSnapshot {
+    private const val SNAPSHOT_TTL_MS = 250L
+
     private val commandCache = ProcessCommandCache()
     private val fullPathCache = ProcessCommandCache()
     private val snapshotCache = ProcessSnapshotCache(
@@ -149,5 +151,162 @@ internal object ProcessSnapshot {
     private fun normalizePath(path: String?): String? =
         path?.replace('/', '\\')?.trimEnd('\\')?.lowercase()
 
-    private const val SNAPSHOT_TTL_MS = 250L
+}
+
+internal data class ProcessIdentity(
+    val pid: Long,
+    val creationTimeMs: Long
+)
+
+/**
+ * Keeps the live process chain for one launch attempt. A tracked PID is retained
+ * only while the same process instance is present; creation time distinguishes
+ * a reused PID from the process originally observed.
+ */
+internal class ProcessLineageTracker(
+    private val app: FocusLauncherApp,
+    private val chainStartedAtMs: Long,
+    private val resolvePath: (ProcessSnapshotEntry) -> String? = { it.executablePath }
+) {
+    private val tracked = linkedMapOf<Long, ProcessSnapshotEntry>()
+    private val expectedName = imageName(app.processName).lowercase()
+    private val expectedPath = normalizePath(app.exePath)
+    private val installRoot = installRoot(app.exePath)
+
+    fun addSpawnPid(pid: Long) {
+        if (pid > 0L) tracked.putIfAbsent(pid, ProcessSnapshotEntry(pid = pid))
+    }
+
+    fun update(snapshot: List<ProcessSnapshotEntry>): Set<Long> {
+        val currentByPid = snapshot.associateBy(ProcessSnapshotEntry::pid)
+
+        tracked.entries.toList().forEach { (pid, previous) ->
+            val current = currentByPid[pid]
+            if (current == null || isDifferentInstance(previous, current)) {
+                tracked.remove(pid)
+            } else {
+                tracked[pid] = if (previous.creationTimeMs != null &&
+                    current.creationTimeMs == null
+                ) {
+                    current.copy(creationTimeMs = previous.creationTimeMs)
+                } else {
+                    current
+                }
+            }
+        }
+
+        snapshot.forEach { process ->
+            if (matchesApp(process)) tracked[process.pid] = process
+        }
+
+        var added = true
+        while (added) {
+            added = false
+            snapshot.forEach { process ->
+                if (process.pid in tracked) return@forEach
+                val parentPid = process.parentPid ?: return@forEach
+                val parent = tracked[parentPid] ?: return@forEach
+                val currentParent = currentByPid[parentPid] ?: return@forEach
+                if (isConfirmedSameInstance(parent, currentParent)) {
+                    tracked[process.pid] = process
+                    added = true
+                }
+            }
+        }
+
+        if (installRoot != null) {
+            snapshot.forEach { process ->
+                if (process.pid in tracked) return@forEach
+                val createdAt = process.creationTimeMs ?: return@forEach
+                if (createdAt < chainStartedAtMs) return@forEach
+                val path = executablePath(process) ?: return@forEach
+                if (isWithinRoot(path, installRoot)) tracked[process.pid] = process
+            }
+        }
+
+        var addedDescendant = true
+        while (addedDescendant) {
+            addedDescendant = false
+            snapshot.forEach { process ->
+                if (process.pid in tracked) return@forEach
+                val parentPid = process.parentPid ?: return@forEach
+                val parent = tracked[parentPid] ?: return@forEach
+                val currentParent = currentByPid[parentPid] ?: return@forEach
+                if (isConfirmedSameInstance(parent, currentParent)) {
+                    tracked[process.pid] = process
+                    addedDescendant = true
+                }
+            }
+        }
+
+        return livePids()
+    }
+
+    fun liveProcesses(): List<ProcessSnapshotEntry> = tracked.values.toList()
+
+    fun process(pid: Long): ProcessSnapshotEntry? = tracked[pid]
+
+    fun livePids(): Set<Long> = tracked.keys.toSet()
+
+    fun identities(): Set<ProcessIdentity> =
+        tracked.values.mapNotNull { process ->
+            process.creationTimeMs?.let { ProcessIdentity(process.pid, it) }
+        }.toSet()
+
+    fun appInstances(snapshot: List<ProcessSnapshotEntry>): List<ProcessSnapshotEntry> =
+        snapshot.filter(::matchesApp)
+
+    private fun matchesApp(process: ProcessSnapshotEntry): Boolean {
+        val name = process.processName.takeIf(String::isNotBlank)
+            ?.let(::imageName)
+            ?.lowercase()
+            .orEmpty()
+
+        if (name == expectedName) return true
+        val path = executablePath(process)
+        return expectedPath != null && normalizePath(path) == expectedPath
+    }
+
+    private fun executablePath(process: ProcessSnapshotEntry): String? =
+        process.executablePath?.takeIf(String::isNotBlank)
+            ?: resolvePath(process)?.takeIf(String::isNotBlank)
+
+    private fun isDifferentInstance(
+        previous: ProcessSnapshotEntry,
+        current: ProcessSnapshotEntry
+    ): Boolean =
+        previous.creationTimeMs != null &&
+            current.creationTimeMs != null &&
+            previous.creationTimeMs != current.creationTimeMs
+
+    private fun isConfirmedSameInstance(
+        previous: ProcessSnapshotEntry,
+        current: ProcessSnapshotEntry
+    ): Boolean =
+        previous.creationTimeMs == null ||
+            current.creationTimeMs == previous.creationTimeMs
+
+    private fun imageName(path: String): String =
+        path.substringAfterLast('\\').substringAfterLast('/')
+
+    private fun normalizePath(path: String?): String? =
+        path?.replace('/', '\\')?.trimEnd('\\')?.lowercase()
+
+    private fun installRoot(path: String?): String? {
+        val normalized = normalizePath(path) ?: return null
+        val executableDirectory = normalized.substringBeforeLast('\\', missingDelimiterValue = "")
+        if (executableDirectory.isBlank()) return null
+        val directoryName = executableDirectory.substringAfterLast('\\')
+        val root = if (directoryName.startsWith("app-")) {
+            executableDirectory.substringBeforeLast('\\', missingDelimiterValue = "")
+        } else {
+            executableDirectory
+        }
+        return root.takeIf(String::isNotBlank)
+    }
+
+    private fun isWithinRoot(path: String, root: String): Boolean {
+        val normalized = normalizePath(path) ?: return false
+        return normalized == root || normalized.startsWith("$root\\")
+    }
 }

@@ -6,6 +6,7 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.platform.win32.Kernel32
 import com.sun.jna.platform.win32.WinDef.HWND
+import com.sun.jna.platform.win32.WinDef.RECT
 import com.sun.jna.ptr.IntByReference
 import com.sun.jna.win32.StdCallLibrary
 import com.sun.jna.win32.W32APIOptions
@@ -34,7 +35,12 @@ object LauncherWindowRegistry {
 object WindowRaiser {
     private const val GWL_EXSTYLE = -20
     private const val WS_EX_TOOLWINDOW = 0x00000080
+    private const val GW_OWNER = 4
     private const val DWMWA_CLOAKED = 14
+    private const val SM_XVIRTUALSCREEN = 76
+    private const val SM_YVIRTUALSCREEN = 77
+    private const val SM_CXVIRTUALSCREEN = 78
+    private const val SM_CYVIRTUALSCREEN = 79
     private const val SW_RESTORE = 9
     private const val SWP_NOSIZE = 0x0001
     private const val SWP_NOMOVE = 0x0002
@@ -64,6 +70,11 @@ object WindowRaiser {
         fun IsWindowVisible(hwnd: HWND): Boolean
         fun IsIconic(hwnd: HWND): Boolean
         fun GetWindowLongW(hwnd: HWND, index: Int): Int
+        fun GetWindow(hwnd: HWND, command: Int): HWND?
+        fun GetWindowRect(hwnd: HWND, rect: RECT): Boolean
+        fun GetWindowTextLengthW(hwnd: HWND): Int
+        fun GetWindowTextW(hwnd: HWND, text: CharArray, maxCount: Int): Int
+        fun GetSystemMetrics(index: Int): Int
         fun ShowWindow(hwnd: HWND, command: Int): Boolean
         fun SetWindowPos(
             hwnd: HWND,
@@ -104,8 +115,14 @@ object WindowRaiser {
         val toolWindows = mutableListOf<WindowRef>()
         return try {
             val api = User32ActivationApi.INSTANCE
+            var zOrder = 0
+            val virtualLeft = api.GetSystemMetrics(SM_XVIRTUALSCREEN)
+            val virtualTop = api.GetSystemMetrics(SM_YVIRTUALSCREEN)
+            val virtualWidth = api.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+            val virtualHeight = api.GetSystemMetrics(SM_CYVIRTUALSCREEN)
             api.EnumWindows(object : EnumWindowsCallback {
                 override fun callback(hwnd: HWND, data: Pointer?): Boolean {
+                    val currentZOrder = zOrder++
                     if (!api.IsWindowVisible(hwnd) || isCloaked(hwnd)) return true
 
                     val processId = IntArray(1)
@@ -115,8 +132,34 @@ object WindowRaiser {
 
                     val rawHandle = Pointer.nativeValue(hwnd.pointer)
                     if (rawHandle == 0L) return true
-                    val window = WindowRef(rawHandle, pid)
-                    if (api.GetWindowLongW(hwnd, GWL_EXSTYLE) and WS_EX_TOOLWINDOW != 0) {
+                    val bounds = RECT()
+                    if (!api.GetWindowRect(hwnd, bounds)) return true
+                    val width = bounds.right - bounds.left
+                    val height = bounds.bottom - bounds.top
+                    if (width <= 0 || height <= 0) return true
+                    if (virtualWidth > 0 && virtualHeight > 0 &&
+                        (bounds.right <= virtualLeft ||
+                            bounds.left >= virtualLeft + virtualWidth ||
+                            bounds.bottom <= virtualTop ||
+                            bounds.top >= virtualTop + virtualHeight)
+                    ) return true
+
+                    val toolWindow = api.GetWindowLongW(hwnd, GWL_EXSTYLE) and
+                        WS_EX_TOOLWINDOW != 0
+                    val owner = api.GetWindow(hwnd, GW_OWNER)
+                    val ownerless = owner == null ||
+                        Pointer.nativeValue(owner.pointer) == 0L
+                    val hasTitle = api.GetWindowTextLengthW(hwnd) > 0
+                    val window = WindowRef(
+                        handle = rawHandle,
+                        pid = pid,
+                        ownerless = ownerless,
+                        hasTitle = hasTitle,
+                        toolWindow = toolWindow,
+                        reasonableSize = width >= 160 && height >= 100,
+                        zOrder = currentZOrder
+                    )
+                    if (toolWindow) {
                         toolWindows += window
                     } else {
                         appWindows += window
@@ -125,9 +168,9 @@ object WindowRaiser {
                 }
             }, null)
 
-            (if (appWindows.isNotEmpty()) appWindows else toolWindows)
-                .distinctBy(WindowRef::handle)
-                .sortedWith(compareBy(WindowRef::pid, WindowRef::handle))
+            com.focusflow.services.orderLauncherWindows(
+                if (appWindows.isNotEmpty()) appWindows else toolWindows
+            )
         } catch (failure: Throwable) {
             warnAttemptOnce(
                 attemptId,

@@ -129,6 +129,17 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Plan acceptance note:** P0.4 lists T8 while its allowlist permits only `WindowRaiser.findWindows`; process-based foreground verification belongs to P1.1 and its `raise` path. Do not widen the P0.4 allowlist; record any T8 portion that cannot be satisfied here as deferred to P1.1.
 - **Verification:** Pending.
 
+### 2026-10-16 — P0.2/P0.3/P0.4 — Resumed implementation batch
+
+- **Scope:** Continue only P0.2, P0.3, and P0.4 together. P0.5 remains out of scope for this authorization.
+- **Working tree:** `main` is one commit ahead of `origin/main` and clean; no pre-existing edits need preservation.
+- **Files read before editing:** `replit.md`, `Launcher/plan.md`, `Launcher/tracker.md`, `Launcher/rules.md`, `Launcher/preagent-prompt.md`, `.agents/memory/focus-launcher-task-brief.md`, `.agents/memory/gradle-test-completion.md`, `.agents/memory/gradle-jvm-selection.md`, `LauncherLaunchCoordinator.kt`, `LauncherLaunchCoordinatorTest.kt`, `JvmLauncherLaunchPlatform.kt`, `ProcessSnapshot.kt`, `ProcessCommandCacheTest.kt`, `ProcessNameResolver.kt`, `ProcessNameResolverTest.kt`, `WindowRaiser.kt`, and the `FocusLauncherApp` model.
+- **Current source findings:** The coordinator still has wait-only retry and 20-second spawn-budget state, refreshes by replacing PIDs, and has no independent watchdog or per-app cancellation. `ProcessSnapshot` already captures parent PID/creation time and lazily caches full paths, but the JVM platform does not expose the full snapshot to the coordinator. `WindowRaiser.findWindows` still sorts by PID/handle and does not filter/rank candidate windows.
+- **Verification:** Pending.
+- **Implementation update:** Removed the coordinator's wait-only and 20-second spawn-budget decisions; added the first per-attempt/watchdog/cancellation and lineage/window-selection changes. Work remains partial and unchecked.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle :compileKotlin --no-daemon --console=plain` failed at `:compileKotlin` with `ProcessSnapshot.kt:54:17 Variable 'SNAPSHOT_TTL_MS' must be initialized`. Moved the constant above the cache initializer; rerun pending.
+- **Verification attempt 2:** The same command completed with `BUILD SUCCESSFUL` in 2m 7s. Existing CsvExport and Compose icon deprecation warnings remain; acceptance tests are still pending.
+
 ## P1 — Correctness and robustness
 
 **Status:** Not started. Respect the dependencies stated in the plan.
