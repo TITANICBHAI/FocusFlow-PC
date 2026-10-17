@@ -221,6 +221,17 @@ Add dated entries here before and after each meaningful implementation change. P
 
 ### P1.3 — Spawn method
 
+#### 2026-10-17 — In progress
+
+- **Authorized scope:** P1.3 only: executable resolution, no `cmd /c start` fallback, child-stdin closure, preserved executable-directory working directory, de-elevated launch when FocusFlow is elevated, and friendly spawn failures.
+- **Working tree:** `main` is one commit ahead of `origin/main`; clean at batch start.
+- **Files read before edits:** `replit.md`, `Launcher/plan.md`, `Launcher/tracker.md`, `Launcher/preagent-prompt.md`, `Launcher/rules.md`, `.agents/memory/focus-launcher-task-brief.md`, `JvmLauncherLaunchPlatform.kt`, `ProcessSnapshot.kt`, `ElevationManager.kt`, `WindowsStartupManager.kt`, and the relevant validation/spawn/failure-classification sections of `LauncherLaunchCoordinator.kt`.
+- **Current source finding:** The platform still launches a pathless app with `cmd /c start`; `ProcessBuilder` stdin is left open. Coordinator-side error classification already provides friendly 2/3/5/193/740 messages.
+- **Implementation progress:** Added ordered executable resolution (tile path, App Paths, PATH, then a matching running process), preflight use of the resolver, removal of the command-shell fallback, child-stdin closure, executable-directory working directory, and a shell-token launch path for elevated FocusFlow. The token path fails closed if the interactive shell token is missing or elevated. Existing coordinator mapping supplies user-facing errors for Windows codes 2/3/5/193/740. Focused tests and compile are pending.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle :compileKotlin --no-daemon --console=plain` timed out at the 300-second shell limit after `:compileKotlin` began; no final Gradle result was captured. Treat as incomplete, not a pass. Retry after adding focused tests and resolving any source issues.
+- **Test progress:** Added focused tests for executable-source precedence, stale-path fallback, updater/uninstaller rejection, path parsing, working directory, and direct versus user-token spawn selection. These tests exercise path and decision helpers only; they do not execute Windows APIs.
+- **Verification:** Pending. Windows elevation matrix row 5 remains owner-only.
+
 - [ ] Resolve the executable before spawn; remove `cmd /c start`; close child stdin and preserve the working-directory rule.
 - [ ] Apply the planned elevation behavior and friendly spawn-error mapping.
 - [ ] **Acceptance:** Windows elevation matrix row 5 remains owner-verified.
