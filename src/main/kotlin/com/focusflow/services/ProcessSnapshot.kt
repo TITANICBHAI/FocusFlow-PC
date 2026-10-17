@@ -1,6 +1,7 @@
 package com.focusflow.services
 
 import com.focusflow.enforcement.WindowsProcessImageApi
+import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.isWindows
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -23,21 +24,29 @@ internal class ProcessCommandCache {
 internal class ProcessSnapshotCache(
     private val ttlMs: Long,
     private val nowMs: () -> Long,
-    private val load: () -> List<ProcessSnapshotEntry>
+    private val load: () -> List<ProcessSnapshotEntry>,
+    private val onRefreshDurationMs: (Long) -> Unit = {}
 ) {
     @Volatile private var cachedAtMs: Long? = null
     @Volatile private var cachedEntries: List<ProcessSnapshotEntry> = emptyList()
 
     @Synchronized
-    fun snapshot(): List<ProcessSnapshotEntry> {
+    fun snapshot(forceRefresh: Boolean = false): List<ProcessSnapshotEntry> {
         val now = nowMs()
         val capturedAt = cachedAtMs
-        if (capturedAt != null && now >= capturedAt && now - capturedAt < ttlMs) {
+        if (!forceRefresh &&
+            capturedAt != null &&
+            now >= capturedAt &&
+            now - capturedAt < ttlMs
+        ) {
             return cachedEntries
         }
+        val startedAtNanos = System.nanoTime()
         val fresh = load().toList()
+        val durationMs = (System.nanoTime() - startedAtNanos) / 1_000_000L
         cachedEntries = fresh
-        cachedAtMs = now
+        cachedAtMs = nowMs()
+        onRefreshDurationMs(durationMs)
         return fresh
     }
 }
@@ -55,10 +64,16 @@ internal object ProcessSnapshot {
     private val snapshotCache = ProcessSnapshotCache(
         ttlMs = SNAPSHOT_TTL_MS,
         nowMs = { System.nanoTime() / 1_000_000L },
-        load = ::readSnapshot
+        load = ::readSnapshot,
+        onRefreshDurationMs = { durationMs ->
+            if (durationMs > 50L) {
+                EnforcementLog.info("Launcher", "processSnapshot durationMs=$durationMs")
+            }
+        }
     )
 
-    fun snapshotProcesses(): List<ProcessSnapshotEntry> = snapshotCache.snapshot()
+    fun snapshotProcesses(forceRefresh: Boolean = false): List<ProcessSnapshotEntry> =
+        snapshotCache.snapshot(forceRefresh)
 
     fun findInstances(app: FocusLauncherApp, nowMs: Long): List<RunningInstance> {
         val expectedName = app.processName.substringAfterLast('\\')

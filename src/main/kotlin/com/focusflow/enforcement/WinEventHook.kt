@@ -141,12 +141,33 @@ object WinEventHook : com.focusflow.services.allowance.ForegroundEventSource {
                             focusFlowHwnd = hwnd
                         }
 
-                        // Keep the legacy name path unchanged for ProcessMonitor;
-                        // allowance listeners use the more robust resolver below.
-                        val cmdOpt = ProcessHandle.of(pid).flatMap { it.info().command() }
-                        val exeName = cmdOpt.orElse(null)
-                            ?.substringAfterLast('\\')?.substringAfterLast('/')
+                        // Use the shared process snapshot for the common path. A
+                        // direct PID lookup remains the fallback for a process
+                        // created after the last snapshot.
+                        val snapshotEntry = if (pid > 0L) {
+                            runCatching {
+                                com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+                                    .firstOrNull { it.pid == pid }
+                            }.getOrNull()
+                        } else {
+                            null
+                        }
+                        val snapshotImage = snapshotEntry?.processName
+                            ?.takeIf(String::isNotBlank)
+                            ?: snapshotEntry?.let {
+                                com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it)
+                            }
+                        val exeName = snapshotImage?.substringAfterLast('\\')
+                            ?.substringAfterLast('/')
                             ?.lowercase()
+                            ?: runCatching {
+                                ProcessHandle.of(pid)
+                                    .flatMap { it.info().command() }
+                                    .orElse(null)
+                                    ?.substringAfterLast('\\')
+                                    ?.substringAfterLast('/')
+                                    ?.lowercase()
+                            }.getOrNull()
 
                         // ── Focus reclamation ────────────────────────────────
                         // Use the shared cached kiosk policy so opted-in launcher
@@ -165,10 +186,12 @@ object WinEventHook : com.focusflow.services.allowance.ForegroundEventSource {
                         // Preserve ProcessMonitor's callback contract and independently
                         // publish nullable, richer events to foreground listeners.
                         if (exeName != null) processMonitorCallback?.invoke(exeName, pid)
-                        val resolvedName = if (pid > 0L) {
-                            DefaultProcessNameResolver.instance.resolve(pid, hwnd.pointer)
-                        } else {
-                            null
+                        val resolvedName = when {
+                            pid <= 0L -> null
+                            exeName == null ||
+                                exeName.equals("applicationframehost.exe", ignoreCase = true) ->
+                                DefaultProcessNameResolver.instance.resolve(pid, hwnd.pointer)
+                            else -> exeName
                         }
                         dispatchForeground(ForegroundEvent(resolvedName, pid, System.nanoTime()))
                     } catch (_: Exception) {}

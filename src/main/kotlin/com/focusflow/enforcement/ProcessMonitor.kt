@@ -166,8 +166,10 @@ object ProcessMonitor {
     }
 
     @Synchronized
-    private fun refreshLauncherPolicySnapshot(): List<com.focusflow.services.ProcessSnapshotEntry> {
-        val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+    private fun refreshLauncherPolicySnapshot(
+        forceRefresh: Boolean = false
+    ): List<com.focusflow.services.ProcessSnapshotEntry> {
+        val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses(forceRefresh)
         launcherPolicySnapshot = snapshot
         launcherPolicySnapshotVersion += 1L
         com.focusflow.services.LauncherKioskPolicy.onNewSnapshot(snapshot)
@@ -587,33 +589,27 @@ object ProcessMonitor {
         val blocked = buildBlockedProcessSet()
         if (blocked.isEmpty()) return
 
+        val startedAtNanos = System.nanoTime()
         val ownPid = ProcessHandle.current().pid()
         val foregroundPid = getForegroundProcessNameAndPid()?.second ?: -1L
         val now = System.currentTimeMillis()
         try {
-            val processes = ProcessHandle.allProcesses()
-                .filter {
-                    ph -> ph.isAlive &&
-                        ph.pid() != ownPid &&
-                        ph.pid() != foregroundPid &&
-                        ph.info().command().isPresent
-                }
-                .toList()
-
-            for (ph in processes) {
-                val exeName = ph.info().command().orElse(null)
-                    ?.substringAfterLast('\\')
-                    ?.substringAfterLast('/')
-                    ?.lowercase() ?: continue
-
+            val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+            for (process in snapshot) {
+                if (process.pid == ownPid || process.pid == foregroundPid) continue
+                val exeName = snapshotProcessName(process) ?: continue
                 // The foreground PID can change after the process list snapshot.
                 // Recheck it so a newly foregrounded blocked app goes through
                 // checkProcess(), which is the only path allowed to show an overlay.
                 if (exeName in blocked &&
-                    !isVisibleForegroundWindowForPid(ph.pid()) &&
+                    com.focusflow.services.ProcessSnapshot.isAlive(
+                        process.pid,
+                        process.creationTimeMs
+                    ) != false &&
+                    !isVisibleForegroundWindowForPid(process.pid) &&
                     tryAcquireCooldown(exeName, now)
                 ) {
-                    enforceBlock(exeName, ph.pid(), showOverlay = false)
+                    enforceBlock(exeName, process.pid, showOverlay = false)
                 }
             }
         } catch (e: Exception) {
@@ -622,14 +618,19 @@ object ProcessMonitor {
                 "Background process sweep failed — foreground enforcement remains active",
                 e
             )
+        } finally {
+            val durationMs = (System.nanoTime() - startedAtNanos) / 1_000_000L
+            if (durationMs > 50L) {
+                EnforcementLog.info("ProcessMonitor", "backgroundSweep durationMs=$durationMs")
+            }
         }
     }
 
     /**
      * Full-process-list enforcement for launcher kiosk mode.
      *
-     * Iterates every running process via ProcessHandle and kills any process whose
-     * name is NOT in [allowed] AND NOT in [launcherSafeProcesses]. This is the
+     * Iterates the shared process snapshot and kills any process whose name is
+     * NOT in [allowed] AND NOT in [launcherSafeProcesses]. This is the
      * definitive fix for UWP apps running inside ApplicationFrameHost.exe:
      * the UWP process (e.g. calculator.exe) appears as its own ProcessHandle entry
      * even though its window frame is owned by applicationframehost.exe, so it is
@@ -690,7 +691,7 @@ object ProcessMonitor {
             )
         } finally {
             val durationMs = (System.nanoTime() - startedAtNanos) / 1_000_000L
-            if (durationMs > 150L) {
+            if (durationMs > 50L) {
                 EnforcementLog.info("Launcher", "launcherSweep durationMs=$durationMs")
             }
         }
@@ -880,28 +881,42 @@ object ProcessMonitor {
 
     private data class ProcessTarget(val name: String, val pid: Long)
 
+    private fun snapshotProcessName(
+        process: com.focusflow.services.ProcessSnapshotEntry
+    ): String? {
+        val image = process.processName.takeIf(String::isNotBlank)
+            ?: com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
+            ?: return null
+        return image.substringAfterLast('\\')
+            .substringAfterLast('/')
+            .lowercase()
+            .takeIf(String::isNotBlank)
+    }
+
     private fun resolveUwpHostedProcess(blocked: Set<String>, hostPid: Long): ProcessTarget? {
         return try {
             if (blocked.isEmpty() || hostPid <= 0L) return null
-            ProcessHandle.allProcesses()
-                .filter { ph ->
-                    ph.isAlive &&
-                        ph.pid() != ProcessHandle.current().pid() &&
-                        ph.parent().orElse(null)?.pid() == hostPid
-                }
-                .toList()
-                .mapNotNull { ph ->
-                    val command = ph.info().command().orElse(null) ?: return@mapNotNull null
-                    val name = command.substringAfterLast('\\')
-                        .substringAfterLast('/')
-                        .lowercase()
-                    if (blocked.any { b -> name == b.lowercase() }) {
-                        ProcessTarget(name, ph.pid())
-                    } else {
-                        null
+            val ownPid = ProcessHandle.current().pid()
+            fun findChild(snapshot: List<com.focusflow.services.ProcessSnapshotEntry>) =
+                snapshot.asSequence()
+                    .filter { process ->
+                        process.pid != ownPid && process.parentPid == hostPid
                     }
-                }
-                .firstOrNull()
+                    .mapNotNull { process ->
+                        val name = snapshotProcessName(process) ?: return@mapNotNull null
+                        if (blocked.any { b -> name == b.lowercase() }) {
+                            ProcessTarget(name, process.pid)
+                        } else {
+                            null
+                        }
+                    }
+                    .firstOrNull()
+
+            val cached = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+            findChild(cached)
+                ?: findChild(
+                    com.focusflow.services.ProcessSnapshot.snapshotProcesses(forceRefresh = true)
+                )
         } catch (_: Exception) { null }
     }
 
@@ -909,21 +924,21 @@ object ProcessMonitor {
     private fun resolveUwpLauncherProcess(hostPid: Long): ProcessTarget? {
         return try {
             if (hostPid <= 0L) return null
-            ProcessHandle.allProcesses()
-                .filter { ph ->
-                    ph.isAlive &&
-                        ph.pid() != ProcessHandle.current().pid() &&
-                        ph.parent().orElse(null)?.pid() == hostPid
-                }
-                .toList()
-                .mapNotNull { ph ->
-                    val command = ph.info().command().orElse(null) ?: return@mapNotNull null
-                    val name = command.substringAfterLast('\\')
-                        .substringAfterLast('/')
-                        .lowercase()
-                    ProcessTarget(name, ph.pid())
-                }
-                .firstOrNull()
+            val ownPid = ProcessHandle.current().pid()
+            fun findChild(snapshot: List<com.focusflow.services.ProcessSnapshotEntry>) =
+                snapshot.asSequence()
+                    .filter { process ->
+                        process.pid != ownPid && process.parentPid == hostPid
+                    }
+                    .mapNotNull { process ->
+                        val name = snapshotProcessName(process) ?: return@mapNotNull null
+                        ProcessTarget(name, process.pid)
+                    }
+                    .firstOrNull()
+
+            val cached = refreshLauncherPolicySnapshot()
+            findChild(cached)
+                ?: findChild(refreshLauncherPolicySnapshot(forceRefresh = true))
         } catch (_: Exception) { null }
     }
 

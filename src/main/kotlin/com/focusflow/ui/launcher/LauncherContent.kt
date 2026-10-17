@@ -118,10 +118,7 @@ private fun MainLauncherScreen() {
     var showPinForBreak by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
-        val openingApp = apps.firstOrNull {
-            launchStates[it.processName.lowercase()] is LaunchState.Launching
-        }?.displayName
-        LauncherTopBar(hardLocked, openingApp)
+        LauncherTopBar(hardLocked)
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 148.dp),
@@ -235,17 +232,9 @@ private fun MainLauncherScreen() {
 }
 
 @Composable
-private fun LauncherTopBar(hardLocked: Boolean, openingApp: String?) {
+private fun LauncherTopBar(hardLocked: Boolean) {
     var clock by remember { mutableStateOf("") }
     var timer by remember { mutableStateOf("") }
-    var showOpeningStatus by remember { mutableStateOf(false) }
-    LaunchedEffect(openingApp) {
-        showOpeningStatus = false
-        if (openingApp != null) {
-            delay(800)
-            showOpeningStatus = true
-        }
-    }
     LaunchedEffect(Unit) {
         val formatter = DateTimeFormatter.ofPattern("HH:mm")
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
@@ -278,16 +267,6 @@ private fun LauncherTopBar(hardLocked: Boolean, openingApp: String?) {
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp
             )
-            if (showOpeningStatus && openingApp != null) {
-                Text(
-                    "Opening $openingApp… this can take a few seconds",
-                    color = LauncherColors.TextDim,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 16.dp)
-                )
-            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (hardLocked) {
@@ -313,6 +292,7 @@ private fun LauncherTopBar(hardLocked: Boolean, openingApp: String?) {
 private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
 
     var iconBitmap by remember(app.exePath) { mutableStateOf<ImageBitmap?>(null) }
+    var elapsedLaunchMs by remember(app.processName) { mutableStateOf(0L) }
     LaunchedEffect(app.exePath) {
         val path = app.exePath ?: return@LaunchedEffect
         val extracted = withContext(Dispatchers.IO) {
@@ -320,10 +300,23 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
         }
         iconBitmap = extracted
     }
+    LaunchedEffect(launchState) {
+        val launchingState = launchState as? LaunchState.Launching
+        if (launchingState == null) {
+            elapsedLaunchMs = 0L
+            return@LaunchedEffect
+        }
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            elapsedLaunchMs =
+                (System.currentTimeMillis() - launchingState.startedAtMs).coerceAtLeast(0L)
+            delay(1_000)
+        }
+    }
 
     val launching = launchState is LaunchState.Launching
     val failure = launchState as? LaunchState.Failed
     val shortFailure = failure?.let(::launchFailureLabel)
+    val retryHint = failure?.let(::launchFailureRetryHint)
     val tileContent: @Composable () -> Unit = {
         Box(
             modifier = Modifier
@@ -343,10 +336,10 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(if (launching) 4.dp else 10.dp)
             ) {
                 Box(
-                    Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
+                    Modifier.size(if (launching) 44.dp else 52.dp).clip(RoundedCornerShape(14.dp))
                         .background(Purple80.copy(alpha = .12f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -372,18 +365,39 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
                 }
                 Text(
                     text = when {
-                        launching -> "Opening…"
+                        launching -> launchProgressLabel(app.displayName, elapsedLaunchMs)
                         failure != null -> shortFailure.orEmpty()
                         else -> app.displayName
                     },
                     color = if (failure != null) Error else LauncherColors.Text,
-                    fontSize = if (failure != null) 10.sp else 12.sp,
+                    fontSize = when {
+                        failure != null -> 10.sp
+                        launching -> 11.sp
+                        else -> 12.sp
+                    },
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 8.dp),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (launching && elapsedLaunchMs >= LAUNCH_PROGRESS_NOTICE_MS) {
+                    TextButton(
+                        onClick = { LauncherLaunchCoordinator.shared.cancel(app) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Error),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Text("Cancel", fontSize = 11.sp)
+                    }
+                } else if (retryHint != null) {
+                    Text(
+                        retryHint,
+                        color = LauncherColors.TextDim,
+                        fontSize = 10.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
@@ -415,7 +429,19 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
     }
 }
 
-private fun launchFailureLabel(failure: LaunchState.Failed): String =
+private const val LAUNCH_PROGRESS_NOTICE_MS = 10_000L
+
+internal fun launchProgressLabel(appName: String, elapsedMs: Long): String =
+    if (elapsedMs < LAUNCH_PROGRESS_NOTICE_MS) {
+        "Opening…"
+    } else {
+        "Still opening $appName… ${elapsedMs / 1_000L} s"
+    }
+
+internal fun launchFailureRetryHint(failure: LaunchState.Failed): String? =
+    if (failure.canRetry) "Tap to retry" else null
+
+internal fun launchFailureLabel(failure: LaunchState.Failed): String =
     when (failure.code) {
         com.focusflow.services.LaunchFailureCode.NotAllowed -> "Not available"
         com.focusflow.services.LaunchFailureCode.BlockedByRule -> "Blocked by FocusFlow"

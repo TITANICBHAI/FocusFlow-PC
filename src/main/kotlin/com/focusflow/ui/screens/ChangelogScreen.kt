@@ -45,6 +45,8 @@ internal val CHANGELOG = listOf(
             "IMP" to "Focus Launcher launch diagnostics will make failed app starts easier to investigate",
             "FIX" to "Focus Launcher resolves app executables before starting them and launches regular apps without inheriting administrator access",
             "IMP" to "Focus Launcher identifies unsupported Store apps, stale paths, and installer or updater entries before a session starts",
+            "IMP" to "Focus Launcher shares process checks to reduce repeated scanning during focus sessions",
+            "IMP" to "Slow Focus Launcher app starts show elapsed time and can be cancelled without closing an app that has already started",
             "SEC" to "Optional diagnostics will remain under your control and avoid sending identifying details",
             "UPD" to "Windows-specific behavior still needs hands-on verification"
         )

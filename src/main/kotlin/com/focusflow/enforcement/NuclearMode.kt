@@ -15,11 +15,9 @@ import com.focusflow.enforcement.killProcessesByName
 /**
  * NuclearMode — three-layer escape-route enforcement
  *
- * Layer 1 — Detect (efficient):
- *   A single `tasklist /FO CSV /NH` call captures every running process name.
- *   The output is filtered against [escapeProcesses] in-memory. This replaces
- *   40+ individual taskkill spawns with ONE scan per tick — from ~8 000 process
- *   spawns/min down to 1 per tick.
+ * Layer 1 — Detect (shared snapshot):
+ *   A short-lived shared process snapshot supplies names and paths to both
+ *   escape checks. No tasklist process is spawned during an enforcement tick.
  *
  * Layer 2 — Kill (batch):
  *   If any escape processes are found, ONE `taskkill /F /IM proc1 /IM proc2 …`
@@ -79,7 +77,7 @@ object NuclearMode {
      * Used to catch renamed executables — e.g. taskmgr.exe copied/renamed to
      * notmalware.exe still lives in System32 and matches by path suffix.
      * Values are lowercase path segments; comparison uses endsWith on the
-     * lowercased full path returned by ProcessHandle.
+     * lowercased full path returned by the shared process snapshot.
      */
     private val knownEscapePathSuffixes: Set<String> = setOf(
         "\\windows\\system32\\taskmgr.exe",
@@ -128,6 +126,8 @@ object NuclearMode {
 
     // Reference to the background firewall-cleanup thread so awaitCleanup() can join it.
     @Volatile private var cleanupThread: Thread? = null
+    @Volatile private var lastSnapshotFailureLogMs = 0L
+    private val snapshotFailureLogLock = Any()
     // Serialises firewall apply/remove operations. Without this, a rapid
     // disable() -> enable() can let the old cleanup remove rules after the
     // new enable has applied them.
@@ -138,77 +138,46 @@ object NuclearMode {
 
     // ── Layer 1: Detect ─────────────────────────────────────────────────────
 
-    /**
-     * Returns the subset of [escapeProcesses] that are currently running.
-     * Uses ONE `tasklist` call and parses CSV output in-memory — O(n) scan
-     * rather than n individual process spawns.
-     */
-    private fun getRunningEscapeProcesses(): Set<String> {
-        if (!isWindows) return getRunningEscapeProcessesFallback()
-        return try {
-            val proc = ProcessBuilder("tasklist", "/FO", "CSV", "/NH")
-                .redirectErrorStream(true)
-                .start()
-            // Use `.use {}` so the BufferedReader (and its underlying InputStream) is
-            // closed as soon as we've consumed the output. Also close the OutputStream
-            // (our end of tasklist's stdin pipe) — tasklist never reads it, but leaving
-            // it open leaks a file descriptor every tick.
-            val text = proc.inputStream.bufferedReader().use { it.readText() }
-            proc.waitFor()
-            runCatching { proc.outputStream.close() }
-            text.lineSequence()
-                .mapNotNull { line ->
-                    // CSV format: "chrome.exe","12345","Console","1","50,000 K"
-                    line.trim()
-                        .removePrefix("\"")
-                        .substringBefore("\"")
-                        .lowercase()
-                        .takeIf { it.isNotBlank() }
-                }
-                .filter { it in escapeProcesses && shouldBlockInstallerProcess(it) }
-                .toSet()
-        } catch (_: Exception) {
-            emptySet()
-        }
-    }
-
-    private fun getRunningEscapeProcessesFallback(): Set<String> {
-        return try {
-            ProcessHandle.allProcesses()
-                .filter { ph -> ph.pid() != ownPid && ph.info().command().isPresent }
-                .toList()
-                .mapNotNull { ph ->
-                    val cmd = ph.info().command().orElse(null) ?: return@mapNotNull null
-                    java.io.File(cmd).name.lowercase().takeIf { it.isNotBlank() }
-                }
-                .filter { it in escapeProcesses && shouldBlockInstallerProcess(it) }
-                .toSet()
-        } catch (_: Exception) { emptySet() }
-    }
+    /** Name-based escape detection uses the same bounded process snapshot as the other sweeps. */
+    internal fun getRunningEscapeProcesses(
+        snapshot: List<com.focusflow.services.ProcessSnapshotEntry>
+    ): Set<String> =
+        snapshot.asSequence()
+            .filter { it.pid != ownPid }
+            .mapNotNull { process ->
+                val image = process.processName.takeIf(String::isNotBlank)
+                    ?: com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
+                    ?: return@mapNotNull null
+                image.substringAfterLast('\\')
+                    .substringAfterLast('/')
+                    .lowercase()
+                    .takeIf { it in escapeProcesses && shouldBlockInstallerProcess(it) }
+            }
+            .toSet()
 
     /**
-     * Supplemental path-based scan using ProcessHandle.
+     * Supplemental path-based scan using the shared process snapshot.
      * Catches renamed executables — e.g. taskmgr.exe renamed to notmalware.exe —
      * by matching the full executable path against [knownEscapePathSuffixes].
      * Returns the actual running filename (for use in taskkill), not the canonical name.
      */
-    private fun getEscapeProcessesByPath(): Set<String> {
-        return try {
-            ProcessHandle.allProcesses()
-                .filter { ph -> ph.pid() != ownPid && ph.info().command().isPresent }
-                .toList()
-                .mapNotNull { ph ->
-                    val rawPath = ph.info().command().orElse(null) ?: return@mapNotNull null
-                    val normalised = rawPath.lowercase().replace("/", "\\")
-                    val matchesKnownPath = knownEscapePathSuffixes.any { suffix ->
-                        normalised.endsWith(suffix)
-                    }
-                    if (matchesKnownPath) java.io.File(rawPath).name.lowercase() else null
-                }
-                .filter { it.isNotBlank() && shouldBlockInstallerProcess(it) }
-                .toSet()
-        } catch (_: Exception) { emptySet() }
-    }
+    internal fun getEscapeProcessesByPath(
+        snapshot: List<com.focusflow.services.ProcessSnapshotEntry>
+    ): Set<String> =
+        snapshot.asSequence()
+            .filter { it.pid != ownPid }
+            .mapNotNull { process ->
+                val rawPath = com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
+                    ?: return@mapNotNull null
+                val normalised = rawPath.lowercase().replace("/", "\\")
+                val matchesKnownPath = knownEscapePathSuffixes.any(normalised::endsWith)
+                if (!matchesKnownPath) return@mapNotNull null
+                rawPath.substringAfterLast('\\')
+                    .substringAfterLast('/')
+                    .lowercase()
+                    .takeIf { it.isNotBlank() && shouldBlockInstallerProcess(it) }
+            }
+            .toSet()
 
     /** Shared name/path test used by the launcher policy and Nuclear Mode. */
     internal fun isEscapeTool(processName: String, executablePath: String? = null): Boolean {
@@ -309,61 +278,84 @@ object NuclearMode {
      * expensive than this single-scan approach.
      */
     private fun enforceTick() {
-        if (KillSwitchService.isActive.value) return
-        val byName = getRunningEscapeProcesses()
-        val byPath = getEscapeProcessesByPath()
-        val found = byName + byPath
-        val launcherOwnUtilityExemption =
-            ProcessMonitor.launcherAllowedProcesses.isNotEmpty() &&
-                com.focusflow.services.LauncherChainAllowance.isEnabled
-        if (!launcherOwnUtilityExemption) {
-            unresolvedLauncherEscapeNames.clear()
-            killAndLog(found)
-            return
-        }
-        if (found.isEmpty()) {
-            unresolvedLauncherEscapeNames.clear()
-            return
-        }
+        val startedAtNanos = System.nanoTime()
+        try {
+            if (KillSwitchService.isActive.value) return
+            val snapshot = try {
+                com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+            } catch (failure: Exception) {
+                val now = System.currentTimeMillis()
+                synchronized(snapshotFailureLogLock) {
+                    if (now - lastSnapshotFailureLogMs >= 30_000L) {
+                        lastSnapshotFailureLogMs = now
+                        EnforcementLog.warn(
+                            "NuclearMode",
+                            "Shared process snapshot failed; escape enforcement skipped this tick",
+                            failure
+                        )
+                    }
+                }
+                return
+            }
+            val byName = getRunningEscapeProcesses(snapshot)
+            val byPath = getEscapeProcessesByPath(snapshot)
+            val found = byName + byPath
+            val launcherOwnUtilityExemption =
+                ProcessMonitor.launcherAllowedProcesses.isNotEmpty() &&
+                    com.focusflow.services.LauncherChainAllowance.isEnabled
+            if (!launcherOwnUtilityExemption) {
+                unresolvedLauncherEscapeNames.clear()
+                killAndLog(found)
+                return
+            }
+            if (found.isEmpty()) {
+                unresolvedLauncherEscapeNames.clear()
+                return
+            }
 
-        val ownPid = ProcessHandle.current().pid()
-        val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
-        val matchedNames = HashSet<String>()
-        val targets = LinkedHashMap<Long, String>()
-        for (process in snapshot) {
-            val path = com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
-            val name = process.processName.ifBlank {
-                path?.substringAfterLast('\\')?.substringAfterLast('/') ?: ""
-            }.substringAfterLast('\\').substringAfterLast('/').lowercase()
-            if (name !in found && !isEscapeTool(name, path)) continue
-            matchedNames += name
+            val ownPid = ProcessHandle.current().pid()
+            val matchedNames = HashSet<String>()
+            val targets = LinkedHashMap<Long, String>()
+            for (process in snapshot) {
+                val path = com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)
+                val name = process.processName.ifBlank {
+                    path?.substringAfterLast('\\')?.substringAfterLast('/') ?: ""
+                }.substringAfterLast('\\').substringAfterLast('/').lowercase()
+                if (name !in found && !isEscapeTool(name, path)) continue
+                matchedNames += name
 
-            val decision = com.focusflow.services.LauncherKioskPolicy.decide(
-                process = process,
-                snapshot = snapshot,
-                allowedProcessNames = ProcessMonitor.launcherAllowedProcesses,
-                allowedExecutablePaths = ProcessMonitor.launcherAllowedAppExecutablePaths,
-                safeProcessNames = ProcessMonitor.launcherSafeProcesses,
-                ownPid = ownPid,
-                systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
-                chainAllowanceEnabled = true,
-                resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
-            )
-            if (decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK) {
-                targets[process.pid] = name
+                val decision = com.focusflow.services.LauncherKioskPolicy.decide(
+                    process = process,
+                    snapshot = snapshot,
+                    allowedProcessNames = ProcessMonitor.launcherAllowedProcesses,
+                    allowedExecutablePaths = ProcessMonitor.launcherAllowedAppExecutablePaths,
+                    safeProcessNames = ProcessMonitor.launcherSafeProcesses,
+                    ownPid = ownPid,
+                    systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
+                    chainAllowanceEnabled = true,
+                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
+                )
+                if (decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK) {
+                    targets[process.pid] = name
+                }
+            }
+
+            // If a name/path match cannot be tied to a PID, wait one tick before
+            // falling back to the existing name-wide kill. This preserves the
+            // FocusFlow-owned helper exemption when a snapshot is incomplete.
+            val unresolvedNames = found - matchedNames
+            unresolvedLauncherEscapeNames.removeIf { it !in unresolvedNames }
+            val namesReadyToKill = unresolvedNames.filter { name ->
+                !unresolvedLauncherEscapeNames.add(name)
+            }.toSet()
+            killAndLogTargeted(targets)
+            killAndLog(namesReadyToKill)
+        } finally {
+            val durationMs = (System.nanoTime() - startedAtNanos) / 1_000_000L
+            if (durationMs > 50L) {
+                EnforcementLog.info("Launcher", "nuclearSweep durationMs=$durationMs")
             }
         }
-
-        // If a tasklist/path match could not be tied to a PID, wait one tick
-        // before falling back to the existing name-wide kill. This avoids
-        // killing a FocusFlow-owned helper on an incomplete first snapshot.
-        val unresolvedNames = found - matchedNames
-        unresolvedLauncherEscapeNames.removeIf { it !in unresolvedNames }
-        val namesReadyToKill = unresolvedNames.filter { name ->
-            !unresolvedLauncherEscapeNames.add(name)
-        }.toSet()
-        killAndLogTargeted(targets)
-        killAndLog(namesReadyToKill)
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
