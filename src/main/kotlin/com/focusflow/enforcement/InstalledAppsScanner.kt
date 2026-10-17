@@ -2,13 +2,22 @@ package com.focusflow.enforcement
 
 import com.sun.jna.platform.win32.Advapi32Util
 import com.sun.jna.platform.win32.WinReg
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+
+enum class LauncherAppIssue(val label: String) {
+    StoreApp("Store app — not supported"),
+    InstallerOrUpdater("Installer or updater — not supported"),
+    MissingExecutable("Executable path unavailable"),
+    SystemUtility("System utility — not available in Focus Launcher")
+}
 
 data class ScannedApp(
     val processName: String,
     val displayName: String,
     val isRunning: Boolean,
-    val exePath: String? = null
+    val exePath: String? = null,
+    val issue: LauncherAppIssue? = null
 )
 
 object InstalledAppsScanner {
@@ -67,6 +76,13 @@ object InstalledAppsScanner {
         "nvdisplay.container.exe", "amdow.exe", "focusflow.exe"
     )
 
+    private val launcherSystemUtilities = systemIgnore + setOf(
+        "cmd.exe", "powershell.exe", "pwsh.exe", "taskmgr.exe", "regedit.exe",
+        "wscript.exe", "cscript.exe", "mshta.exe", "tasklist.exe", "taskkill.exe",
+        "schtasks.exe", "mmc.exe", "control.exe", "windowsterminal.exe", "wt.exe",
+        "wsl.exe", "wslhost.exe", "perfmon.exe", "resmon.exe"
+    )
+
     /**
      * Exe-path lookup cache.
      * Populated by getRunningApps() and getInstalledApps().
@@ -91,11 +107,17 @@ object InstalledAppsScanner {
                     val cmd = ph.info().command().orElse(null) ?: return@mapNotNull null
                     val exe = java.io.File(cmd).name.lowercase()
                     val display = curated[exe] ?: friendlyName(exe)
-                    ScannedApp(exe, display, isRunning = true, exePath = cmd)
+                    ScannedApp(
+                        processName = exe,
+                        displayName = display,
+                        isRunning = true,
+                        exePath = cmd,
+                        issue = classifyLauncherCandidate(exe, cmd)
+                    )
                 }
                 .filter { app ->
                     app.processName.isNotBlank() &&
-                    app.processName !in systemIgnore &&
+                    !isHiddenSystemUtility(app.processName) &&
                     app.processName.endsWith(".exe")
                 }
                 .distinctBy { it.processName }
@@ -134,10 +156,12 @@ object InstalledAppsScanner {
      */
     fun getCuratedApps(): List<ScannedApp> {
         val installed   = getInstalledApps()
-        val installedEx = installed.map { it.processName }.toSet()
         val running     = getRunningApps()
-            .filter { it.processName !in installedEx }
-        return (installed + running).sortedBy { it.displayName }
+        return (installed + running)
+            .groupBy { it.processName.lowercase() }
+            .values
+            .map { candidates -> candidates.firstOrNull { it.issue == null } ?: candidates.first() }
+            .sortedBy { it.displayName }
     }
 
     /** Look up the exe path for a process name using the cache built by any prior scan. */
@@ -146,6 +170,47 @@ object InstalledAppsScanner {
 
     fun friendlyNameFor(processName: String): String =
         curated[processName.lowercase()] ?: friendlyName(processName.lowercase())
+
+    internal fun findMainExecutableCandidate(displayName: String, candidates: Sequence<File>): File? {
+        val normalizedDisplay = normalizeAppLabel(displayName)
+        val knownNames = curated.entries
+            .filter { (_, label) -> label.equals(displayName.trim(), ignoreCase = true) }
+            .map { (name, _) -> normalizeAppLabel(name.substringBeforeLast('.')) }
+            .toSet() + normalizedDisplay
+        if (knownNames.all(String::isBlank)) return null
+
+        return candidates
+            .filter { it.isFile && it.canRead() && it.extension.equals("exe", ignoreCase = true) }
+            .filter { !isHiddenSystemUtility(it.name) && !isInstallerOrUpdaterName(it.name) }
+            .filter { normalizeAppLabel(it.name.substringBeforeLast('.')) in knownNames }
+            .distinctBy { it.absolutePath.lowercase() }
+            .maxByOrNull(File::lastModified)
+    }
+
+    internal fun classifyLauncherCandidate(
+        processName: String,
+        executablePath: String?,
+        isReadableFile: (String) -> Boolean = { path ->
+            val file = File(path)
+            file.isFile && file.canRead()
+        }
+    ): LauncherAppIssue? {
+        val candidate = executablePath?.takeIf(String::isNotBlank) ?: processName
+        val basename = candidate.replace('\\', '/').substringAfterLast('/')
+        val normalizedPath = candidate.replace('/', '\\').lowercase()
+        return when {
+            normalizedPath.contains("\\windowsapps\\") -> LauncherAppIssue.StoreApp
+            isHiddenSystemUtility(basename) -> LauncherAppIssue.SystemUtility
+            isInstallerOrUpdaterName(basename) -> LauncherAppIssue.InstallerOrUpdater
+            executablePath.isNullOrBlank() || !isReadableFile(executablePath) ->
+                LauncherAppIssue.MissingExecutable
+            else -> null
+        }
+    }
+
+    internal fun isHiddenSystemUtility(processName: String): Boolean =
+        processName.replace('\\', '/').substringAfterLast('/')
+            .lowercase() in launcherSystemUtilities
 
     // ── Registry scan ─────────────────────────────────────────────────────────
 
@@ -171,38 +236,52 @@ object InstalledAppsScanner {
                     val displayName = (vals["DisplayName"] as? String)?.trim()
                         ?.takeIf { it.isNotBlank() } ?: continue
 
-                    // DisplayIcon is usually "C:\path\to\app.exe,0" or just the path
                     val displayIcon = (vals["DisplayIcon"] as? String)?.trim()
-                        ?.takeIf { it.isNotBlank() } ?: continue
-
-                    // Strip icon index suffix (e.g. ",0") and surrounding quotes
-                    val rawPath = displayIcon
-                        .substringBefore(",")
-                        .trim()
-                        .removeSurrounding("\"")
-
-                    if (!rawPath.endsWith(".exe", ignoreCase = true)) continue
-
-                    val exeFile = java.io.File(rawPath)
-                    if (!exeFile.exists()) continue
-
-                    val processName = exeFile.name.lowercase()
-                    if (processName in systemIgnore) continue
-                    if (!processName.endsWith(".exe")) continue
+                        ?.takeIf(String::isNotBlank) ?: continue
+                    val rawPath = executablePathFromDisplayIcon(displayIcon) ?: continue
+                    val iconFile = File(rawPath)
+                    val processName = iconFile.name.lowercase()
+                    if (isHiddenSystemUtility(processName) || !processName.endsWith(".exe")) continue
 
                     // Earlier results (HKLM 64-bit) take priority; don't overwrite
                     if (processName in result) continue
 
-                    val friendlyDisplay = curated[processName] ?: displayName
+                    val issue = classifyLauncherCandidate(processName, rawPath)
+                    val installLocation = (vals["InstallLocation"] as? String)
+                        ?.trim()?.removeSurrounding("\"")
+                    val resolvedMain = when (issue) {
+                        null, LauncherAppIssue.StoreApp, LauncherAppIssue.SystemUtility -> null
+                        else -> findMainExecutableCandidate(
+                            displayName,
+                            executableCandidates(iconFile.parentFile, installLocation)
+                        )
+                    }
+                    val resolvedPath = when {
+                        issue == null -> iconFile.absolutePath
+                        resolvedMain != null -> resolvedMain.absolutePath
+                        else -> rawPath
+                    }
+                    val finalProcessName = File(resolvedPath).name.lowercase()
+                    val finalIssue = if (resolvedMain != null || issue == null) {
+                        null
+                    } else {
+                        issue ?: LauncherAppIssue.MissingExecutable
+                    }
+                    if (isHiddenSystemUtility(finalProcessName)) continue
+
+                    val friendlyDisplay = curated[finalProcessName] ?: displayName
 
                     val app = ScannedApp(
-                        processName = processName,
+                        processName = finalProcessName,
                         displayName = friendlyDisplay,
                         isRunning   = false,
-                        exePath     = rawPath
+                        exePath     = resolvedPath,
+                        issue       = finalIssue
                     )
-                    result[processName] = app
-                    exePathCache.putIfAbsent(processName, rawPath)
+                    result[finalProcessName] = app
+                    if (finalIssue == null) {
+                        exePathCache.putIfAbsent(finalProcessName, resolvedPath)
+                    }
 
                 } catch (_: Exception) { /* malformed key — skip */ }
             }
@@ -221,4 +300,46 @@ object InstalledAppsScanner {
             .replace(Regex("\\d+$"), "")
             .trim()
             .replaceFirstChar { c -> c.uppercaseChar() }
+
+    private fun executableCandidates(iconDirectory: File?, installLocation: String?): Sequence<File> =
+        sequence {
+            val roots = sequenceOf(iconDirectory, installLocation?.takeIf(String::isNotBlank)?.let(::File))
+                .filterNotNull()
+                .filter(File::isDirectory)
+                .distinctBy { it.absolutePath.lowercase() }
+                .toList()
+            roots.forEach { root ->
+                val children = root.listFiles().orEmpty()
+                children.filter(File::isFile).forEach { yield(it) }
+                children.filter { it.isDirectory && it.name.startsWith("app-", ignoreCase = true) }
+                    .forEach { versionDirectory ->
+                        versionDirectory.listFiles().orEmpty()
+                            .filter(File::isFile)
+                            .forEach { yield(it) }
+                    }
+            }
+        }
+
+    private fun isInstallerOrUpdaterName(name: String): Boolean =
+        Regex("(?i)(^|[._ -])(uninstall(?:er)?|unins\\w*|updater?|installer|setup)([._ -]|$)")
+            .containsMatchIn(name.substringBeforeLast('.', name))
+
+    private fun normalizeAppLabel(value: String): String =
+        value.lowercase().filter(Char::isLetterOrDigit)
+}
+
+internal fun executablePathFromDisplayIcon(value: String): String? {
+    val trimmed = value.trim()
+    if (trimmed.isEmpty()) return null
+
+    val path = if (trimmed.startsWith('"')) {
+        val closingQuote = trimmed.indexOf('"', startIndex = 1)
+        if (closingQuote <= 1) return null
+        trimmed.substring(1, closingQuote)
+    } else {
+        val exeEnd = Regex("(?i)\\.exe(?=\\s*,\\s*\\d+|\\s|$)").find(trimmed)
+            ?.range?.last ?: return null
+        trimmed.substring(0, exeEnd + 1).trim()
+    }
+    return path.takeIf { it.endsWith(".exe", ignoreCase = true) }
 }

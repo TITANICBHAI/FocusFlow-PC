@@ -4,6 +4,7 @@ import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.GlobalKeyboardHook
 import com.focusflow.enforcement.WindowRaiser
 import com.focusflow.enforcement.ElevationManager
+import com.focusflow.enforcement.LauncherAppIssue
 import com.focusflow.enforcement.isWindows
 import com.sun.jna.Memory
 import com.sun.jna.Native
@@ -48,6 +49,24 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
         } else {
             ExecutablePreflightResult.NotFound
         }
+    }
+
+    internal fun resolveForSession(app: FocusLauncherApp): FocusLauncherApp? {
+        val candidateName = app.exePath?.takeIf(String::isNotBlank) ?: app.processName
+        if (isWindowsAppsPath(candidateName) ||
+            app.candidateIssue == LauncherAppIssue.StoreApp ||
+            app.candidateIssue == LauncherAppIssue.InstallerOrUpdater ||
+            isUnsupportedLauncherExecutableName(candidateName) ||
+            isUnsupportedLauncherExecutableName(app.processName)
+        ) {
+            return null
+        }
+
+        val executable = resolveExecutable(app) ?: return null
+        return app.copy(
+            exePath = executable.absolutePath,
+            candidateIssue = null
+        )
     }
 
     override fun findWindows(pids: Set<Long>): List<WindowRef> =
@@ -166,14 +185,11 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
     }
 
     private fun runningInstancePaths(processName: String): Sequence<String> {
-        val expectedName = processName.replace('\\', '/').substringAfterLast('/').lowercase(Locale.ROOT)
-        return ProcessSnapshot.snapshotProcesses().asSequence()
-            .filter { process ->
-                process.processName.isBlank() ||
-                    process.processName.replace('\\', '/').substringAfterLast('/')
-                        .equals(expectedName, ignoreCase = true)
-            }
-            .mapNotNull(ProcessSnapshot::resolveExecutablePath)
+        return matchingLauncherExecutablePaths(
+            expectedProcessName = processName,
+            processes = ProcessSnapshot.snapshotProcesses(),
+            resolvePath = ProcessSnapshot::resolveExecutablePath
+        ).asSequence()
     }
 
     override suspend fun raise(window: WindowRef): RaiseResult =
@@ -211,6 +227,50 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
                 ?.orElse(null)
                 ?.toEpochMilli()
         }.getOrNull()
+}
+
+internal data class LauncherAppsResolution(
+    val resolved: List<FocusLauncherApp>,
+    val unavailable: List<FocusLauncherApp>
+)
+
+internal fun resolveLauncherAppsForSession(
+    apps: List<FocusLauncherApp>,
+    resolve: (FocusLauncherApp) -> FocusLauncherApp?
+): LauncherAppsResolution {
+    val resolved = ArrayList<FocusLauncherApp>(apps.size)
+    val unavailable = ArrayList<FocusLauncherApp>()
+    apps.forEach { app ->
+        val current = resolve(app)
+        if (current == null) unavailable += app else resolved += current
+    }
+    return LauncherAppsResolution(resolved, unavailable)
+}
+
+internal fun matchingLauncherExecutablePaths(
+    expectedProcessName: String,
+    processes: List<ProcessSnapshotEntry>,
+    resolvePath: (ProcessSnapshotEntry) -> String?
+): List<String> {
+    val expected = expectedProcessName.replace('\\', '/')
+        .substringAfterLast('/')
+        .lowercase(Locale.ROOT)
+    if (expected.isBlank()) return emptyList()
+
+    return processes.asSequence()
+        .filter { process ->
+            val processName = process.processName.replace('\\', '/')
+                .substringAfterLast('/')
+                .lowercase(Locale.ROOT)
+            processName.isBlank() || processName == expected
+        }
+        .mapNotNull(resolvePath)
+        .filter { path ->
+            path.replace('\\', '/').substringAfterLast('/')
+                .equals(expected, ignoreCase = true)
+        }
+        .distinct()
+        .toList()
 }
 
 internal fun isUnsupportedLauncherExecutableName(pathOrName: String): Boolean {

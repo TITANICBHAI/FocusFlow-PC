@@ -221,6 +221,15 @@ Add dated entries here before and after each meaningful implementation change. P
 
 ### P1.3 — Spawn method
 
+#### 2026-10-17 — Resumed P1.3 and P1.4 — In progress
+
+- **Authorization and scope:** The owner clarified that P1.3 and P1.4 were the active work and supplied the P1.3 progress note. Continue only P1.3 spawn-method work and P1.4 app-picker hygiene, including its already approved `FocusLauncherService.kt` and `ChangelogScreen.kt` support edits.
+- **Working tree:** `main` is one commit ahead of `origin/main`; only the newly supplied progress note is untracked. No pre-existing source edits are present.
+- **Files read before edits:** The P1.3 progress note; project instructions and Focus Launcher plan/tracker/rules/pre-agent prompt/memory; `JvmLauncherLaunchPlatform.kt`, `ProcessSnapshot.kt`, `ElevationManager.kt`, `WindowsStartupManager.kt`, `InstalledAppsScanner.kt`, relevant `FocusLauncherScreen.kt` and `FocusLauncherService.kt` sections, `LauncherLaunchCoordinator.kt`, the executable-resolution tests, and the planned changelog entry.
+- **Current review:** P1.3's resolver, shell-token launch, working-directory selection, stdin closure, and friendly coordinator error classification are already present. The running-process fallback can accept an unrelated process when its process name is unreadable. Focused tests and the full test task remain pending; Windows elevation row 5 is owner-only.
+- **P1.4 current review:** The picker still trusts registry `DisplayIcon`, presents arbitrary running executables, and does not expose candidate warnings or resolved paths. Persisted selections default back to all apps when no saved name matches. Session entry and interrupted-session restore still trust saved executable paths without re-resolution.
+- **Verification:** Pending.
+
 #### 2026-10-17 — In progress
 
 - **Authorized scope:** P1.3 only: executable resolution, no `cmd /c start` fallback, child-stdin closure, preserved executable-directory working directory, de-elevated launch when FocusFlow is elevated, and friendly spawn failures.
@@ -237,7 +246,17 @@ Add dated entries here before and after each meaningful implementation change. P
 - [ ] Apply the planned elevation behavior and friendly spawn-error mapping.
 - [ ] **Acceptance:** Windows elevation matrix row 5 remains owner-verified.
 
+- **Resumed implementation update — 2026-10-17:** Tightened the unreadable-process fallback so it accepts only a resolved path whose image name matches the requested executable. Added a pure session-app resolution helper for use by P1.4 entry/restore validation. The de-elevated token launch, stdin closure, working directory, and coordinator's friendly 2/3/5/193/740 error mapping remain in place. Added focused regression tests; verification pending.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --tests 'com.focusflow.services.LauncherExecutableResolutionTest' --tests 'com.focusflow.enforcement.InstalledAppsScannerTest'` timed out after 300 seconds during test compilation, before `:test`; no fresh XML report was created. This is incomplete, not a test result. Retry in background.
+- **Verification attempt 2:** The background targeted test command failed in `:compileKotlin` because the no-PIN branch still returned `false` after `enter()` changed to `FocusLauncherEntryResult`. Replaced that with the typed blocked result and tightened session validation to reject hidden system utilities from saved sessions. No tests ran; rerun pending.
+
 ### P1.4 — App-picker hygiene
+
+#### 2026-10-17 — Resumed P1.4 — In progress
+
+- **Authorized scope:** Continue P1.4 plus the previously approved `FocusLauncherService.kt` restore/entry validation and `ChangelogScreen.kt` planned-release notes. Do not widen into P1.5/P1.6 or general picker redesign.
+- **Current review:** Candidate classification, safe handling of stale selected names, re-resolution on entry/restore, and path visibility in the picker remain to be implemented and verified.
+- **Verification:** Pending; Windows archetypes F/H and restored-session behavior remain owner-only.
 
 #### 2026-10-17 — In progress
 
@@ -249,6 +268,8 @@ Add dated entries here before and after each meaningful implementation change. P
 - [ ] Classify/badge or hide unsupported, stale, system, uninstaller, updater, and installer candidates.
 - [ ] Re-resolve selected paths on session entry and restore; expose the resolved path in a tooltip.
 - [ ] **Acceptance:** Applicable archetypes F and H and stale-path behavior are verified.
+
+- **Resumed implementation update — 2026-10-17:** Added candidate issue classification, hidden system-utility filtering, recovery of a clearly named main executable when the registry icon points to an updater, and tests for those rules. The picker now badges and disables unsupported entries, exposes the executable path in a tooltip, and restores only saved supported selections instead of selecting every app when saved names are stale. Session entry and interrupted-session recovery re-resolve paths; unresolved apps are omitted with a warning, and recovery ends safely if none remain. Changelog entries are drafted. Verification pending; §9 Windows checks remain owner-only.
 
 ### P1.5 — Shared process snapshot and scan cost
 

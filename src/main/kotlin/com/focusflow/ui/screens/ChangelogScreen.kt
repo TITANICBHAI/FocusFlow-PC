@@ -43,6 +43,8 @@ internal val CHANGELOG = listOf(
             "IMP" to "Backups will be checked before they are trusted or restored; activity exports will handle complete histories more reliably",
             "IMP" to "Stats and history views will work more efficiently with larger records",
             "IMP" to "Focus Launcher launch diagnostics will make failed app starts easier to investigate",
+            "FIX" to "Focus Launcher resolves app executables before starting them and launches regular apps without inheriting administrator access",
+            "IMP" to "Focus Launcher identifies unsupported Store apps, stale paths, and installer or updater entries before a session starts",
             "SEC" to "Optional diagnostics will remain under your control and avoid sending identifying details",
             "UPD" to "Windows-specific behavior still needs hands-on verification"
         )

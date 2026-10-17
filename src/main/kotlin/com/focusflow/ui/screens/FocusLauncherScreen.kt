@@ -29,9 +29,11 @@ import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.isWindows
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.services.FocusLauncherApp
+import com.focusflow.services.FocusLauncherEntryResult
 import com.focusflow.services.FocusLauncherService
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.components.FfVerticalScrollbar
+import com.focusflow.ui.components.InfoTooltip
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -101,6 +103,8 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
     var chainEntryChecking by remember { mutableStateOf(false) }
     var chainAllowancePinVerified by remember { mutableStateOf(false) }
     var showEntryBlockedMessage by remember { mutableStateOf(false) }
+    var showNoResolvableAppsDialog by remember { mutableStateOf(false) }
+    var noResolvableAppNames by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val durationMinutes = resolveDurationMinutes(durationIndex, customDurationMinutes)
 
@@ -161,7 +165,14 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
         }
         val apps = withContext(Dispatchers.IO) {
             InstalledAppsScanner.getCuratedApps()
-                .map { FocusLauncherApp(it.processName, it.displayName, it.exePath) }
+                .map {
+                    FocusLauncherApp(
+                        processName = it.processName,
+                        displayName = it.displayName,
+                        exePath = it.exePath,
+                        candidateIssue = it.issue
+                    )
+                }
                 .sortedBy { it.displayName }
         }
         availableApps = apps
@@ -178,11 +189,12 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
         selectedApps = if (persisted != null && persisted.isNotBlank()) {
             val saved     = persisted.split(",").filter { it.isNotBlank() }
                 .map { it.trim().lowercase() }.toSet()
-            val available = apps.map { it.processName.lowercase() }.toSet()
+            val available = apps.filter { it.isSelectable }
+                .map { it.processName.lowercase() }.toSet()
             val matching  = available.intersect(saved)
-            if (matching.isEmpty()) available else matching
+            matching
         } else {
-            apps.map { it.processName.lowercase() }.toSet()
+            apps.filter { it.isSelectable }.map { it.processName.lowercase() }.toSet()
         }
         launcherPresets = presets
         showLockdownNotice = !noticeDismissals.first
@@ -466,7 +478,7 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Text(
-                            "${selectedApps.size} of ${availableApps.size} selected",
+                            "${selectedApps.size} of ${availableApps.count { it.isSelectable }} selected",
                             color = OnSurface2,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -504,7 +516,8 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                         }
                         TextButton(
                             onClick = {
-                                selectedApps = availableApps.map { it.processName.lowercase() }.toSet()
+                                selectedApps = availableApps.filter { it.isSelectable }
+                                    .map { it.processName.lowercase() }.toSet()
                             },
                             enabled = availableApps.isNotEmpty(),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
@@ -557,7 +570,8 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
 
             if (launcherPresets.isNotEmpty()) {
                 items(launcherPresets, key = { "launcher-preset:${it.id}" }) { preset ->
-                    val availableNames = availableApps.map { it.processName.lowercase() }.toSet()
+                    val availableNames = availableApps.filter { it.isSelectable }
+                        .map { it.processName.lowercase() }.toSet()
                     val presetApps = preset.processNames.map { it.lowercase() }.filter { it in availableNames }.toSet()
                     Row(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
@@ -774,7 +788,7 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
         item {
             Spacer(Modifier.height(8.dp))
             val appsForSession = availableApps.filter {
-                it.processName.lowercase() in selectedApps
+                it.isSelectable && it.processName.lowercase() in selectedApps
             }
             Button(
                 onClick = ::requestLauncherEntry,
@@ -1087,7 +1101,9 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
 
     // ── Confirm dialog ────────────────────────────────────────────────────────
     if (confirmEnter) {
-        val appsForSession = availableApps.filter { it.processName.lowercase() in selectedApps }
+        val appsForSession = availableApps.filter {
+            it.isSelectable && it.processName.lowercase() in selectedApps
+        }
 
         AlertDialog(
             onDismissRequest = {
@@ -1192,10 +1208,10 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                         showPinBeforeEnter = false
                         generatedPin = ""
                         val appsForSession = availableApps.filter {
-                            it.processName.lowercase() in selectedApps
+                            it.isSelectable && it.processName.lowercase() in selectedApps
                         }
                         scope.launch(Dispatchers.IO) {
-                            val entered = FocusLauncherService.enter(
+                            val result = FocusLauncherService.enter(
                                 apps = appsForSession,
                                 durationMinutes = durationMinutes,
                                 breaksAllowed = breaksAllowed,
@@ -1204,12 +1220,52 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                             )
                             withContext(Dispatchers.Main) {
                                 chainAllowancePinVerified = false
-                                if (!entered) showEntryBlockedMessage = true
+                                when (result) {
+                                    FocusLauncherEntryResult.Started -> Unit
+                                    FocusLauncherEntryResult.Blocked ->
+                                        showEntryBlockedMessage = true
+                                    is FocusLauncherEntryResult.NoResolvableApps -> {
+                                        noResolvableAppNames = result.appNames
+                                        showNoResolvableAppsDialog = true
+                                    }
+                                }
                             }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                 ) { Text("I've noted it — Start") }
+            }
+        )
+    }
+
+    if (showNoResolvableAppsDialog) {
+        AlertDialog(
+            onDismissRequest = { showNoResolvableAppsDialog = false },
+            containerColor = Surface2,
+            shape = RoundedCornerShape(20.dp),
+            title = {
+                Text("Apps unavailable", color = OnSurface, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "None of the selected app executables could be found. No Focus Launcher restrictions were started.",
+                        color = OnSurface2,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    if (noResolvableAppNames.isNotEmpty()) {
+                        Text(
+                            noResolvableAppNames.distinct().joinToString(),
+                            color = Warning,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showNoResolvableAppsDialog = false }) {
+                    Text("OK", color = Purple80)
+                }
             }
         )
     }
@@ -1311,25 +1367,47 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
 
 @Composable
 private fun AppSelectRow(app: FocusLauncherApp, checked: Boolean, onToggle: () -> Unit) {
-    Row(
-        modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-            .background(if (checked) Purple80.copy(alpha = 0.07f) else Surface3)
-            .clickable { onToggle() }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment     = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(app.displayName, color = OnSurface,
-                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-            Text(app.processName, color = OnSurface2,
-                style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+    val tooltipText = buildString {
+        append("Executable: ")
+        append(app.exePath ?: "Path not resolved")
+        app.candidateIssue?.let { append("\nStatus: ${it.label}") }
+    }
+    InfoTooltip(text = tooltipText) {
+        Row(
+            modifier              = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .background(if (checked) Purple80.copy(alpha = 0.07f) else Surface3)
+                .clickable(enabled = app.isSelectable) {
+                    if (app.isSelectable) onToggle()
+                }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment     = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    app.displayName,
+                    color = if (app.isSelectable) OnSurface else OnSurface2,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(app.processName, color = OnSurface2,
+                    style = MaterialTheme.typography.bodySmall, fontSize = 11.sp)
+                app.candidateIssue?.let { issue ->
+                    Text(
+                        issue.label,
+                        color = Warning,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+            Checkbox(
+                checked = checked,
+                onCheckedChange = { if (app.isSelectable) onToggle() },
+                enabled = app.isSelectable,
+                colors = CheckboxDefaults.colors(checkedColor = Purple80)
+            )
         }
-        Checkbox(
-            checked         = checked,
-            onCheckedChange = { onToggle() },
-            colors          = CheckboxDefaults.colors(checkedColor = Purple80)
-        )
     }
 }
 

@@ -3,7 +3,10 @@ package com.focusflow.services
 import com.focusflow.data.Database
 import com.focusflow.data.models.FocusLauncherSession
 import com.focusflow.data.models.FocusLauncherSessionApp
+import com.focusflow.enforcement.LauncherAppIssue
 import com.focusflow.enforcement.GlobalKeyboardHook
+import com.focusflow.enforcement.EnforcementLog
+import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.RegistryLockdown
 import com.focusflow.enforcement.ProcessMonitor
@@ -17,8 +20,18 @@ import java.awt.TrayIcon
 data class FocusLauncherApp(
     val processName: String,
     val displayName: String,
-    val exePath: String? = null
-)
+    val exePath: String? = null,
+    val candidateIssue: LauncherAppIssue? = null
+) {
+    val isSelectable: Boolean
+        get() = candidateIssue == null
+}
+
+sealed interface FocusLauncherEntryResult {
+    data object Started : FocusLauncherEntryResult
+    data object Blocked : FocusLauncherEntryResult
+    data class NoResolvableApps(val appNames: List<String>) : FocusLauncherEntryResult
+}
 
 object FocusLauncherService {
 
@@ -164,20 +177,28 @@ object FocusLauncherService {
         breaksAllowed: Int = 1,
         breakSeconds: Int = 5 * 60,
         chainAllowancePinVerified: Boolean = false
-    ): Boolean {
+    ): FocusLauncherEntryResult {
         // Re-entrancy guard: if a session is already running, ignore the call.
         // The UI disable the Enter button while active, but this prevents any
         // race from triggering a double-enter that would orphan timer jobs.
-        if (_isActive.value) return false
+        if (_isActive.value) return FocusLauncherEntryResult.Blocked
         val chainState = LauncherChainAllowance.refresh()
-        if (!chainState.readable || (chainState.enabled && !chainAllowancePinVerified)) return false
-        if (!_isActive.compareAndSet(false, true)) return false
+        if (!chainState.readable || (chainState.enabled && !chainAllowancePinVerified)) {
+            return FocusLauncherEntryResult.Blocked
+        }
+
+        val appResolution = resolveSessionApps(apps)
+        val resolvedApps = appResolution.resolved
+        if (resolvedApps.isEmpty()) {
+            return FocusLauncherEntryResult.NoResolvableApps(apps.map(FocusLauncherApp::displayName))
+        }
+        if (!_isActive.compareAndSet(false, true)) return FocusLauncherEntryResult.Blocked
 
         _overlayVisible.value     = true
         _breaksTotal.value        = breaksAllowed
         _breaksUsed.value         = 0
         breakDurationSeconds      = breakSeconds
-        _sessionApps.value        = apps
+        _sessionApps.value        = resolvedApps
         _sessionStartMs.value     = System.currentTimeMillis()
         breakSecondsAccumulated.set(0L)
         _sessionEndMs.value       = if (durationMinutes != null)
@@ -192,11 +213,11 @@ object FocusLauncherService {
         }
         if (sessionPinHash.isBlank()) {
             _isActive.value = false
-            return false
+            return FocusLauncherEntryResult.Blocked
         }
         persistSession()
 
-        ProcessMonitor.setLauncherAllowedApps(apps)
+        ProcessMonitor.setLauncherAllowedApps(resolvedApps)
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
 
         // silent = true: NuclearMode is an implementation detail of kiosk mode;
@@ -219,10 +240,21 @@ object FocusLauncherService {
 
         SystemTrayManager.showNotification(
             "Focus Launcher Active",
-            "Kiosk mode enabled. ${apps.size} app(s) available.",
+            "Kiosk mode enabled. ${resolvedApps.size} app(s) available.",
             TrayIcon.MessageType.INFO
         )
-        return true
+        if (appResolution.unavailable.isNotEmpty()) {
+            EnforcementLog.warn(
+                "Launcher",
+                "session entry omitted unresolved app count=${appResolution.unavailable.size}"
+            )
+            SystemTrayManager.showNotification(
+                "Focus Launcher",
+                "Some selected apps could not be resolved and were left out of this session.",
+                TrayIcon.MessageType.WARNING
+            )
+        }
+        return FocusLauncherEntryResult.Started
     }
 
     fun exit() {
@@ -472,6 +504,43 @@ object FocusLauncherService {
             return
         }
 
+        val appResolution = resolveSessionApps(
+            saved.apps.map {
+                FocusLauncherApp(it.processName, it.displayName, it.exePath)
+            }
+        )
+        if (appResolution.resolved.isEmpty()) {
+            GlobalKeyboardHook.disable()
+            clearStaleSessionMarkers(disableNuclear = true)
+            SystemTrayManager.showNotification(
+                "Focus Launcher session ended",
+                "None of the saved apps could be found. Windows restrictions were restored.",
+                TrayIcon.MessageType.WARNING
+            )
+            EnforcementLog.warn("Launcher", "interrupted session dropped: no saved apps could be resolved")
+            return
+        }
+        val restoredSession = saved.copy(
+            apps = appResolution.resolved.map {
+                FocusLauncherSessionApp(it.processName, it.displayName, it.exePath)
+            }
+        )
+        if (appResolution.unavailable.isNotEmpty()) {
+            runCatching { Database.saveFocusLauncherSession(restoredSession) }
+                .onFailure {
+                    EnforcementLog.warn("Launcher", "could not persist repaired interrupted session", it)
+                }
+            EnforcementLog.warn(
+                "Launcher",
+                "interrupted session omitted unresolved app count=${appResolution.unavailable.size}"
+            )
+            SystemTrayManager.showNotification(
+                "Focus Launcher session restored",
+                "Some saved apps were unavailable and were removed from this session.",
+                TrayIcon.MessageType.WARNING
+            )
+        }
+
         sessionPinHash = saved.pinHash
         Database.setSetting(LAUNCHER_PIN_KEY, saved.pinHash)
         Database.setSetting(CRASH_GUARD_KEY, "true")
@@ -484,16 +553,14 @@ object FocusLauncherService {
         _canTakeBreak.value = saved.breaksTotal == -1 || saved.breaksUsed < saved.breaksTotal
         breakDurationSeconds = saved.breakDurationSeconds.coerceAtLeast(1)
         breakSecondsAccumulated.set(saved.breakSecondsAccumulated.coerceAtLeast(0L))
-        _sessionApps.value = saved.apps.map {
-            FocusLauncherApp(it.processName, it.displayName, it.exePath)
-        }
+        _sessionApps.value = appResolution.resolved
         _sessionStartMs.value = saved.sessionStartMs
         _sessionEndMs.value = saved.sessionEndMs
         breakEndMs = saved.breakEndMs
         _sessionPin.value = ""
 
         if (saved.breakActive) {
-            restoreInterruptedBreak(saved, now)
+            restoreInterruptedBreak(restoredSession, now)
         } else {
             reenableLauncherRestrictions()
             if (_sessionEndMs.value > 0L) startSessionTimer()
@@ -517,6 +584,13 @@ object FocusLauncherService {
         breakEndMs = 0L
         if (disableNuclear && NuclearMode.isActive) NuclearMode.disable(silent = true)
     }
+
+    private fun resolveSessionApps(apps: List<FocusLauncherApp>): LauncherAppsResolution =
+        resolveLauncherAppsForSession(apps) { app ->
+            val systemUtility = InstalledAppsScanner.isHiddenSystemUtility(app.processName) ||
+                app.exePath?.let { InstalledAppsScanner.isHiddenSystemUtility(it) } == true
+            if (systemUtility) null else JvmLauncherLaunchPlatform.resolveForSession(app)
+        }
 
     private fun restoreInterruptedBreak(saved: FocusLauncherSession, now: Long) {
         val remaining = ((saved.breakEndMs - now).coerceAtLeast(0L) / 1_000L).toInt()

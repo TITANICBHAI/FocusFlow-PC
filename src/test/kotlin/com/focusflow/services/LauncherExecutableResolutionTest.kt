@@ -96,6 +96,41 @@ class LauncherExecutableResolutionTest {
     }
 
     @Test
+    fun unreadableProcessNameOnlyMatchesWhenResolvedPathHasTheExpectedImageName() {
+        val processes = listOf(
+            ProcessSnapshotEntry(pid = 1, processName = "", executablePath = "C:\\Other\\Helper.exe"),
+            ProcessSnapshotEntry(pid = 2, processName = "Other.exe", executablePath = "C:\\Apps\\FocusApp.exe"),
+            ProcessSnapshotEntry(pid = 3, processName = "", executablePath = "C:\\Apps\\FocusApp.exe"),
+            ProcessSnapshotEntry(pid = 4, processName = "FocusApp.exe", executablePath = "C:\\Apps\\FocusApp.exe")
+        )
+
+        val paths = matchingLauncherExecutablePaths(
+            expectedProcessName = "FocusApp.exe",
+            processes = processes,
+            resolvePath = ProcessSnapshotEntry::executablePath
+        )
+
+        assertEquals(
+            listOf("C:\\Apps\\FocusApp.exe"),
+            paths
+        )
+    }
+
+    @Test
+    fun sessionAppResolutionSeparatesResolvedAppsFromUnavailableApps() {
+        val available = FocusLauncherApp("focus.exe", "Focus", "C:\\Apps\\focus.exe")
+        val missing = FocusLauncherApp("gone.exe", "Gone", "C:\\Removed\\gone.exe")
+
+        val result = resolveLauncherAppsForSession(listOf(available, missing)) { app ->
+            if (app.processName == "focus.exe") app.copy(exePath = "C:\\Current\\focus.exe") else null
+        }
+
+        assertEquals(listOf("focus.exe"), result.resolved.map { it.processName })
+        assertEquals("C:\\Current\\focus.exe", result.resolved.single().exePath)
+        assertEquals(listOf("gone.exe"), result.unavailable.map { it.processName })
+    }
+
+    @Test
     fun missingOrUnsupportedCandidatesDoNotResolve() {
         assertNull(
             resolveLauncherExecutableFile(
