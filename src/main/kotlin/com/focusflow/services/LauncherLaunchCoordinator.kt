@@ -1144,8 +1144,19 @@ class LauncherLaunchCoordinator(
     private fun sanitizeLogField(value: String): String =
         value.replace(Regex("[\\r\\n\\t]+"), " ").replace(Regex("\\s{2,}"), " ")
 
-    private fun isCurrent(app: FocusLauncherApp, key: String, trace: AttemptTrace): Boolean =
-        synchronized(lock) { activeAttempts[key] === trace } && isAllowed(app)
+    private fun isCurrent(app: FocusLauncherApp, key: String, trace: AttemptTrace): Boolean {
+        if (!synchronized(lock) { activeAttempts[key] === trace }) return false
+        if (isAllowed(app)) return true
+
+        fail(
+            key,
+            trace,
+            "This app is no longer available in the current Focus Launcher session.",
+            AttemptFailureCode.NotAllowed,
+            canRetry = false
+        )
+        return false
+    }
 
     private fun keyFor(processName: String): String = processName.lowercase(Locale.ROOT)
 }

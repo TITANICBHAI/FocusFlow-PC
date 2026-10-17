@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Supplemental rules:** [rules.md](rules.md)
-- **Overall status:** Planning package prepared on 2026-10-16. Reliability implementation has not started. All code, automated-test, and Windows-runtime items remain open.
+- **Overall status:** P0.1/P0.2/P0.5 and P1.1/P1.2 implementation have Linux evidence. P0.3/P0.4 acceptance still has open gates; Windows runtime checks remain owner-pending. P1.3–P1.6 and P2 have not started.
 
 ## Tracking rules
 
@@ -203,19 +203,21 @@ Add dated entries here before and after each meaningful implementation change. P
 
 ## P1 — Correctness and robustness
 
-**Status:** P1.1 and P1.2 implementation in progress. Respect their plan allowlists and leave Windows verification to the owner.
+**Status:** P1.1 and P1.2 implementation and Linux automated acceptance are complete. Windows owner checks remain; P1.3–P1.6 have not started.
 
 ### P1.1 — Raise reliability
 
-- [ ] Verify foreground ownership by tracked process chain/root owner, reselect windows on every attempt, and bound native raise calls.
-- [ ] Preserve the foreground-lock kiosk guarantee and align raise behavior with overlay handling.
-- [ ] **Acceptance:** T8 and T9 pass; Windows archetypes A–E remain owner-verified.
+- [x] Verify foreground ownership by tracked process chain/root owner, reselect windows on every attempt, and bound native raise calls.
+- [x] Preserve the foreground-lock kiosk guarantee and align raise behavior with overlay handling.
+- [x] **Automated acceptance:** T8 and T9 pass on Linux.
+- [ ] **Owner verification:** Windows archetypes A–E.
 
 ### P1.2 — Pre-flight checks and typed failures
 
-- [ ] Add bounded no-spawn checks for allow status, blocking rules, executable/path support, and unsupported candidates.
-- [ ] Carry typed failures to the UI; keep raw OS errors in logs and friendly text on tiles.
-- [ ] **Acceptance:** T10 and T20 pass; a known blocked app is not spawned and gives a specific reason promptly.
+- [x] Add bounded no-spawn checks for allow status, blocking rules, executable/path support, and unsupported candidates.
+- [x] Carry typed failures to the UI; keep raw OS errors in logs and friendly text on tiles.
+- [x] **Automated acceptance:** T10 and T20 pass; the fake-platform test confirms a blocked app is not spawned and receives a specific reason promptly.
+- [ ] **Owner verification:** Windows archetype H, row 8.
 
 ### P1.3 — Spawn method
 
@@ -251,6 +253,17 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 - **Files read before editing:** P1.1/P1.2 plan and tracker sections; `LauncherLaunchCoordinator.kt`, `WindowRaiser.kt`, `GlobalKeyboardHook.kt`, `ProcessMonitor.kt`, `JvmLauncherLaunchPlatform.kt`, `LauncherContent.kt`, and `LauncherLaunchCoordinatorTest.kt`; relevant P0.5 memory and Gradle verification notes.
 - **Scope/verification boundary:** Follow the P1.1/P1.2 allowlists; use Linux fake-platform tests for T8/T9/T10/T20, but leave all Windows archetype verification to the owner. No implementation edits have been made yet.
 
+### 2026-10-17 — P1.1/P1.2 — Implementation and Linux verification
+
+- **Implemented behavior:** The coordinator refreshes the tracked process chain and reselects a window on every raise attempt, accepts foreground ownership only from a live tracked PID or the selected window's root owner, and limits the raise phase to 2,500 ms. `WindowRaiser` uses asynchronous show/position APIs, grants foreground permission only to the selected target, and does not unlock the kiosk foreground lock. Pre-flight rejects disallowed apps, active FocusFlow block rules, unsupported Store/candidate types, and missing/unsupported executable paths before spawn; pre-flight is capped at 500 ms. Failure codes reach the launcher tile as friendly labels while raw spawn errors remain in logs.
+- **Working-tree changes in this continuation:** `LauncherLaunchCoordinator.kt` and `LauncherLaunchCoordinatorTest.kt`; the integrated window-raising, cache-only block-reason, and typed tile-label paths were source-reviewed in the current checkout. `Launcher/tracker.md` records this outcome. No P1.3/P1.4 picker or spawn-method redesign was included.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --rerun-tasks` compiled and ran 277 tests, with 4 failures in the coordinator suite. The cases exposed an eligibility failure being cleared to Idle, expected poll/tier-log values that did not account for raise-time reselection and ownership results, and a watchdog fixture whose process had been marked dead before the raise phase.
+- **Correction and verification attempt 2:** The active-attempt guard now emits a typed `NotAllowed` failure instead of silently dropping it. Updated the expected reselect count and ownership-tier log assertion, and kept the process live in the hung-raise fixture. A forced focused rerun then had one remaining watchdog test assertion (`spawnCount` expected 2, actual 1): the retry correctly reused the still-live process. Updated the assertion to verify reuse. `gradle :test --no-daemon --console=plain --tests 'com.focusflow.services.LauncherLaunchCoordinatorTest'` completed with `BUILD SUCCESSFUL` in 42s; XML: 33 tests, 0 failures, 0 errors, 0 skipped.
+- **Final verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL` in 3m 52s. Fresh XML: 63 suites, 277 tests, 0 failures, 0 errors, 0 skipped; `LauncherLaunchCoordinatorTest` had 33 passing tests. `git diff --check` passed. Existing Kotlin opt-in and deprecation warnings remain.
+- **Workflow smoke check:** Restarted `Start application`; `getWorkflowStatus` reported `running` in `:run`, and the latest workflow logs showed no errors. No Windows runtime or browser-based UI check was run.
+- **UI and safety review:** The typed failure label mapping was source-reviewed; the Compose UI has no interaction-test dependency, so tile interaction was not automated. The Global PIN, session exit/break, kill-switch, and escape-tool safety paths are unchanged from the P0.5 safety audit; the current diff does not touch them or `GlobalKeyboardHook`.
+- **Windows and scope limits:** No Windows runtime/archetype check was run. Leave §9 rows 1–5 and row 8 unchecked; P0.5 owner rows 4 and 12 also remain pending. `ChangelogScreen.kt` was not edited because it is outside the P1.1/P1.2 allowlists despite the plan-wide changelog guidance. P2.2 post-raise overlay behavior remains out of scope.
+
 ## P2 — Hardening and polish
 
 **Status:** Not started.
@@ -285,9 +298,9 @@ Mark each scenario complete only after its named behavior is tested with the fak
 - [x] **T5** After a hard-cap failure and delay, next tap spawns rather than waits.
 - [x] **T6** Close shortly after opening; next tap spawns immediately.
 - [x] **T7** Hung native call is bounded by watchdog; stale worker cannot alter newer attempt.
-- [ ] **T8** Foreground verification accepts another HWND of the chain and rejects another process.
-- [ ] **T9** Failed raise tiers end within budget and allow a fresh retry.
-- [ ] **T10** FocusFlow-blocked app fails pre-flight without a spawn call.
+- [x] **T8** Foreground verification accepts another HWND of the chain and rejects another process.
+- [x] **T9** Failed raise tiers end within budget and allow a fresh retry.
+- [x] **T10** FocusFlow-blocked app fails pre-flight without a spawn call.
 - [ ] **T11** Old windowless/tray instance results in one spawn and successful open.
 - [x] **T12** `cancelAll()` and per-app cancel work in every phase without lingering jobs/state.
 - [x] **T13** Chain members survive; unrelated/renamed escape tools remain blocked.
@@ -297,7 +310,7 @@ Mark each scenario complete only after its named behavior is tested with the fak
 - [x] **T17** Unreadable process remains tracked by PID and can own a found window.
 - [x] **T18** Unresolvable lineage is not killed on first sighting; next snapshot decides.
 - [ ] **T19** A setup loader exception does not strand the screen in loading.
-- [ ] **T20** Spawn errors 2, 3, 5, 193, and 740 map to typed, friendly failures.
+- [x] **T20** Spawn errors 2, 3, 5, 193, and 740 map to typed, friendly failures.
 - [x] **T21** Main window supersedes splash; Z-order preference is respected.
 - [x] **T22** Exactly one terminal summary line is emitted per attempt with its attempt ID.
 - [x] **T23** Chain-exception setting defaults off; setup is followed by a second Global PIN entry; enabling requires verification and disabling is free.

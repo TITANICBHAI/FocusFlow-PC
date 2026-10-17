@@ -92,7 +92,7 @@ class LauncherLaunchCoordinatorTest {
         assertTrue("result=Opened" in openedSummary)
         assertTrue("spawnPid=101" in openedSummary)
         assertTrue("spawnAlive=true" in openedSummary)
-        assertTrue("tierResults=[fake=true]" in openedSummary)
+        assertTrue("tierResults=[fake=true" in openedSummary)
 
         val attemptIds = summaries.map { Regex("attemptId=([^ ]+)").find(it)!!.groupValues[1] }
         assertNotEquals(attemptIds[0], attemptIds[1])
@@ -168,7 +168,7 @@ class LauncherLaunchCoordinatorTest {
         assertEquals(1, platform.spawnCount)
         assertEquals(1, platform.raisedWindows.size)
         assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
-        assertEquals(5, platform.windowPollsForSpawnedPid)
+        assertEquals(6, platform.windowPollsForSpawnedPid)
         coordinator.cancelAll()
     }
 
@@ -874,8 +874,7 @@ class LauncherLaunchCoordinatorTest {
         val gate = CompletableDeferred<Unit>()
         val platform = FakeLaunchPlatform(this).apply {
             spawnResults.add(SpawnResult.Started(100L))
-            spawnResults.add(SpawnResult.Started(200L))
-            spawnedProcessAlive = false
+            spawnedProcessAlive = true
             windowAppearsAtMs = 0L
             raiseGate = gate
             raiseGateIsNonCancellable = true
@@ -886,6 +885,7 @@ class LauncherLaunchCoordinatorTest {
         runCurrent()
         advanceTimeBy(LauncherLaunchCoordinator.WINDOW_SELECTION_SETTLE_MS)
         runCurrent()
+        assertEquals(1, platform.raiseCount)
         advanceTimeBy(
             LauncherLaunchCoordinator.WINDOW_WAIT_MS +
                 LauncherLaunchCoordinator.WATCHDOG_MARGIN_MS
@@ -904,7 +904,7 @@ class LauncherLaunchCoordinatorTest {
         gate.complete(Unit)
         runCurrent()
         assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
-        assertEquals(2, platform.spawnCount)
+        assertEquals(1, platform.spawnCount)
         coordinator.cancelAll()
     }
 
