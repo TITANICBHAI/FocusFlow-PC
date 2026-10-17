@@ -347,7 +347,7 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 
 ## P2 — Hardening and polish
 
-**Status:** P2.1 is complete with Linux automated evidence. P2.2's source implementation is confirmed and the Linux suite passes; its Windows overlay/activation acceptance remains owner-pending. P2.3 has not started.
+**Status:** P2.1 is complete with Linux automated evidence. P2.2's source implementation is confirmed and the Linux suite passes; its Windows overlay/activation acceptance remains owner-pending. P2.3 is complete with Linux verification.
 
 ### P2.1 — Setup-screen loader recovery
 
@@ -406,8 +406,22 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 
 ### P2.3 — Comment and cache debt
 
-- [ ] Correct/document the sweep cadence and handle `ProcessCommandCache` only within the plan's permitted scope.
-- [ ] **Acceptance:** Source matches the documented actual cadence; no unrelated log or cache refactor.
+#### 2026-10-17 — P2.3 — In progress
+
+- **Authorization and scope:** Work only on P2.3. Leave P2.2's Windows acceptance pending; do not modify enforcement-log rotation or change the launcher sweep cadence.
+- **Working tree:** `main` is one commit ahead of `origin/main`; `Launcher/tracker.md` contains the preceding P2.2 verification record, and the supplied implementation brief remains untracked. No P2.3 source edits were present at batch start.
+- **Source findings:** `tickPoll` is the only `launcherSweep` caller; it polls every 2,000 ms with `WinEventHook` active and every 750 ms without it. The 250 ms constant is only a threshold inside that poll. `ProcessSnapshot.readSnapshot` calls `process.info()` before the command cache lookup, making that command cache redundant; the same cache abstraction is also used by the lazy Windows full-path resolver. `ProcessCommandCacheTest` covers cache hits, PID reuse, millisecond identity precision, and missing creation time. `EnforcementLog.appendLine` remains outside this task.
+- **Files reviewed:** P2.3 and P1.5 sections of `Launcher/plan.md`; P2.3/P2.2 status in `Launcher/tracker.md`; `ProcessMonitor.kt`, `ProcessSnapshot.kt`, `ProcessCommandCacheTest.kt`, and `EnforcementLog.kt`.
+- **Implementation boundary:** Correct the cadence comment and remove only the ineffective command-string cache use, preserving the PID-plus-creation-time cache for lazy Windows image-path queries. No enforcement-log or cadence behavior change.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle --version; gradle :test --no-daemon --console=plain --rerun-tasks` failed during `:compileKotlin` with `ProcessSnapshot.kt:159:9 Unresolved reference: commandCache`. No tests ran. The redundant cache was removed but its stale `retainOnly` cleanup call remained; correction and full rerun pending.
+- **Correction and verification attempt 2:** Removed the stale command-cache cleanup call while retaining `fullPathCache.retainOnly(liveKeys)`. The same full command completed with `BUILD SUCCESSFUL in 6m 35s`. Fresh XML reports: 69 files, 305 tests, 0 failures, 0 errors, 0 skipped. `ProcessCommandCacheTest` passed all 4 tests. The test worker ran GraalVM CE 19.0.2; Gradle 8.14.2 launcher and daemon used JDK 21.0.7. Existing Kotlin opt-in and Gradle deprecation warnings remain.
+- **Workflow:** Restarted `Start application`; Gradle reached `:run` and the workflow is RUNNING with no startup error in the captured output. The desktop UI was not visually inspected.
+- **Files changed:** `ProcessMonitor.kt`, `ProcessSnapshot.kt`, and this tracker. No tests or enforcement-log code changed.
+- **Windows and scope:** No Windows runtime behavior was tested or changed. P2.2's Windows acceptance remains owner-pending; no sweep cadence or enforcement-log rotation behavior changed.
+- **Diff check:** `git diff --check` passed after this tracker update.
+
+- [x] Correct/document the sweep cadence and handle `ProcessCommandCache` only within the plan's permitted scope.
+- [x] **Acceptance:** Source matches the documented actual cadence; no unrelated log or cache refactor.
 
 ### P2 execution notes
 

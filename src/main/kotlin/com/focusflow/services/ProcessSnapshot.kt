@@ -63,7 +63,6 @@ internal class ProcessSnapshotCache(
 internal object ProcessSnapshot {
     private const val SNAPSHOT_TTL_MS = 250L
 
-    private val commandCache = ProcessCommandCache()
     private val fullPathCache = ProcessCommandCache()
     private val snapshotCache = ProcessSnapshotCache(
         ttlMs = SNAPSHOT_TTL_MS,
@@ -142,9 +141,7 @@ internal object ProcessSnapshot {
                 val info = process.info()
                 val startInstant = info.startInstant().orElse(null)
                 if (startInstant != null) liveKeys += process.pid() to startInstant
-                val command = commandCache.command(process.pid(), startInstant) {
-                    info.command().orElse("")
-                }.takeIf(String::isNotBlank)
+                val command = info.command().orElse("").takeIf(String::isNotBlank)
                 val parentPid = runCatching { process.parent().orElse(null)?.pid() }.getOrNull()
                 entries += ProcessSnapshotEntry(
                     pid = process.pid(),
@@ -159,7 +156,6 @@ internal object ProcessSnapshot {
             }
         }
 
-        commandCache.retainOnly(liveKeys)
         fullPathCache.retainOnly(liveKeys)
         return entries
     }

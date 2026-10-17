@@ -538,11 +538,10 @@ object ProcessMonitor {
 
     // ── Launcher sweep ────────────────────────────────────────────────────────
 
-    /** Milliseconds between full-process-list sweeps in launcher kiosk mode.
-     *  250 ms means a background process that never takes foreground focus is
-     *  caught and killed within a quarter-second.  The WinEventHook still covers
-     *  foreground switches instantly; this sweep is the backstop for background
-     *  launches that silently run without ever bringing a window forward. */
+    /** Minimum elapsed-time threshold checked by tickPoll before a launcher sweep.
+     *  This is not a scheduler: tickPoll runs once per monitor poll, every 2 seconds
+     *  with WinEventHook or every 750 ms in fallback mode, so sweeps run no more
+     *  often than that poll cadence. */
     private const val LAUNCHER_SWEEP_INTERVAL_MS = 250L
 
     @Volatile private var lastLauncherSweepMs = 0L
