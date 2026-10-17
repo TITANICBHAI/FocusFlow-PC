@@ -347,7 +347,7 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 
 ## P2 — Hardening and polish
 
-**Status:** P2.1 complete with Linux automated evidence; P2.2/P2.3 not started.
+**Status:** P2.1 is complete with Linux automated evidence. P2.2's source implementation is confirmed and the Linux suite passes; its Windows overlay/activation acceptance remains owner-pending. P2.3 has not started.
 
 ### P2.1 — Setup-screen loader recovery
 
@@ -383,7 +383,25 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 - **Implementation update:** The service now resolves PID-less post-raise callbacks from the actual foreground window, uses the shared kiosk policy for foreground and candidate processes, and distinguishes visible allowed windows, live windowless apps, and closed apps. The window host applies `SWP_NOACTIVATE` when topmost without focus is appropriate. P2.3 remains untouched.
 - **Verification:** Pending. Windows runtime behavior remains owner-only.
 
-- [ ] Use the shared kiosk decision; avoid activating the launcher when merely restoring topmost state; base post-raise visibility on actual foreground state.
+#### 2026-10-17 — P2.2 — Resumed source audit and verification — In progress
+
+- **Authorization and scope:** Resume P2.2 verification and completion only. Do not start P2.3 or any other open launcher task.
+- **Working tree:** `main` matches `origin/main`; the only untracked path is the supplied implementation brief. No code edits were present at batch start.
+- **Current source review:** `FocusLauncherService.onForegroundChanged` resolves PID-less post-raise callbacks from the actual foreground, consults the shared kiosk decision, checks for live allowed app windows before hiding the overlay for safe foreground events, and returns focus to the launcher when a safe shell is foreground with no allowed process left. `LauncherWindow` uses `SWP_NOACTIVATE` for topmost transitions that should not take focus. No P2.3 code was inspected or changed.
+- **Files reviewed:** `replit.md`, `Launcher/plan.md`, `Launcher/tracker.md`, `Launcher/rules.md`, `.agents/memory/focus-launcher-task-brief.md`, `.agents/memory/gradle-test-completion.md`, `.agents/memory/gradle-jvm-selection.md`, `FocusLauncherService.kt`, `LauncherWindow.kt`, `LauncherKioskPolicy.kt`, `ProcessMonitor.kt`, `WinEventHook.kt`, `WinApiBindings.kt`, `WindowRaiser.kt`, and the post-raise callback in `LauncherLaunchCoordinator.kt`.
+- **Verification:** Pending. Linux test/build evidence and the Windows-only acceptance remain to be recorded.
+
+#### 2026-10-17 — P2.2 — Linux verification recorded; Windows acceptance pending
+
+- **Audit outcome:** The source implementation meets the P2.2 code criteria: foreground changes use the shared kiosk policy; safe foreground transitions preserve a visible allowed app; PID-less post-raise callbacks resolve the actual foreground; topmost restoration uses `SWP_NOACTIVATE` when the launcher should not take focus; and a safe shell foreground with no allowed app process returns the launcher to the foreground. No P2.2 source edit was needed in this batch.
+- **Files changed:** `Launcher/tracker.md` only. `FocusLauncherService.kt` and `LauncherWindow.kt` were reviewed and left unchanged.
+- **Verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle --version; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL in 7m 9s`. Inspected fresh XML reports: 69 files, 305 tests, 0 failures, 0 errors, 0 skipped. Shell Java reported GraalVM CE 19.0.2; Gradle launcher and daemon reported JDK 21.0.7. The test-worker JVM was not captured.
+- **Diff check:** `git diff --check` passed after the tracker update.
+- **Windows acceptance:** No Windows runtime or UI interaction was performed. Keep the P2.2 acceptance and all §9 rows unchecked. The owner must verify that toast/IME/dialog foreground transitions do not cover or steal focus from an allowed app, and that closing the app returns focus to the launcher.
+- **Workflow:** No restart was needed because application source and run configuration were unchanged. No Windows behavior is claimed from the Linux suite.
+- **Constants and safety:** No launch constants or PIN, exit, break, kill-switch, or escape-tool behavior changed. Focus Launcher session-entry, exit, break, kill-switch, foreground callback, and shared kiosk-policy paths were source-reviewed.
+
+- [x] Use the shared kiosk decision; avoid activating the launcher when merely restoring topmost state; base post-raise visibility on actual foreground state.
 - [ ] **Acceptance:** Allowed apps are not covered by transient system windows; closing the app returns to the launcher.
 
 ### P2.3 — Comment and cache debt
