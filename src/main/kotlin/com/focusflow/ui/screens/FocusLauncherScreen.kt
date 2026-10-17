@@ -35,6 +35,7 @@ import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.components.InfoTooltip
 import com.focusflow.ui.theme.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,6 +53,40 @@ private const val MAX_CUSTOM_DURATION_MINUTES = 24 * 60
 private const val LOCKDOWN_NOTICE_DISMISSED_SETTING = "launcher_lockdown_notice_dismissed"
 private const val PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING =
     "launcher_protected_processes_notice_dismissed"
+
+internal suspend fun <T> runLauncherSetupLoader(
+    loaderName: String,
+    load: suspend () -> T,
+    onSuccess: (T) -> Unit,
+    onFailure: (Throwable) -> Unit,
+    onComplete: () -> Unit = {},
+    logFailure: suspend (String, Throwable) -> Unit = { name, failure ->
+        withContext(Dispatchers.IO) {
+            EnforcementLog.warn("FocusLauncherScreen", "$name loader failed", failure)
+        }
+    }
+) {
+    try {
+        val value = try {
+            load()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            try {
+                logFailure(loaderName, failure)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Logging must not prevent the screen from recovering from the loader failure.
+            }
+            onFailure(failure)
+            return
+        }
+        onSuccess(value)
+    } finally {
+        onComplete()
+    }
+}
 
 private fun formatDuration(totalMinutes: Int): String {
     val hours = totalMinutes / 60
@@ -84,6 +119,9 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
     var customHoursText   by remember { mutableStateOf("1") }
     var customMinutesText by remember { mutableStateOf("0") }
     var isLoading        by remember { mutableStateOf(true) }
+    var appScanAttempt   by remember { mutableStateOf(0) }
+    var appScanFailed    by remember { mutableStateOf(false) }
+    var appSelectionEdited by remember { mutableStateOf(false) }
     var confirmEnter     by remember { mutableStateOf(false) }
     var showAdminWarning by remember { mutableStateOf(false) }
     var breaksAllowed     by remember { mutableStateOf(1) }
@@ -159,49 +197,116 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
         }
     }
 
+    LaunchedEffect(appScanAttempt) {
+        isLoading = true
+        appScanFailed = false
+        runLauncherSetupLoader(
+            loaderName = "Installed app scan",
+            load = {
+                withContext(Dispatchers.IO) {
+                    InstalledAppsScanner.getCuratedApps()
+                        .map {
+                            FocusLauncherApp(
+                                processName = it.processName,
+                                displayName = it.displayName,
+                                exePath = it.exePath,
+                                candidateIssue = it.issue
+                            )
+                        }
+                        .sortedBy { it.displayName }
+                }
+            },
+            onSuccess = { apps ->
+                availableApps = apps
+                selectedApps = apps.filter { it.isSelectable }
+                    .map { it.processName.lowercase() }.toSet()
+                appSelectionEdited = false
+            },
+            onFailure = {
+                availableApps = emptyList()
+                selectedApps = emptySet()
+                appScanFailed = true
+            },
+            onComplete = { isLoading = false }
+        )
+    }
+
+    // Each setup loader has its own recovery boundary. Failure in preferences,
+    // presets, or notices must not cancel or delay the installed-app scan.
+    LaunchedEffect(availableApps) {
+        val apps = availableApps
+        if (apps.isEmpty()) return@LaunchedEffect
+        runLauncherSetupLoader(
+            loaderName = "Saved app selection",
+            load = {
+                withContext(Dispatchers.IO) {
+                    Database.getSetting("launcher_selected_apps")
+                }
+            },
+            onSuccess = { persisted ->
+                if (!appSelectionEdited) {
+                    selectedApps = if (persisted != null && persisted.isNotBlank()) {
+                        val saved = persisted.split(",").filter { it.isNotBlank() }
+                            .map { it.trim().lowercase() }.toSet()
+                        val installed = apps.filter { it.isSelectable }
+                            .map { it.processName.lowercase() }.toSet()
+                        installed.intersect(saved)
+                    } else {
+                        apps.filter { it.isSelectable }
+                            .map { it.processName.lowercase() }.toSet()
+                    }
+                }
+            },
+            onFailure = {
+                // Keep the selectable-app defaults installed by the app scan.
+            }
+        )
+    }
+
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            com.focusflow.services.LauncherChainAllowance.refresh()
-        }
-        val apps = withContext(Dispatchers.IO) {
-            InstalledAppsScanner.getCuratedApps()
-                .map {
-                    FocusLauncherApp(
-                        processName = it.processName,
-                        displayName = it.displayName,
-                        exePath = it.exePath,
-                        candidateIssue = it.issue
+        runLauncherSetupLoader(
+            loaderName = "Launcher chain settings",
+            load = {
+                withContext(Dispatchers.IO) {
+                    com.focusflow.services.LauncherChainAllowance.refresh()
+                }
+            },
+            onSuccess = {},
+            onFailure = {}
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        runLauncherSetupLoader(
+            loaderName = "Saved launcher presets",
+            load = { withContext(Dispatchers.IO) { Database.getFocusLauncherPresets() } },
+            onSuccess = { launcherPresets = it },
+            onFailure = { launcherPresets = emptyList() }
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        runLauncherSetupLoader(
+            loaderName = "Launcher notice preferences",
+            load = {
+                withContext(Dispatchers.IO) {
+                    Pair(
+                        Database.getSetting(LOCKDOWN_NOTICE_DISMISSED_SETTING) == "true",
+                        Database.getSetting(PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING) == "true"
                     )
                 }
-                .sortedBy { it.displayName }
-        }
-        availableApps = apps
-
-        // Restore the last selection, intersected with apps currently installed.
-        val persisted = withContext(Dispatchers.IO) { Database.getSetting("launcher_selected_apps") }
-        val presets = withContext(Dispatchers.IO) { Database.getFocusLauncherPresets() }
-        val noticeDismissals = withContext(Dispatchers.IO) {
-            Pair(
-                Database.getSetting(LOCKDOWN_NOTICE_DISMISSED_SETTING) == "true",
-                Database.getSetting(PROTECTED_PROCESSES_NOTICE_DISMISSED_SETTING) == "true"
-            )
-        }
-        selectedApps = if (persisted != null && persisted.isNotBlank()) {
-            val saved     = persisted.split(",").filter { it.isNotBlank() }
-                .map { it.trim().lowercase() }.toSet()
-            val available = apps.filter { it.isSelectable }
-                .map { it.processName.lowercase() }.toSet()
-            val matching  = available.intersect(saved)
-            matching
-        } else {
-            apps.filter { it.isSelectable }.map { it.processName.lowercase() }.toSet()
-        }
-        launcherPresets = presets
-        showLockdownNotice = !noticeDismissals.first
-        showProtectedProcessesNotice = !noticeDismissals.second
-        noticesLoaded = true
-
-        isLoading = false
+            },
+            onSuccess = { noticeDismissals ->
+                showLockdownNotice = !noticeDismissals.first
+                showProtectedProcessesNotice = !noticeDismissals.second
+            },
+            onFailure = {
+                // If dismissal state is unavailable, show both safety notices.
+                showLockdownNotice = true
+                showProtectedProcessesNotice = true
+            },
+            onComplete = { noticesLoaded = true }
+        )
     }
 
     if (isActive) {
@@ -230,6 +335,40 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                         color = OnSurface, fontWeight = FontWeight.Bold)
                     Text(strings.launcherSubtitle,
                         style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                }
+            }
+        }
+
+        if (appScanFailed) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(Error.copy(alpha = 0.08f))
+                        .border(1.dp, Error.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = Error, modifier = Modifier.size(18.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            "Couldn't load installed apps",
+                            color = Error,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "The app scan failed. Retry to scan again; you can still use the setup screen.",
+                            color = OnSurface2,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(
+                        onClick = { appScanAttempt++ },
+                        enabled = !isLoading
+                    ) {
+                        Text("Retry")
+                    }
                 }
             }
         }
@@ -508,7 +647,10 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(
-                            onClick = { selectedApps = emptySet() },
+                            onClick = {
+                                appSelectionEdited = true
+                                selectedApps = emptySet()
+                            },
                             enabled = selectedApps.isNotEmpty(),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
@@ -516,6 +658,7 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                         }
                         TextButton(
                             onClick = {
+                                appSelectionEdited = true
                                 selectedApps = availableApps.filter { it.isSelectable }
                                     .map { it.processName.lowercase() }.toSet()
                             },
@@ -576,7 +719,10 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                     Row(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
                             .background(Surface3)
-                            .clickable { selectedApps = presetApps }
+                            .clickable {
+                                appSelectionEdited = true
+                                selectedApps = presetApps
+                            }
                             .padding(horizontal = 12.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(9.dp)
@@ -682,6 +828,7 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                         app = app,
                         checked = checked,
                         onToggle = {
+                            appSelectionEdited = true
                             selectedApps = if (checked) selectedApps - key else selectedApps + key
                         }
                     )
