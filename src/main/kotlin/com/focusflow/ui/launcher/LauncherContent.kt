@@ -329,7 +329,12 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
                     color = if (failure != null) Error else LauncherColors.Tile,
                     shape = RoundedCornerShape(18.dp)
                 )
-                .clickable(enabled = !launching && failure?.canRetry != false) {
+                .clickable(enabled = launchTileTapEnabled(launchState)) {
+                    if (failure?.canRetry == false) {
+                        // Clear the displayed failure so the tap starts a fresh
+                        // preflight instead of being rejected as non-retryable.
+                        LauncherLaunchCoordinator.shared.cancel(app)
+                    }
                     FocusLauncherService.launchApp(app)
                 },
             contentAlignment = Alignment.Center
@@ -381,7 +386,7 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (launching && elapsedLaunchMs >= LAUNCH_PROGRESS_NOTICE_MS) {
+                if (launching && launchCancelVisible(elapsedLaunchMs)) {
                     TextButton(
                         onClick = { LauncherLaunchCoordinator.shared.cancel(app) },
                         colors = ButtonDefaults.textButtonColors(contentColor = Error),
@@ -431,12 +436,18 @@ private fun AppTile(app: FocusLauncherApp, launchState: LaunchState) {
 
 private const val LAUNCH_PROGRESS_NOTICE_MS = 10_000L
 
+internal fun launchTileTapEnabled(launchState: LaunchState): Boolean =
+    launchState !is LaunchState.Launching
+
 internal fun launchProgressLabel(appName: String, elapsedMs: Long): String =
     if (elapsedMs < LAUNCH_PROGRESS_NOTICE_MS) {
         "Opening…"
     } else {
         "Still opening $appName… ${elapsedMs / 1_000L} s"
     }
+
+internal fun launchCancelVisible(elapsedMs: Long): Boolean =
+    elapsedMs >= LAUNCH_PROGRESS_NOTICE_MS
 
 internal fun launchFailureRetryHint(failure: LaunchState.Failed): String? =
     if (failure.canRetry) "Tap to retry" else null

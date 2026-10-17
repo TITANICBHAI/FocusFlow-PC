@@ -485,6 +485,7 @@ class LauncherLaunchCoordinatorTest {
 
         assertTrue(coordinator.states.value.isEmpty())
         assertTrue(platform.raisedWindows.isEmpty())
+        assertTrue(platform.spawnedProcessAlive, "cancelling the wait must not kill the spawned app")
         assertEquals(1, logs.count { " summary=true " in " $it " })
         assertTrue(logs.single { " summary=true " in " $it " }
             .contains("result=Failed(code=Cancelled)"))
@@ -714,6 +715,29 @@ class LauncherLaunchCoordinatorTest {
         assertFalse(failed.canRetry)
         assertEquals(0, platform.spawnCount)
         assertTrue(logs.any { "result=Failed(code=StoreAppUnsupported)" in it })
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun clearingANonRetryableFailureAllowsAFreshTapImmediately() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            unsupportedLaunchReason = "The executable is not available."
+            executablePreflightResult = ExecutablePreflightResult.Supported
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        assertTrue(coordinator.request(app))
+        runCurrent()
+        assertFalse(assertIs<LaunchState.Failed>(coordinator.states.value[app.processName]).canRetry)
+
+        // The UI clears this terminal tile state before forwarding the new tap.
+        coordinator.cancel(app)
+        platform.unsupportedLaunchReason = null
+        assertTrue(coordinator.request(app))
+        runCurrent()
+
+        assertEquals(1, platform.spawnCount)
+        assertIs<LaunchState.Launching>(coordinator.states.value[app.processName])
         coordinator.cancelAll()
     }
 

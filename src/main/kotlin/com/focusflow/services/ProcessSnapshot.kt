@@ -7,17 +7,21 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 internal class ProcessCommandCache {
-    private data class Key(val pid: Long, val startInstant: Instant)
+    private data class Key(val pid: Long, val creationTimeMs: Long)
 
     private val commands = ConcurrentHashMap<Key, String>()
 
     fun command(pid: Long, startInstant: Instant?, readCommand: () -> String): String {
         if (startInstant == null) return readCommand()
-        return commands.computeIfAbsent(Key(pid, startInstant)) { readCommand() }
+        return commands.computeIfAbsent(Key(pid, startInstant.toEpochMilli())) { readCommand() }
     }
 
     fun retainOnly(liveKeys: Set<Pair<Long, Instant>>) {
-        commands.keys.removeIf { key -> (key.pid to key.startInstant) !in liveKeys }
+        val liveKeysByMillis = liveKeys
+            .mapTo(HashSet()) { (pid, startInstant) ->
+                Key(pid, startInstant.toEpochMilli())
+            }
+        commands.keys.removeIf { key -> key !in liveKeysByMillis }
     }
 }
 

@@ -35,6 +35,22 @@ class ProcessCommandCacheTest {
     }
 
     @Test
+    fun retainsCacheWhenSnapshotCreationTimeHasMillisecondPrecision() {
+        val cache = ProcessCommandCache()
+        val exactStart = Instant.parse("2026-10-14T10:00:00.123456789Z")
+        val snapshotStart = Instant.ofEpochMilli(exactStart.toEpochMilli())
+        var reads = 0
+
+        val first = cache.command(123L, exactStart) { reads++; "C:\\Apps\\one.exe" }
+        cache.retainOnly(setOf(123L to snapshotStart))
+        val second = cache.command(123L, exactStart) { reads++; "C:\\Apps\\changed.exe" }
+
+        assertEquals("C:\\Apps\\one.exe", first)
+        assertEquals(first, second)
+        assertEquals(1, reads)
+    }
+
+    @Test
     fun missingStartInstantDoesNotCacheCommand() {
         val cache = ProcessCommandCache()
         var reads = 0

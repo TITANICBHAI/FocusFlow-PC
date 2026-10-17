@@ -98,7 +98,7 @@
 
 - [x] Add liveness-based waiting, typed early exit/no-window outcomes, per-attempt tokens, watchdog, and per-app cancellation.
 - [x] Ensure stale workers cannot write state for a newer attempt and cancellation leaves no state/jobs behind.
-- [ ] **Acceptance:** T2, T3, T4, T7, and T12 pass; the user-visible elapsed-progress notice in T4 is deferred to P1.6.
+- [x] **Acceptance:** T2, T3, T4, T7, and T12 pass; the user-visible elapsed-progress notice in T4 is implemented and covered by P1.6 tests.
 
 ### P0.4 — Process lineage and window selection
 
@@ -203,7 +203,7 @@ Add dated entries here before and after each meaningful implementation change. P
 
 ## P1 — Correctness and robustness
 
-**Status:** P1.1 and P1.2 implementation and Linux automated acceptance are complete. P1.3/P1.4 implementation and Linux tests are complete, with Windows owner checks still open. P1.5/P1.6 have not started.
+**Status:** P1.1–P1.4 implementation and Linux automated acceptance are complete. P1.5/P1.6 implementation and Linux automated checks are complete; their Windows owner acceptance is still open.
 
 ### P1.1 — Raise reliability
 
@@ -286,25 +286,42 @@ Add dated entries here before and after each meaningful implementation change. P
 
 ### P1.5 — Shared process snapshot and scan cost
 
-- [ ] Depends on P0.4. Reuse the shared snapshot for the plan-listed sweeps/resolvers while preserving detection latency and path-based escape detection.
-- [ ] **Acceptance:** No per-tick `tasklist.exe`; record timing/performance evidence and leave Windows row 15 for owner verification.
+- [x] Depends on P0.4. Reuse the shared snapshot for the plan-listed sweeps/resolvers while preserving detection latency and path-based escape detection.
+- [ ] **Acceptance:** Source/tests confirm no per-tick `tasklist.exe`, and a Linux timing sample is recorded. Typical Windows performance and the kiosk-on/off comparison remain open for owner verification in row 15.
 
 ### P1.6 — Honest progress, cancel, and labels
 
-- [ ] Depends on P0.3. Show elapsed progress and Cancel after the planned delay; cancel the attempt without killing an already-started app.
-- [ ] Show typed, specific failure labels and preserve the planned failure-display behavior.
+- [x] Depends on P0.3. Show elapsed progress and Cancel after the planned delay; cancel the attempt without killing an already-started app.
+- [x] Show typed, specific failure labels and preserve the planned failure-display behavior.
 - [ ] **Acceptance:** Windows rows 13 and 16 remain owner-verified.
 
-### 2026-10-17 — P1.5/P1.6 — In progress
+### 2026-10-17 — P1.5/P1.6 — Initial implementation and focused verification
 
 - **Authorization and dependencies:** The owner selected P1.5 and P1.6. P0.4's shared snapshot and P0.3's typed coordinator states are present; their separate Windows acceptance gates remain open. Work only on the shared process-snapshot consumers and Focus Launcher progress/cancel/labels. Do not start P2.
 - **Working tree:** `main` is two commits ahead of `origin/main`; the working tree was clean before this batch.
 - **Initial source review:** The 250 ms `ProcessSnapshot` cache exists, but `ProcessMonitor.backgroundSweep` and both UWP child resolvers enumerate `ProcessHandle` directly; Nuclear Mode starts `tasklist` and separately enumerates for paths; `WinEventHook` queries the PID command and then resolves it again. `LaunchState.Launching` already carries a start time, `LauncherLaunchCoordinator.cancel(app)` cancels only the attempt, typed failures and a six-second reset already exist, and the UI has no delayed elapsed progress or tile cancel control.
 - **Files reviewed:** `ProcessSnapshot.kt`, `ProcessMonitor.kt`, `NuclearMode.kt`, `WinEventHook.kt`, `LauncherLaunchCoordinator.kt`, `LauncherContent.kt`, `ChangelogScreen.kt`, and the P1.5/P1.6 plan and tracker sections.
-- **P1.5 implementation update:** Routed background and UWP process resolution through the shared snapshot; a UWP child miss forces one refresh so a fresh cache cannot delay detection. Nuclear Mode now uses one snapshot for name and path escape checks instead of `tasklist` plus a second enumeration; WinEventHook uses the snapshot for ordinary foreground names with a targeted fallback for new PIDs/UWP hosts. Snapshot refreshes and slow sweep work now log duration only above 50 ms. Focused tests are added; verification is pending.
-- **P1.6 implementation update:** Removed the inaccurate “this can take a few seconds” copy. Tiles now show elapsed time and Cancel at 10 seconds; cancellation calls the existing per-app coordinator cancel path, which clears attempt state without killing the app. Typed short failure labels remain, retryable failures show “Tap to retry,” details remain in the tooltip, and the coordinator's six-second failure display is unchanged. Focused tests are added; verification is pending.
+- **P1.5 implementation update:** Routed background and UWP process resolution through the shared snapshot; a UWP child miss forces one refresh so a fresh cache cannot delay detection. Nuclear Mode now uses one snapshot for name and path escape checks instead of `tasklist` plus a second enumeration; WinEventHook uses the snapshot for ordinary foreground names with a targeted fallback for new PIDs/UWP hosts. Snapshot refreshes and slow sweep work now log duration only above 50 ms. Focused tests passed in the initial focused run below; the final full-suite result is in the resumed audit.
+- **P1.6 implementation update:** Removed the inaccurate “this can take a few seconds” copy. Tiles now show elapsed time and Cancel at 10 seconds; cancellation calls the existing per-app coordinator cancel path, which clears attempt state without killing the app. Typed short failure labels remain, retryable failures show “Tap to retry,” details remain in the tooltip, and the coordinator's six-second failure display is unchanged. Focused tests passed in the initial focused run below; the final full-suite result is in the resumed audit.
 - **Focused verification:** The P1.5/P1.6 tests plus coordinator, process-command-cache, kiosk-policy, and chain-allowance coverage completed with `BUILD SUCCESSFUL` in 50s. Fresh XML: 7 suites, 54 tests, 0 failures, 0 errors, 0 skipped. The runtime snapshot probe saw 20 processes in 9 ms on this Linux host; this is not a Windows performance result.
-- **Verification:** Pending. Preserve snapshot freshness, PID/creation-time identity, path-based escape detection, session PIN/exit/break/kill-switch behavior, and leave Windows rows 13, 15, and 16 for owner evidence. No GitHub push or Actions run is authorized.
+- **Earlier focused verification:** P1.5/P1.6 tests passed (7 suites, 54 tests); the final full-suite results are recorded in the resumed audit below. Preserve snapshot freshness, PID/creation-time identity, path-based escape detection, session PIN/exit/break/kill-switch behavior, and leave Windows rows 13, 15, and 16 for owner evidence. No GitHub push or Actions run was performed.
+
+### 2026-10-17 — P1.5/P1.6 — Resumed audit — Implementation complete; Linux checks passed; Windows owner checks pending
+
+- **Authorization:** The owner resumed only P1.5 shared process-snapshot consumers and P1.6 Focus Launcher progress/cancel/labels. P2, GitHub pushes, and Actions remain out of scope.
+- **Working tree:** Tracked source was clean at batch start; only the two supplied progress/instruction attachments were untracked. Preserve both.
+- **Current source review:** The shared snapshot is used by background and launcher sweeps, UWP child lookup, Nuclear Mode name/path checks, and ordinary WinEvent foreground resolution. Launcher tiles show elapsed time and wire Cancel to the per-app coordinator cancellation path; typed labels and retry hints are present.
+- **Review finding:** `ProcessCommandCache` keys use exact `Instant` equality, while the lazy full-path cache is keyed from millisecond `creationTimeMs`; verify and cover retention across that precision boundary so path lookups remain cached across snapshots.
+- **Changes in this continuation:** Normalized process-cache identity/retention to the snapshot's millisecond creation-time precision and added a fractional-Instant regression test. Added tests for the 10-second progress/Cancel thresholds and that cancellation leaves the spawned app alive. A new tap now clears a displayed non-retryable failure before re-running preflight; added UI-state and coordinator coverage.
+- **Additional P1.6 gap found and fixed:** The tile had disabled clicks for `Failed(canRetry=false)`, and the coordinator rejects such a state. The tile is now tappable while failed and clears the old terminal state before launching again, as §5/P1.6 requires.
+- **Verification attempt 1:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle :test --no-daemon --console=plain --rerun-tasks` hit the 300-second shell timeout after Gradle started. No final task result or `build/test-results/test` XML was produced. Incomplete, not a pass or test failure.
+- **Verification attempt 2:** Started the same forced full-suite command in the background, then stopped it before `:compileKotlin` completed after the additional P1.6 gap was found. No `:test` result or XML reports were produced. Incomplete; superseded by attempt 3.
+- **Verification attempt 3 (final source state):** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL` in 5m 24s. Fresh XML: 68 report files, 301 tests, 0 failures, 0 errors, 0 skipped. Relevant passing tests include `slowLiveProcessOpensOnTheFirstAttempt`, `cancelDuringAwaitLeavesNoStateOrLateRaise`, `clearingANonRetryableFailureAllowsAFreshTapImmediately`, `retainsCacheWhenSnapshotCreationTimeHasMillisecondPrecision`, `keepsPathBasedEscapeDetectionWhenTheProcessNameDiffers`, and `elapsedProgressAppearsAtTenSecondsAndShowsTheCurrentDuration`. The runtime snapshot sample recorded 11 processes in 9 ms on this Linux host; this is not evidence for a typical Windows machine or the kiosk-on/off comparison.
+- **Runtime and diff checks:** The shell `java -version` was GraalVM 19.0.2; Gradle was 8.14.2 with launcher JVM 21.0.7. `git diff --check` passed. No test-worker JVM claim is made.
+- **Workflow smoke check:** Restarted `Start application`; Gradle `:run` is active and `com.focusflow.MainKt` is running. No workflow errors were observed. This confirms Linux process startup, not Windows runtime or UI behavior.
+- **Safety review after the edits:** Re-read the Global and Session PIN gates, `FocusLauncherService` enter/exit/break/kill-switch and interrupted-session recovery paths, `KillSwitchService`, Nuclear Mode name/path detection and enforcement, ProcessMonitor sweeps, the shared snapshot, and the launcher cancel path. No PIN, exit, break, kill-switch, or escape-tool behavior was changed; cancellation leaves the spawned app alive in the coordinator test.
+- **Scope and owner checks:** The P1.5/P1.6 changes are limited to `ProcessSnapshot.kt`, `LauncherContent.kt`, their tests, and this tracker. Keep Windows rows 13, 15, and 16 open; no Windows runtime or performance comparison was run. The changelog was not edited because it is outside the P1.5/P1.6 file allowlists, despite the plan-wide changelog guidance. No GitHub push or Actions run was performed.
+- **Out-of-scope observations retained:** The launcher safe-process list exempts all Java programs; Nuclear Mode targets shells regardless of ownership, including possible firewall-helper shells; `AppIconExtractor` uses reflective access to `sun.awt.shell.ShellFolder`; `InstalledAppsScanner.getRunningApps()` offers all running executables as candidates. None was changed under this scope.
 
 ### P1 execution notes
 
@@ -358,7 +375,7 @@ Mark each scenario complete only after its named behavior is tested with the fak
 - [x] **T1** Spawn, window appears, raise succeeds; no later-attempt influence remains.
 - [x] **T2** Dead-on-arrival process exits quickly; next tap spawns.
 - [x] **T3** Stub exits and a same-root/descendant hand-off process appears.
-- [ ] **T4** Slow live process opens on the first attempt with soft progress and no early failure. Core liveness is tested; the visible elapsed-progress notice is P1.6.
+- [x] **T4** Slow live process opens on the first attempt with soft progress and no early failure. Coordinator liveness and the P1.6 elapsed-progress threshold are covered by automated tests.
 - [x] **T5** After a hard-cap failure and delay, next tap spawns rather than waits.
 - [x] **T6** Close shortly after opening; next tap spawns immediately.
 - [x] **T7** Hung native call is bounded by watchdog; stale worker cannot alter newer attempt.
