@@ -373,6 +373,16 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 
 ### P2.2 — Overlay and activation
 
+#### 2026-10-17 — P2.2 — In progress
+
+- **Authorized scope:** P2.2 only. P2.2 and P2.3 are independent; do not make P2.3 cadence/cache changes.
+- **Working tree:** `main` is one commit ahead of `origin/main`; clean at batch start.
+- **Current source review:** `FocusLauncherService.onForegroundChanged` already calls the shared kiosk policy, but Explorer is in the safe-process set, so a safe shell foreground event can leave the overlay hidden after an allowed app closes. The launch coordinator's post-raise callback supplies only the tile name (PID 0), not the actual foreground process. `LauncherWindow` currently reasserts topmost with `SWP_SHOWWINDOW` and has no activation-state input.
+- **Files read:** P2.2 in `Launcher/plan.md`; `Launcher/tracker.md`; `replit.md`; `FocusLauncherService.kt`; `LauncherWindow.kt`; `LauncherKioskPolicy.kt`; relevant `ProcessMonitor.kt`, `ProcessSnapshot.kt`, `WinEventHook.kt`, `WinApiBindings.kt`, `WindowRaiser.kt`, and the launch-coordinator callback.
+- **Implementation plan:** Use the actual foreground identity for post-raise overlay decisions; keep transient safe windows from covering a still-visible allowed app, but return the launcher when no allowed app window remains. Make topmost activation explicit so non-focus transitions use `SWP_NOACTIVATE`. Preserve the shared kiosk policy and all existing PIN, break, exit, kill-switch, and escape-tool behavior.
+- **Implementation update:** The service now resolves PID-less post-raise callbacks from the actual foreground window, uses the shared kiosk policy for foreground and candidate processes, and distinguishes visible allowed windows, live windowless apps, and closed apps. The window host applies `SWP_NOACTIVATE` when topmost without focus is appropriate. P2.3 remains untouched.
+- **Verification:** Pending. Windows runtime behavior remains owner-only.
+
 - [ ] Use the shared kiosk decision; avoid activating the launcher when merely restoring topmost state; base post-raise visibility on actual foreground state.
 - [ ] **Acceptance:** Allowed apps are not covered by transient system windows; closing the app returns to the launcher.
 

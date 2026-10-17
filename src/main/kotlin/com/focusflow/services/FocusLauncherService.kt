@@ -11,6 +11,8 @@ import com.focusflow.enforcement.NuclearMode
 import com.focusflow.enforcement.RegistryLockdown
 import com.focusflow.enforcement.ProcessMonitor
 import com.focusflow.enforcement.User32Extra
+import com.focusflow.enforcement.WindowRaiser
+import com.focusflow.enforcement.getForegroundProcessNameAndPidRobust
 import com.focusflow.enforcement.isWindows
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,6 +82,10 @@ object FocusLauncherService {
     private val _overlayVisible            = MutableStateFlow(true)
     val overlayVisible: StateFlow<Boolean> = _overlayVisible
 
+    /** True only when the overlay transition should intentionally take focus. */
+    private val _overlayShouldActivate            = MutableStateFlow(true)
+    val overlayShouldActivate: StateFlow<Boolean> = _overlayShouldActivate
+
     /** Plain-text PIN exposed only long enough for the setup UI to display it. */
     private val _sessionPin           = MutableStateFlow("")
     val sessionPin: StateFlow<String> = _sessionPin
@@ -142,18 +148,99 @@ object FocusLauncherService {
         return SessionPinInput.matches(raw, stored)
     }
 
-    /**
-     * Update launcher window Z-order after a foreground process change.
-     * Allowed apps are usable below the launcher; all other foreground apps
-     * bring the launcher back to the top.
-     */
+    /** Update launcher visibility from the real foreground after a launch attempt. */
     fun onForegroundChanged(processName: String) {
         onForegroundChanged(processName, 0L)
     }
 
     fun onForegroundChanged(processName: String, pid: Long) {
         if (!_isActive.value || _breakActive.value) return
-        _overlayVisible.value = !ProcessMonitor.isLauncherProcessAllowed(processName, pid)
+
+        // The launch coordinator's callback has no PID. Resolve the current OS
+        // foreground instead of assuming the selected tile actually received it.
+        val foreground = if (pid > 0L) {
+            processName to pid
+        } else {
+            getForegroundProcessNameAndPidRobust()
+        }
+        if (foreground == null) {
+            setOverlayState(visible = true, shouldActivate = true)
+            return
+        }
+
+        val (foregroundName, foregroundPid) = foreground
+        val normalizedName = normalizeProcessName(foregroundName)
+        val allowed = ProcessMonitor.isLauncherProcessAllowed(foregroundName, foregroundPid)
+        if (!allowed) {
+            setOverlayState(visible = true, shouldActivate = true)
+            return
+        }
+
+        val isSafeSystemForeground =
+            foregroundPid == ProcessHandle.current().pid() ||
+                normalizedName in ProcessMonitor.launcherSafeProcesses
+        if (isSafeSystemForeground) {
+            val allowedPids = allowedLauncherProcessPids()
+            val hasVisibleAppWindow = WindowRaiser.findWindows(allowedPids).isNotEmpty()
+            when {
+                hasVisibleAppWindow ->
+                    setOverlayState(visible = false, shouldActivate = false)
+                allowedPids.isNotEmpty() ->
+                    // An allowed app is still starting or is running without a
+                    // visible window. Keep the launcher available without taking
+                    // focus from the safe foreground window.
+                    setOverlayState(visible = true, shouldActivate = false)
+                else ->
+                    // A safe shell process is also the foreground after an
+                    // allowed app closes. Return focus to the launcher.
+                    setOverlayState(visible = true, shouldActivate = true)
+            }
+            return
+        }
+
+        setOverlayState(visible = false, shouldActivate = false)
+    }
+
+    private fun allowedLauncherProcessPids(): Set<Long> {
+        if (!isWindows || ProcessMonitor.launcherAllowedProcesses.isEmpty()) return emptySet()
+
+        return try {
+            val ownPid = ProcessHandle.current().pid()
+            val allowedNames = ProcessMonitor.launcherAllowedProcesses
+            val safeNames = ProcessMonitor.launcherSafeProcesses
+            ProcessSnapshot.snapshotProcesses()
+                .asSequence()
+                .filter { it.pid != ownPid }
+                .filter { process ->
+                    val name = normalizeProcessName(process.processName)
+                    if (name in safeNames && name !in allowedNames) {
+                        false
+                    } else {
+                        // Reuse the shared kiosk decision so chain members are
+                        // considered only when the same enforcement policy allows them.
+                        ProcessMonitor.isLauncherProcessAllowed(name, process.pid)
+                    }
+                }
+                .map { it.pid }
+                .toSet()
+        } catch (failure: Exception) {
+            runCatching {
+                EnforcementLog.warn(
+                    "Launcher",
+                    "could not inspect allowed launcher processes for overlay decision",
+                    failure
+                )
+            }
+            emptySet()
+        }
+    }
+
+    private fun normalizeProcessName(value: String): String =
+        value.substringAfterLast('\\').substringAfterLast('/').lowercase()
+
+    private fun setOverlayState(visible: Boolean, shouldActivate: Boolean = visible) {
+        _overlayShouldActivate.value = visible && shouldActivate
+        _overlayVisible.value = visible
     }
 
     /** Only apps in the current active launcher allow-list may be opened or raised. */
@@ -194,7 +281,7 @@ object FocusLauncherService {
         }
         if (!_isActive.compareAndSet(false, true)) return FocusLauncherEntryResult.Blocked
 
-        _overlayVisible.value     = true
+        setOverlayState(visible = true)
         _breaksTotal.value        = breaksAllowed
         _breaksUsed.value         = 0
         breakDurationSeconds      = breakSeconds
@@ -268,7 +355,7 @@ object FocusLauncherService {
         runCatching { Database.clearFocusLauncherSession() }
         _isHardLocked.value       = false
         _breakActive.value        = false
-        _overlayVisible.value     = true
+        setOverlayState(visible = true)
         _breaksTotal.value        = 1
         _breaksUsed.value         = 0
         _sessionPin.value         = ""
@@ -332,7 +419,7 @@ object FocusLauncherService {
         LauncherLaunchCoordinator.shared.cancelAll()
         stopTaskbarGuard()
         showTaskbar()
-        _overlayVisible.value = false
+        setOverlayState(visible = false)
         _breakRemainingSeconds.value = breakDurationSeconds
 
         // Pause the session countdown while the break runs.
@@ -407,7 +494,7 @@ object FocusLauncherService {
             RegistryLockdown.enable()
 
             startTaskbarGuard()
-            _overlayVisible.value = true
+            setOverlayState(visible = true)
             // Resume the session countdown timer now that the break is over
             if (_sessionEndMs.value > 0L) startSessionTimer()
             SystemTrayManager.showNotification(
@@ -435,7 +522,7 @@ object FocusLauncherService {
         GlobalKeyboardHook.disable()
         RegistryLockdown.disable()
         showTaskbar()
-        _overlayVisible.value = false
+        setOverlayState(visible = false)
     }
 
     /**
@@ -459,7 +546,7 @@ object FocusLauncherService {
         GlobalKeyboardHook.enable()
         RegistryLockdown.enable()
         startTaskbarGuard()
-        _overlayVisible.value = true
+        setOverlayState(visible = true)
     }
 
     // ── Interrupted-session recovery ──────────────────────────────────────────
@@ -603,7 +690,7 @@ object FocusLauncherService {
 
         _breakActive.value = true
         _breakRemainingSeconds.value = remaining
-        _overlayVisible.value = false
+        setOverlayState(visible = false)
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
         ProcessMonitor.clearLauncherAllowedApps()
         if (NuclearMode.isActive) NuclearMode.disable(silent = true)
@@ -629,7 +716,7 @@ object FocusLauncherService {
         GlobalKeyboardHook.enable()
         RegistryLockdown.enable()
         startTaskbarGuard()
-        _overlayVisible.value = true
+        setOverlayState(visible = true)
     }
 
     private fun persistSession() {

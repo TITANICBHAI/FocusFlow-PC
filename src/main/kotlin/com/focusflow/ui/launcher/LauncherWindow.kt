@@ -56,6 +56,7 @@ fun LauncherWindowHost() {
 @Composable
 private fun LauncherWindowForScreen(bounds: Rectangle, isPrimary: Boolean) {
     val overlayVisible by FocusLauncherService.overlayVisible.collectAsState()
+    val overlayShouldActivate by FocusLauncherService.overlayShouldActivate.collectAsState()
     val breakActive by FocusLauncherService.breakActive.collectAsState()
     val windowState = rememberWindowState(
         placement = WindowPlacement.Floating,
@@ -102,11 +103,13 @@ private fun LauncherWindowForScreen(bounds: Rectangle, isPrimary: Boolean) {
             }
         }
 
-        LaunchedEffect(shouldBeTopmost, launcherHandle) {
+        LaunchedEffect(shouldBeTopmost, overlayShouldActivate, launcherHandle) {
             if (!isWindows) return@LaunchedEffect
             val hwnd = launcherHandle?.let { WinDef.HWND(Pointer(it)) } ?: return@LaunchedEffect
 
             if (shouldBeTopmost) {
+                val flags = User32Extra.SWP_SHOWWINDOW or
+                    if (overlayShouldActivate) 0 else User32Extra.SWP_NOACTIVATE
                 User32Extra.INSTANCE.SetWindowPos(
                     hwnd,
                     User32Extra.HWND_TOPMOST,
@@ -114,7 +117,7 @@ private fun LauncherWindowForScreen(bounds: Rectangle, isPrimary: Boolean) {
                     bounds.y,
                     bounds.width,
                     bounds.height,
-                    User32Extra.SWP_SHOWWINDOW
+                    flags
                 )
             } else {
                 User32Extra.INSTANCE.SetWindowPos(
