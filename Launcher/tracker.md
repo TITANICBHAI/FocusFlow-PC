@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Supplemental rules:** [rules.md](rules.md)
-- **Overall status:** P0.1/P0.2/P0.5 and P1.1/P1.2 have Linux implementation evidence. P1.3/P1.4 implementation and Linux test evidence are complete; their Windows acceptance remains owner-pending. P0.3/P0.4 acceptance still has open gates. P1.5/P1.6 and P2 have not started.
+- **Overall status:** P0.1/P0.2/P0.5 and P1.1/P1.2 have Linux implementation evidence. P1.3/P1.4 implementation and Linux test evidence are complete; their Windows acceptance remains owner-pending. P0.3/P0.4 acceptance still has open gates. P1.5/P1.6 and P2.2/P2.3 have not started; P2.1 is complete with Linux T19 evidence.
 
 ## Tracking rules
 
@@ -347,12 +347,29 @@ Add dated entries for each selected task. Record dependencies, changed files, ch
 
 ## P2 — Hardening and polish
 
-**Status:** Not started.
+**Status:** P2.1 complete with Linux automated evidence; P2.2/P2.3 not started.
 
 ### P2.1 — Setup-screen loader recovery
 
-- [ ] Ensure independent loaders cannot leave the screen loading forever; show a useful error/retry state and log failures.
-- [ ] **Acceptance:** T19 passes.
+#### 2026-10-17 — P2.1 — In progress
+
+- **Authorized scope:** P2.1 only. Audit the setup screen's independent loaders, failure recovery, retry state, and T19 evidence; do not start P2.2 or P2.3.
+- **Working tree:** `main` matches `origin/main`; the supplied Focus Launcher brief is the only untracked file.
+- **Current source review:** `FocusLauncherScreen.kt` already has a shared loader recovery boundary, separate effects for app scanning, saved selection, chain settings, presets, and notice preferences, plus an inline app-scan error and Retry control. `FocusLauncherSetupLoaderTest.kt` already exercises loader failures, scan retry, and a slow preset loader alongside the app scan.
+- **Files reviewed:** `Launcher/plan.md`, `Launcher/tracker.md`, `replit.md`, `FocusLauncherScreen.kt` loader and UI sections, and `FocusLauncherSetupLoaderTest.kt`.
+- **Verification:** See the completion and verification record below.
+
+- [x] Ensure independent loaders cannot leave the screen loading forever; show a useful error/retry state and log failures.
+- [x] **Acceptance:** T19 passes.
+
+#### 2026-10-17 — P2.1 — Completion and Linux verification
+
+- **Audit result:** The P2.1 recovery implementation and its focused tests were already present in the checkout. The app scan has its own effect and always clears `isLoading` through the loader's `finally` completion; scan failures show an inline error with Retry. Saved selection, chain settings, presets, and notices load independently, with safe fallback behavior and logged loader failures. No screen or test source change was needed.
+- **Files changed:** `Launcher/tracker.md` only. **Files reviewed:** `FocusLauncherScreen.kt`, `FocusLauncherSetupLoaderTest.kt`, `Launcher/plan.md`, `Launcher/tracker.md`, and `replit.md`.
+- **Verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle --version; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL in 2m 29s`. Fresh XML: 69 suites, 305 tests, 0 failures, 0 errors, 0 skipped. `FocusLauncherSetupLoaderTest` passed all 4 tests: independent loader failure completion/logging, app-scan retry, preset/app-scan independence, and cancellation cleanup. `git diff --check` passed.
+- **Runtime evidence:** Shell Java reported GraalVM 19.0.2; Gradle 8.14.2 launcher/daemon used JDK 21.0.7; the Gradle test worker was observed running the configured GraalVM 19.0.2 binary. Existing Kotlin/Gradle warnings remain and did not fail the build.
+- **UI evidence limits:** Loader recovery and retry are covered by unit tests and the Compose state/render branches were source-reviewed; no Compose UI interaction test was run. No Windows-specific behavior was changed or claimed. No application workflow restart was needed because application source and run configuration were unchanged.
+- **Deferred:** P2.2 and P2.3 remain untouched. The tracker’s pre-existing P1 summary has status inconsistencies outside this task’s scope; no P1 status was reconciled here.
 
 ### P2.2 — Overlay and activation
 
@@ -390,7 +407,7 @@ Mark each scenario complete only after its named behavior is tested with the fak
 - [x] **T16** Reused PID with a different creation time is not in the chain.
 - [x] **T17** Unreadable process remains tracked by PID and can own a found window.
 - [x] **T18** Unresolvable lineage is not killed on first sighting; next snapshot decides.
-- [ ] **T19** A setup loader exception does not strand the screen in loading.
+- [x] **T19** A setup loader exception does not strand the screen in loading.
 - [x] **T20** Spawn errors 2, 3, 5, 193, and 740 map to typed, friendly failures.
 - [x] **T21** Main window supersedes splash; Z-order preference is respected.
 - [x] **T22** Exactly one terminal summary line is emitted per attempt with its attempt ID.
