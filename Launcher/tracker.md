@@ -3,7 +3,7 @@
 - **Source plan:** [plan.md](plan.md)
 - **Agent instructions:** [preagent-prompt.md](preagent-prompt.md)
 - **Supplemental rules:** [rules.md](rules.md)
-- **Overall status:** P0.1/P0.2/P0.5 and P1.1/P1.2 implementation have Linux evidence. P0.3/P0.4 acceptance still has open gates; Windows runtime checks remain owner-pending. P1.3–P1.6 and P2 have not started.
+- **Overall status:** P0.1/P0.2/P0.5 and P1.1/P1.2 have Linux implementation evidence. P1.3/P1.4 implementation and Linux test evidence are complete; their Windows acceptance remains owner-pending. P0.3/P0.4 acceptance still has open gates. P1.5/P1.6 and P2 have not started.
 
 ## Tracking rules
 
@@ -203,7 +203,7 @@ Add dated entries here before and after each meaningful implementation change. P
 
 ## P1 — Correctness and robustness
 
-**Status:** P1.1 and P1.2 implementation and Linux automated acceptance are complete. Windows owner checks remain; P1.3–P1.6 have not started.
+**Status:** P1.1 and P1.2 implementation and Linux automated acceptance are complete. P1.3/P1.4 implementation and Linux tests are complete, with Windows owner checks still open. P1.5/P1.6 have not started.
 
 ### P1.1 — Raise reliability
 
@@ -220,6 +220,19 @@ Add dated entries here before and after each meaningful implementation change. P
 - [ ] **Owner verification:** Windows archetype H, row 8.
 
 ### P1.3 — Spawn method
+
+#### 2026-10-17 — P1.3/P1.4 — Resumed implementation and acceptance audit — In progress
+
+- **Authorization and scope:** The owner asked to continue P1.3 and P1.4. Continue only the spawn-method and app-picker/session-resolution work, including the previously approved `FocusLauncherService.kt` and `ChangelogScreen.kt` support edits. Do not start P1.5, P1.6, or P2 work.
+- **Working tree:** `main` is one commit ahead of `origin/main`; `git status --short --branch` showed no uncommitted changes.
+- **Current review:** The resolver, unelevated launch path, candidate classification, picker issue badges/tooltips, persisted-session re-resolution, and planned changelog edits are already present in the checkout. Reviewed these against P1.3/P1.4 and verified them with the existing focused tests and full Gradle suite; no source change was needed in this continuation.
+- **Implementation audit update:** Confirmed session entry re-resolves selected apps, refuses to start if none remain, and warns when only some remain; interrupted-session recovery repairs the saved app list and warns when apps are omitted. No duplicate notice or UI change is needed.
+- **Files read this batch:** `Launcher/tracker.md`, `JvmLauncherLaunchPlatform.kt`, `InstalledAppsScanner.kt`, `FocusLauncherService.kt`, `FocusLauncherScreen.kt`, the Focus Launcher session model, `LauncherExecutableResolutionTest.kt`, `InstalledAppsScannerTest.kt`, and the spawn-failure mapping in `LauncherLaunchCoordinator.kt`.
+- **Focused verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle --version; gradle :test --no-daemon --console=plain --tests 'com.focusflow.services.LauncherExecutableResolutionTest' --tests 'com.focusflow.enforcement.InstalledAppsScannerTest'` completed with `BUILD SUCCESSFUL` in 4m 20s. Fresh XML: 2 suites, 15 tests, 0 failures, 0 errors, 0 skipped. `java -version` reported GraalVM 19.0.2; Gradle launcher and daemon reported JDK 21.0.7; test-worker JVM not captured.
+- **Build warnings:** Existing opt-in/deprecation warnings remain; `InstalledAppsScanner.kt:268` also reports a redundant Elvis expression. No warning failed compilation.
+- **Full verification:** `export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; gradle :test --no-daemon --console=plain --rerun-tasks` completed with `BUILD SUCCESSFUL` in 3m 8s. Inspected fresh XML: 65 suites, 292 tests, 0 failures, 0 errors, 0 skipped. `git diff --check` passed.
+- **Files changed this continuation:** `Launcher/tracker.md` only; P1.3/P1.4 source and focused tests were already present in the clean checkout. No workflow restart was needed because no application source or run configuration changed.
+- **Final status:** P1.3/P1.4 implementation and Linux automated evidence are complete. Do not mark Windows acceptance complete: row 5 (elevation), row 6 (Store/UWP), row 8 (blocked app), row 13(b) (missing executable after session setup), and persisted-session recovery still need owner evidence. All §9 rows remain unchecked; no GitHub push or Actions run was performed.
 
 #### 2026-10-17 — Resumed P1.3 and P1.4 — In progress
 
@@ -242,8 +255,8 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Verification attempt 2:** `gradle :compileKotlin --no-daemon --console=plain` completed with `BUILD SUCCESSFUL` in 2m39s. Existing warnings were in unrelated files. Focused tests and the final full test run remain pending.
 - **Verification:** Pending. Windows elevation matrix row 5 remains owner-only.
 
-- [ ] Resolve the executable before spawn; remove `cmd /c start`; close child stdin and preserve the working-directory rule.
-- [ ] Apply the planned elevation behavior and friendly spawn-error mapping.
+- [x] Resolve the executable before spawn; remove `cmd /c start`; close child stdin and preserve the working-directory rule.
+- [x] Apply the planned elevation behavior and friendly spawn-error mapping.
 - [ ] **Acceptance:** Windows elevation matrix row 5 remains owner-verified.
 
 - **Resumed implementation update — 2026-10-17:** Tightened the unreadable-process fallback so it accepts only a resolved path whose image name matches the requested executable. Added a pure session-app resolution helper for use by P1.4 entry/restore validation. The de-elevated token launch, stdin closure, working directory, and coordinator's friendly 2/3/5/193/740 error mapping remain in place. Added focused regression tests; verification pending.
@@ -265,8 +278,8 @@ Add dated entries here before and after each meaningful implementation change. P
 - **Current source finding:** Registry candidates trust `DisplayIcon`, running candidates include arbitrary executables, picker selection persists process names, and session restore reuses the saved executable path without checking that it still resolves.
 - **Verification:** Pending. Windows archetypes F/H and stale persisted-path behavior require owner verification; Linux tests will cover classification and resolver behavior.
 
-- [ ] Classify/badge or hide unsupported, stale, system, uninstaller, updater, and installer candidates.
-- [ ] Re-resolve selected paths on session entry and restore; expose the resolved path in a tooltip.
+- [x] Classify/badge or hide unsupported, stale, system, uninstaller, updater, and installer candidates.
+- [x] Re-resolve selected paths on session entry and restore; expose the resolved path in a tooltip.
 - [ ] **Acceptance:** Applicable archetypes F and H and stale-path behavior are verified.
 
 - **Resumed implementation update — 2026-10-17:** Added candidate issue classification, hidden system-utility filtering, recovery of a clearly named main executable when the registry icon points to an updater, and tests for those rules. The picker now badges and disables unsupported entries, exposes the executable path in a tooltip, and restores only saved supported selections instead of selecting every app when saved names are stale. Session entry and interrupted-session recovery re-resolve paths; unresolved apps are omitted with a warning, and recovery ends safely if none remain. Changelog entries are drafted. Verification pending; §9 Windows checks remain owner-only.
