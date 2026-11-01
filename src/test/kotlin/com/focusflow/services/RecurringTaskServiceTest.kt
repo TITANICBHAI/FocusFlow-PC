@@ -15,6 +15,7 @@ import java.time.LocalDateTime
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -221,13 +222,138 @@ class RecurringTaskServiceTest {
         assertEquals(9, userVersion(dbFile))
         init(dbFile)
 
-        assertEquals(10, userVersion(dbFile))
+        assertEquals(11, userVersion(dbFile))
         val migrated = Database.getTasks().associateBy { it.id }
         assertEquals(existingTasks.map { it.id }.toSet(), migrated.keys)
         assertNull(migrated.getValue("legacy-template").recurringParentId)
         assertNull(migrated.getValue("ordinary-task").recurringParentId)
         assertTrue(Database.getRecurringTemplates().single().id == "legacy-template")
     }
+
+    @Test
+    fun g1CopiesAreNotCreatedBeforeTheTemplateStartDate() {
+        init(tempDir.resolve("g1.db").toFile())
+        Database.upsertTask(recurringTask("t1", "Read", "daily", scheduledDate = LocalDate.of(2026, 3, 10)))
+        listOf(9, 10, 11).forEach { RecurringTaskService.generateForToday(LocalDate.of(2026, 3, it)) }
+        assertEquals(listOf(LocalDate.of(2026, 3, 11)), copiesOf("t1").map { it.scheduledDate })
+    }
+
+    @Test
+    fun g2CopiesStopAfterTheEndDateInclusive() {
+        init(tempDir.resolve("g2.db").toFile())
+        Database.upsertTask(
+            recurringTask("t2", "Read", "daily", scheduledDate = LocalDate.of(2026, 3, 1))
+                .copy(recurringUntil = LocalDate.of(2026, 3, 5))
+        )
+        (2..8).forEach { RecurringTaskService.generateForToday(LocalDate.of(2026, 3, it)) }
+        assertEquals((2..5).map { LocalDate.of(2026, 3, it) }, copiesOf("t2").map { it.scheduledDate }.sortedBy { it })
+    }
+
+    @Test
+    fun g3RemovedDayMarkerBlocksOnlyThatDate() {
+        init(tempDir.resolve("g3.db").toFile())
+        Database.upsertTask(recurringTask("t3", "Read", "daily", scheduledDate = null))
+        Database.addRecurringSkip("t3", LocalDate.of(2026, 3, 3))
+        listOf(2, 3, 4).forEach { RecurringTaskService.generateForToday(LocalDate.of(2026, 3, it)) }
+        assertEquals(
+            listOf(LocalDate.of(2026, 3, 2), LocalDate.of(2026, 3, 4)),
+            copiesOf("t3").map { it.scheduledDate }.sortedBy { it }
+        )
+    }
+
+    @Test
+    fun g4WeeklyTemplateWithoutDateUsesCreationWeekday() {
+        init(tempDir.resolve("g4.db").toFile())
+        // createdAt 2025-01-01 is a Wednesday.
+        Database.upsertTask(recurringTask("t4", "Read", "weekly", scheduledDate = null))
+        (0 until 14).forEach { RecurringTaskService.generateForToday(LocalDate.of(2026, 3, 2).plusDays(it.toLong())) }
+        assertEquals(
+            listOf(LocalDate.of(2026, 3, 4), LocalDate.of(2026, 3, 11)),
+            copiesOf("t4").map { it.scheduledDate }.sortedBy { it }
+        )
+    }
+
+    @Test
+    fun g5GeneratedCopiesNeverCarryAnEndDate() {
+        init(tempDir.resolve("g5.db").toFile())
+        val until = LocalDate.of(2026, 3, 31)
+        Database.upsertTask(recurringTask("t5", "Read", "daily", scheduledDate = null).copy(recurringUntil = until))
+        RecurringTaskService.generateForToday(LocalDate.of(2026, 3, 2))
+        val copy = copiesOf("t5").single()
+        assertEquals("t5", copy.recurringParentId)
+        assertTrue(copy.recurring)
+        assertNull(copy.recurringUntil)
+        assertEquals(until, Database.getTaskById("t5")!!.recurringUntil)
+    }
+
+    @Test
+    fun g6ShouldGenerateOnRuleTable() {
+        val mon = LocalDate.of(2026, 3, 2)
+        val sat = LocalDate.of(2026, 3, 7)
+        fun t(type: String?, date: LocalDate? = null, until: LocalDate? = null) =
+            Task(id = "x", title = "x", recurring = true, recurringType = type, scheduledDate = date, recurringUntil = until)
+        assertFalse(RecurringTaskService.shouldGenerateOn(t("weekdays"), sat))
+        assertTrue(RecurringTaskService.shouldGenerateOn(t("weekdays"), mon))
+        val ends = t("daily", until = LocalDate.of(2026, 3, 5))
+        assertTrue(RecurringTaskService.shouldGenerateOn(ends, LocalDate.of(2026, 3, 5)))
+        assertFalse(RecurringTaskService.shouldGenerateOn(ends, LocalDate.of(2026, 3, 6)))
+        val starts = t("daily", date = LocalDate.of(2026, 3, 10))
+        assertFalse(RecurringTaskService.shouldGenerateOn(starts, LocalDate.of(2026, 3, 9)))
+        assertTrue(RecurringTaskService.shouldGenerateOn(starts, LocalDate.of(2026, 3, 10)))
+        assertFalse(RecurringTaskService.shouldGenerateOn(t("monthly"), mon))
+        assertFalse(RecurringTaskService.shouldGenerateOn(t(null), mon))
+    }
+
+    private fun repeatCopy(id: String, day: Int, completed: Boolean = false, skipped: Boolean = false) = Task(
+        id = id, title = "Read", scheduledDate = LocalDate.of(2026, 3, day), recurring = true,
+        recurringType = "daily", recurringParentId = "t", completed = completed, skipped = skipped
+    )
+
+    @Test
+    fun e1ExpireClosesOnlyOpenRepeatCopiesOlderThanTheCutoff() {
+        init(tempDir.resolve("e1.db").toFile())
+        listOf(
+            repeatCopy("r1", 1), repeatCopy("r2", 2, completed = true), repeatCopy("r3", 3, skipped = true),
+            repeatCopy("r4", 8), repeatCopy("r5", 9), repeatCopy("r6", 10),
+            Task(id = "plain", title = "Plain", scheduledDate = LocalDate.of(2026, 3, 1)),
+            Task(id = "original", title = "Read", scheduledDate = LocalDate.of(2026, 3, 1), recurring = true, recurringType = "daily")
+        ).forEach(Database::upsertTask)
+
+        assertEquals(2, Database.expireStaleSeriesCopies(LocalDate.of(2026, 3, 9)))
+
+        fun skipped(id: String) = Database.getTaskById(id)!!.skipped
+        assertTrue(skipped("r1")); assertTrue(skipped("r4"))
+        assertFalse(skipped("r2")); assertTrue(Database.getTaskById("r2")!!.completed)
+        assertTrue(skipped("r3"))   // it already was
+        assertFalse(skipped("r5")); assertFalse(skipped("r6"))
+        assertFalse(skipped("plain")); assertFalse(skipped("original"))
+        assertEquals(0, Database.expireStaleSeriesCopies(LocalDate.of(2026, 3, 9)))
+    }
+
+    @Test
+    fun e2ServiceKeepsYesterdayOpenAsAOneDayGrace() {
+        init(tempDir.resolve("e2.db").toFile())
+        listOf(7, 8, 9, 10).forEach { Database.upsertTask(repeatCopy("r$it", it)) }
+
+        assertEquals(2, RecurringTaskService.expireStaleCopies(today = LocalDate.of(2026, 3, 10)))
+
+        assertTrue(Database.getTaskById("r7")!!.skipped); assertTrue(Database.getTaskById("r8")!!.skipped)
+        assertFalse(Database.getTaskById("r9")!!.skipped); assertFalse(Database.getTaskById("r10")!!.skipped)
+    }
+
+    @Test
+    fun e3GenerationAloneNeverClosesMissedRepeats() {
+        init(tempDir.resolve("e3.db").toFile())
+        Database.upsertTask(recurringTask("t", "Read", "daily", scheduledDate = LocalDate.of(2026, 3, 2)))
+        Database.upsertTask(repeatCopy("stale", 1))
+
+        RecurringTaskService.generateForToday(LocalDate.of(2026, 3, 10))
+
+        assertFalse(Database.getTaskById("stale")!!.skipped)
+    }
+
+    private fun copiesOf(parentId: String): List<Task> =
+        Database.getTasks().filter { it.recurringParentId == parentId }
 
     private fun recurringTask(
         id: String,

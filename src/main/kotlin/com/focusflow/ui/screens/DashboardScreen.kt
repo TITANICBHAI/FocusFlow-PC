@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.Database
+import com.focusflow.services.TaskSeriesService
 import com.focusflow.data.models.DailyAllowance
 import com.focusflow.data.models.Task
 import com.focusflow.services.DailyAllowanceTracker
@@ -504,7 +505,8 @@ fun DashboardScreen(refreshKey: Int = 0, onStartFocus: (Task) -> Unit, onNavigat
                                 TaskCard(
                                     task         = task,
                                     onComplete   = { scope.launch { withContext(Dispatchers.IO) { Database.completeTask(task.id) }; reload() } },
-                                    onDelete     = { scope.launch { withContext(Dispatchers.IO) { Database.deleteTask(task.id) }; reload() } },
+                                    onDelete     = { scope.launch { withContext(Dispatchers.IO) { TaskSeriesService.deleteOccurrence(task) }; reload() } },
+                                    onDeleteAndStop = { scope.launch { withContext(Dispatchers.IO) { TaskSeriesService.deleteAndStop(task) }; reload() } },
                                     onStartFocus = { onStartFocus(task) }
                                 )
                             }

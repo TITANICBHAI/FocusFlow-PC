@@ -147,8 +147,7 @@ object TaskAlarmService {
             }
 
             val now = LocalDateTime.now()
-            val tasks = Database.getTasksForDate(today)
-                .filter { !it.completed && it.scheduledTime != null }
+            val tasks = alarmCandidates(Database.getTasksForDate(today))
 
             for (task in tasks) {
                 if (task.id in firedToday) continue
@@ -196,6 +195,10 @@ object TaskAlarmService {
             )
         }
     }
+
+    /** Tasks that may ring an alarm: not completed, not skipped, and with a time. */
+    internal fun alarmCandidates(tasks: List<com.focusflow.data.models.Task>): List<com.focusflow.data.models.Task> =
+        tasks.filter { !it.completed && !it.skipped && it.scheduledTime != null }
 
     internal fun firedIdsForTest(): Set<String> = firedToday.toSet()
     internal fun addFiredIdForTest(id: String) {

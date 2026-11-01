@@ -32,12 +32,14 @@ object RecurringTaskService {
         if (job?.isActive == true) return
         job = scope.launch {
             generateForToday()
+            expireStaleCopies()
             while (isActive) {
                 val now = java.time.LocalTime.now()
                 // Sleep until the next midnight  +1 minute so rollover is clean
                 val secondsUntilMidnight = (24 * 3600L) - (now.toSecondOfDay().toLong()) + 60L
                 delay(secondsUntilMidnight * 1000L)
                 generateForToday()
+                expireStaleCopies()
             }
         }
     }
@@ -60,6 +62,8 @@ object RecurringTaskService {
     @Synchronized fun generateForToday(today: LocalDate = LocalDate.now()) {
         try {
             val templates = Database.getRecurringTemplates()
+            // Series the user deleted or moved today's copy of — never re-create those.
+            val removedToday = Database.getRecurringSkipParentIds(today)
             // Dedup key: title + scheduled time — prevents both cross-template title collisions
             // AND correctly allows two different templates that share a name but differ by time.
             val existingTasks = Database.getTasksForDate(today)
@@ -69,7 +73,8 @@ object RecurringTaskService {
             val existingParentIds = existingTasks.mapNotNull { it.recurringParentId }.toMutableSet()
 
             for (template in templates) {
-                if (!shouldGenerateToday(template, today)) continue
+                if (!shouldGenerateOn(template, today)) continue
+                if (template.id in removedToday) continue
                 val dedupKey = "${template.title.lowercase().trim()}|${template.scheduledTime?.toString() ?: ""}"
                 if (template.id in existingParentIds || dedupKey in existingKeys) continue
 
@@ -80,6 +85,7 @@ object RecurringTaskService {
                     completed     = false,
                     skipped       = false,
                     recurringParentId = template.id,
+                    recurringUntil = null,   // only the series original carries an end date
                     createdAt     = LocalDateTime.now()
                 )
                 Database.upsertTask(newTask)
@@ -95,15 +101,47 @@ object RecurringTaskService {
         }
     }
 
-    private fun shouldGenerateToday(template: Task, today: LocalDate): Boolean {
-        return when (template.recurringType?.lowercase()) {
+    /**
+     * Closes missed repeats so they do not pile up as "Overdue": open repeat copies dated before
+     * yesterday are marked skipped (yesterday's stays open for a one-day grace). Never deletes.
+     * Deliberately separate from [generateForToday] so generation alone never closes anything.
+     */
+    @Synchronized
+    fun expireStaleCopies(today: LocalDate = LocalDate.now()): Int {
+        return try {
+            val closed = Database.expireStaleSeriesCopies(today.minusDays(1))
+            if (closed > 0) System.err.println("[RecurringTaskService] closed $closed missed repeat(s)")
+            closed
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            System.err.println("[RecurringTaskService] expireStaleCopies failed: ${failure.message}")
+            0
+        }
+    }
+
+    /**
+     * Whether [template] should create a copy on [day]. Checks, in order:
+     *  1. the repeat type is daily / weekdays / weekly (anything else never repeats),
+     *  2. start guard — a template with a scheduled date never repeats before it
+     *     (a null date means "no start guard"),
+     *  3. end guard — never after [Task.recurringUntil] (that day itself is allowed),
+     *  4. the type's own rule (weekly follows the weekday of the start date, or of the
+     *     creation date when the template has no date).
+     */
+    internal fun shouldGenerateOn(template: Task, day: LocalDate): Boolean {
+        val type = template.recurringType?.lowercase()
+        if (type != "daily" && type != "weekdays" && type != "weekly") return false  // unknown/null: no task spam
+        val start = template.scheduledDate
+        if (start != null && day.isBefore(start)) return false
+        val until = template.recurringUntil
+        if (until != null && day.isAfter(until)) return false
+        return when (type) {
             "daily"    -> true
-            "weekdays" -> today.dayOfWeek !in listOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)
-            "weekly"   -> {
-                val origin = template.scheduledDate ?: return true
-                today.dayOfWeek == origin.dayOfWeek
-            }
-            else       -> false  // skip unknown/null types to prevent accidental task spam
+            "weekdays" -> day.dayOfWeek !in listOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)
+            else       -> day.dayOfWeek == (start ?: template.createdAt.toLocalDate()).dayOfWeek
         }
     }
 }

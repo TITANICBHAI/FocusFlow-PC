@@ -96,7 +96,7 @@ class DatabaseTransactionTest {
         val generatedV10 = tempDir.resolve("generated-v10.db").toFile()
         init(generatedV10)
         Database.close()
-        assertEquals(10, userVersion(generatedV10))
+        assertEquals(11, userVersion(generatedV10))
 
         val versionTenFixture = tempDir.resolve("fixture-v10.db").toFile()
         Files.copy(generatedV10.toPath(), versionTenFixture.toPath())
@@ -110,8 +110,8 @@ class DatabaseTransactionTest {
         init(emptyDatabase)
         val emptySchema = schemaSnapshot(emptyDatabase)
 
-        assertEquals(10, fixtureSchema.userVersion)
-        assertEquals(10, emptySchema.userVersion)
+        assertEquals(11, fixtureSchema.userVersion)
+        assertEquals(11, emptySchema.userVersion)
         assertEquals(emptySchema.tables, fixtureSchema.tables)
     }
 

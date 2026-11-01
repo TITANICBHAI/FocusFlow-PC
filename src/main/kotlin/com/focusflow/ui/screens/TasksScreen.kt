@@ -25,6 +25,15 @@ import com.focusflow.data.Database
 import com.focusflow.data.models.Task
 import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.i18n.LocalizationManager
+import com.focusflow.services.EndChip
+import com.focusflow.services.EndDateResult
+import com.focusflow.services.SeriesEdit
+import com.focusflow.services.SeriesEditScope
+import com.focusflow.services.SeriesInfo
+import com.focusflow.services.SeriesRole
+import com.focusflow.services.TaskSeriesService
+import com.focusflow.ui.components.DeleteTaskDialog
+import com.focusflow.ui.components.SeriesText
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.components.TaskCard
 import com.focusflow.ui.theme.*
@@ -60,7 +69,7 @@ fun TasksScreen(onStartFocus: (Task) -> Unit) {
     val searchFocusRequester = remember { FocusRequester() }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    fun deleteWithUndo(task: Task) {
+    fun deleteWithUndo(task: Task, stopSeries: Boolean = false) {
         tasks = tasks.filter { it.id != task.id }
         scope.launch {
             val result = snackbarHostState.showSnackbar(
@@ -71,7 +80,9 @@ fun TasksScreen(onStartFocus: (Task) -> Unit) {
             if (result == SnackbarResult.ActionPerformed) {
                 reload()
             } else {
-                withContext(Dispatchers.IO) { Database.deleteTask(task.id) }
+                withContext(Dispatchers.IO) {
+                    if (stopSeries) TaskSeriesService.deleteAndStop(task) else TaskSeriesService.deleteOccurrence(task)
+                }
                 reload()
             }
         }
@@ -280,6 +291,7 @@ fun TasksScreen(onStartFocus: (Task) -> Unit) {
                                 task         = task,
                                 onComplete   = { scope.launch { withContext(Dispatchers.IO) { Database.completeTask(task.id) }; com.focusflow.services.ReviewPromptService.triggerCheck(); reload() } },
                                 onDelete     = { deleteWithUndo(task) },
+                                onDeleteAndStop = { deleteWithUndo(task, stopSeries = true) },
                                 onStartFocus = { onStartFocus(task) },
                                 onEdit       = { editTask = task },
                                 onSkip       = { scope.launch { withContext(Dispatchers.IO) { Database.skipTask(task.id) }; reload() } }
@@ -303,6 +315,7 @@ fun TasksScreen(onStartFocus: (Task) -> Unit) {
                             task        = task,
                             onComplete  = { scope.launch { withContext(Dispatchers.IO) { Database.completeTask(task.id) }; com.focusflow.services.ReviewPromptService.triggerCheck(); reload() } },
                             onDelete    = { deleteWithUndo(task) },
+                            onDeleteAndStop = { deleteWithUndo(task, stopSeries = true) },
                             onStartFocus = { onStartFocus(task) },
                             onEdit      = { editTask = task },
                             onSkip      = { scope.launch { withContext(Dispatchers.IO) { Database.skipTask(task.id) }; reload() } }
@@ -336,6 +349,7 @@ fun TasksScreen(onStartFocus: (Task) -> Unit) {
                                     task        = task,
                                     onComplete  = { scope.launch { withContext(Dispatchers.IO) { Database.completeTask(task.id) }; com.focusflow.services.ReviewPromptService.triggerCheck(); reload() } },
                                     onDelete    = { deleteWithUndo(task) },
+                                    onDeleteAndStop = { deleteWithUndo(task, stopSeries = true) },
                                     onStartFocus = { onStartFocus(task) },
                                     onEdit      = { editTask = task },
                                     onSkip      = { scope.launch { withContext(Dispatchers.IO) { Database.skipTask(task.id) }; reload() } }
@@ -366,17 +380,25 @@ fun TasksScreen(onStartFocus: (Task) -> Unit) {
     }
 
     if (editTask != null) {
+        val opened = editTask!!
         EditTaskDialog(
-            task      = editTask!!,
+            task      = opened,
             onDismiss = { editTask = null },
-            onSave    = { task ->
-                scope.launch { withContext(Dispatchers.IO) { Database.upsertTask(task) }; reload() }
+            onSave    = { edited, editScope, series ->
                 editTask = null
+                scope.launch { withContext(Dispatchers.IO) { TaskSeriesService.saveEdit(opened, edited, editScope, series) }; reload() }
             },
-            onDelete  = {
-                val id = editTask!!.id
+            onStopRepeating = {
                 editTask = null
-                scope.launch { withContext(Dispatchers.IO) { Database.deleteTask(id) }; reload() }
+                scope.launch { withContext(Dispatchers.IO) { TaskSeriesService.stopRepeating(opened) }; reload() }
+            },
+            onDeleteOnly = {
+                editTask = null
+                scope.launch { withContext(Dispatchers.IO) { TaskSeriesService.deleteOccurrence(opened) }; reload() }
+            },
+            onDeleteAndStop = {
+                editTask = null
+                scope.launch { withContext(Dispatchers.IO) { TaskSeriesService.deleteAndStop(opened) }; reload() }
             }
         )
     }
@@ -395,10 +417,13 @@ fun AddTaskDialog(onDismiss: () -> Unit, onSave: (Task) -> Unit) {
     var focusIntensity      by remember { mutableStateOf("standard") }
     var recurring           by remember { mutableStateOf(false) }
     var recurringType       by remember { mutableStateOf("daily") }
+    var endText             by remember { mutableStateOf("") }
     var selectedBlockedApps by remember { mutableStateOf(setOf<String>()) }
     var requirePin          by remember { mutableStateOf(false) }
     val curatedApps         = remember { InstalledAppsScanner.getCuratedApps() }
     val strings             = LocalizationManager.strings
+    val startDate = runCatching { LocalDate.parse(date.trim(), DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull() ?: LocalDate.now()
+    val endResult = if (recurring) TaskSeriesService.resolveEndDate(endText, startDate) else EndDateResult.Valid(null)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -547,18 +572,14 @@ fun AddTaskDialog(onDismiss: () -> Unit, onSave: (Task) -> Unit) {
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Checkbox(checked = recurring, onCheckedChange = { recurring = it }, colors = CheckboxDefaults.colors(checkedColor = Purple80))
-                    Text(strings.tasksRecurringLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                }
-                if (recurring) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(strings.tasksRepeatsLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                        listOf("daily", "weekdays", "weekly").forEach { t ->
-                            FilterChip(selected = recurringType == t, onClick = { recurringType = t }, label = { Text(t.replaceFirstChar { it.uppercase() }) })
-                        }
-                    }
-                }
+                RecurrenceSection(
+                    showCheckbox = true,
+                    recurring = recurring, onRecurringChange = { recurring = it },
+                    recurringType = recurringType, onRecurringTypeChange = { recurringType = it },
+                    endText = endText, onEndTextChange = { endText = it },
+                    startDate = startDate,
+                    endResult = endResult
+                )
             }
             FfVerticalScrollbar(
                 scrollState = dialogScrollState,
@@ -572,8 +593,9 @@ fun AddTaskDialog(onDismiss: () -> Unit, onSave: (Task) -> Unit) {
                     if (title.isBlank()) return@Button
                     val parsedDate = try { LocalDate.parse(date, DateTimeFormatter.ISO_LOCAL_DATE) } catch (_: Exception) { LocalDate.now() }
                     val tagList = tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    onSave(Task(id = UUID.randomUUID().toString(), title = title.trim(), description = description.trim(), durationMinutes = duration.toIntOrNull() ?: 25, scheduledDate = parsedDate, scheduledTime = time.ifBlank { null }, priority = priority, tags = tagList, focusMode = focusMode, focusIntensity = if (focusMode) focusIntensity else "standard", focusBlockedApps = if (focusMode) selectedBlockedApps.toList() else emptyList(), focusRequirePin = focusMode && requirePin, recurring = recurring, recurringType = if (recurring) recurringType else null, createdAt = LocalDateTime.now()))
+                    onSave(Task(id = UUID.randomUUID().toString(), title = title.trim(), description = description.trim(), durationMinutes = duration.toIntOrNull() ?: 25, scheduledDate = parsedDate, scheduledTime = time.ifBlank { null }, priority = priority, tags = tagList, focusMode = focusMode, focusIntensity = if (focusMode) focusIntensity else "standard", focusBlockedApps = if (focusMode) selectedBlockedApps.toList() else emptyList(), focusRequirePin = focusMode && requirePin, recurring = recurring, recurringType = if (recurring) recurringType else null, recurringUntil = if (recurring) (endResult as? EndDateResult.Valid)?.date else null, createdAt = LocalDateTime.now()))
                 },
+                enabled = endResult !is EndDateResult.Invalid,
                 colors = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text(strings.tasksAddTaskBtn) }
         },
@@ -582,7 +604,14 @@ fun AddTaskDialog(onDismiss: () -> Unit, onSave: (Task) -> Unit) {
 }
 
 @Composable
-fun EditTaskDialog(task: Task, onDismiss: () -> Unit, onSave: (Task) -> Unit, onDelete: () -> Unit) {
+fun EditTaskDialog(
+    task: Task,
+    onDismiss: () -> Unit,
+    onSave: (Task, SeriesEditScope, SeriesEdit?) -> Unit,
+    onStopRepeating: () -> Unit,
+    onDeleteOnly: () -> Unit,
+    onDeleteAndStop: () -> Unit
+) {
     var title         by remember { mutableStateOf(task.title) }
     var description   by remember { mutableStateOf(task.description) }
     var duration      by remember { mutableStateOf(task.durationMinutes.toString()) }
@@ -595,10 +624,36 @@ fun EditTaskDialog(task: Task, onDismiss: () -> Unit, onSave: (Task) -> Unit, on
     var recurring      by remember { mutableStateOf(task.recurring) }
     var recurringType  by remember { mutableStateOf(task.recurringType ?: "daily") }
     var showConfirmDelete   by remember { mutableStateOf(false) }
+    var showConfirmStop     by remember { mutableStateOf(false) }
+    var endText             by remember { mutableStateOf(task.recurringUntil?.toString() ?: "") }
+    var editScope           by remember { mutableStateOf(SeriesEditScope.ONLY_THIS) }
+    var seriesInfoState     by remember { mutableStateOf<SeriesInfo?>(null) }
+    val role                = remember(task) { TaskSeriesService.roleOf(task) }
     var selectedBlockedApps by remember { mutableStateOf(task.focusBlockedApps.toSet()) }
     var requirePin          by remember { mutableStateOf(task.focusRequirePin) }
     val curatedApps         = remember { InstalledAppsScanner.getCuratedApps() }
     val strings             = LocalizationManager.strings
+
+    // Read the series (original + count) off the UI thread; copies adopt the series' repeat settings once.
+    LaunchedEffect(task.id) {
+        if (role != SeriesRole.NONE) {
+            val loaded = withContext(Dispatchers.IO) { TaskSeriesService.seriesInfo(task) }
+            seriesInfoState = loaded
+            if (role == SeriesRole.COPY && loaded != null) {
+                recurringType = loaded.template.recurringType ?: recurringType
+                endText = loaded.template.recurringUntil?.toString() ?: ""
+            }
+        }
+    }
+    val info = seriesInfoState
+    val seriesActive = info != null && info.template.recurring
+    val showScope = role == SeriesRole.COPY && seriesActive
+    val futureScope = showScope && editScope == SeriesEditScope.THIS_AND_FUTURE
+    val showRecurrence = role != SeriesRole.COPY || futureScope
+    val startDate = runCatching { LocalDate.parse(date.trim(), DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
+        ?: task.scheduledDate ?: LocalDate.now()
+    val endResult = if (showRecurrence && (futureScope || recurring)) TaskSeriesService.resolveEndDate(endText, startDate)
+                    else EndDateResult.Valid(null)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -617,11 +672,47 @@ fun EditTaskDialog(task: Task, onDismiss: () -> Unit, onSave: (Task) -> Unit, on
             val dialogScrollState = rememberScrollState()
             Box(modifier = Modifier.width(420.dp).heightIn(max = 520.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().verticalScroll(dialogScrollState).padding(end = 10.dp)) {
+                if (info != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(SeriesText.describeSeries(info), color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+                        if (role == SeriesRole.TEMPLATE) {
+                            Text(SeriesText.originalNote, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (seriesActive) {
+                            OutlinedButton(
+                                onClick = { showConfirmStop = true },
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Warning)
+                            ) { Text(SeriesText.stopButton, color = Warning) }
+                        }
+                    }
+                }
+                if (showScope) {
+                    Text(SeriesText.scopeLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+                    listOf(
+                        SeriesEditScope.ONLY_THIS to SeriesText.scopeOnlyThis,
+                        SeriesEditScope.THIS_AND_FUTURE to SeriesText.scopeFuture
+                    ).forEach { (option, optionLabel) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable { editScope = option },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = editScope == option,
+                                onClick = { editScope = option },
+                                colors = RadioButtonDefaults.colors(selectedColor = Purple80)
+                            )
+                            Text(optionLabel, color = OnSurface, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text(strings.tasksFieldTitle) }, modifier = Modifier.fillMaxWidth(), colors = fieldColors(), singleLine = true)
                 OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text(strings.tasksFieldDesc) }, modifier = Modifier.fillMaxWidth(), colors = fieldColors(), maxLines = 2)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value = date, onValueChange = { date = it }, label = { Text(strings.tasksFieldDateShort) }, modifier = Modifier.weight(1f), colors = fieldColors(), singleLine = true)
                     OutlinedTextField(value = time, onValueChange = { time = it }, label = { Text(strings.tasksFieldTime) }, modifier = Modifier.weight(1f), colors = fieldColors(), singleLine = true)
+                }
+                if (futureScope) {
+                    Text(SeriesText.dateHint, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(strings.tasksFieldDurationLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
@@ -756,17 +847,16 @@ fun EditTaskDialog(task: Task, onDismiss: () -> Unit, onSave: (Task) -> Unit, on
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Checkbox(checked = recurring, onCheckedChange = { recurring = it }, colors = CheckboxDefaults.colors(checkedColor = Purple80))
-                    Text(strings.tasksRecurringLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                }
-                if (recurring) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(strings.tasksRepeatsLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
-                        listOf("daily", "weekdays", "weekly").forEach { t ->
-                            FilterChip(selected = recurringType == t, onClick = { recurringType = t }, label = { Text(t.replaceFirstChar { it.uppercase() }) })
-                        }
-                    }
+                if (showRecurrence) {
+                    RecurrenceSection(
+                        showCheckbox = role != SeriesRole.COPY,
+                        recurring = if (role == SeriesRole.COPY) true else recurring,
+                        onRecurringChange = { recurring = it },
+                        recurringType = recurringType, onRecurringTypeChange = { recurringType = it },
+                        endText = endText, onEndTextChange = { endText = it },
+                        startDate = startDate,
+                        endResult = endResult
+                    )
                 }
             }
             FfVerticalScrollbar(
@@ -780,25 +870,95 @@ fun EditTaskDialog(task: Task, onDismiss: () -> Unit, onSave: (Task) -> Unit, on
                 onClick = {
                     val parsedDate = try { LocalDate.parse(date, DateTimeFormatter.ISO_LOCAL_DATE) } catch (_: Exception) { task.scheduledDate }
                     val tagList = tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    onSave(task.copy(title = title.trim(), description = description.trim(), durationMinutes = duration.toIntOrNull() ?: task.durationMinutes, scheduledDate = parsedDate, scheduledTime = time.ifBlank { null }, priority = priority, tags = tagList, focusMode = focusMode, focusIntensity = if (focusMode) focusIntensity else "standard", focusBlockedApps = if (focusMode) selectedBlockedApps.toList() else emptyList(), focusRequirePin = focusMode && requirePin, recurring = recurring, recurringType = if (recurring) recurringType else null))
+                    val endDate = (endResult as? EndDateResult.Valid)?.date
+                    val isCopy = role == SeriesRole.COPY
+                    val edited = task.copy(title = title.trim(), description = description.trim(), durationMinutes = duration.toIntOrNull() ?: task.durationMinutes, scheduledDate = parsedDate, scheduledTime = time.ifBlank { null }, priority = priority, tags = tagList, focusMode = focusMode, focusIntensity = if (focusMode) focusIntensity else "standard", focusBlockedApps = if (focusMode) selectedBlockedApps.toList() else emptyList(), focusRequirePin = focusMode && requirePin, recurring = if (isCopy) task.recurring else recurring, recurringType = if (isCopy) task.recurringType else if (recurring) recurringType else null, recurringUntil = if (!isCopy && recurring) endDate else null)
+                    onSave(edited, editScope, if (futureScope) SeriesEdit(recurringType, endDate) else null)
                 },
+                enabled = endResult !is EndDateResult.Invalid,
                 colors = ButtonDefaults.buttonColors(containerColor = Purple80)
             ) { Text(strings.btnSave) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(strings.btnCancel, color = OnSurface2) } }
     )
 
-    if (showConfirmDelete) {
+    if (showConfirmStop) {
         AlertDialog(
-            onDismissRequest = { showConfirmDelete = false },
+            onDismissRequest = { showConfirmStop = false },
             containerColor = Surface2,
-            title = { Text(strings.taskCardDeleteTitle, color = Error) },
-            text = { Text("\"${task.title}\"", color = OnSurface2) },
-            confirmButton = { Button(onClick = onDelete, colors = ButtonDefaults.buttonColors(containerColor = Error)) { Text(strings.btnDelete) } },
-            dismissButton = { TextButton(onClick = { showConfirmDelete = false }) { Text(strings.btnCancel, color = OnSurface2) } }
+            title = { Text(SeriesText.stopConfirmTitle, color = Warning) },
+            text = { Text(SeriesText.stopConfirmBody(task.title), color = OnSurface2) },
+            confirmButton = {
+                Button(
+                    onClick = { showConfirmStop = false; onStopRepeating() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Warning)
+                ) { Text(SeriesText.stopButton) }
+            },
+            dismissButton = { TextButton(onClick = { showConfirmStop = false }) { Text(strings.btnCancel, color = OnSurface2) } }
+        )
+    }
+
+    if (showConfirmDelete) {
+        DeleteTaskDialog(
+            task = task,
+            onDismiss = { showConfirmDelete = false },
+            onDeleteOnly = { showConfirmDelete = false; onDeleteOnly() },
+            onDeleteAndStop = if (role == SeriesRole.NONE) null else ({ showConfirmDelete = false; onDeleteAndStop() })
         )
     }
 }
 
 @Composable
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple80, unfocusedBorderColor = OnSurface2)
+
+/**
+ * Repeat controls shared by the Add and Edit dialogs: the optional "Recurring" checkbox, the
+ * repeat-type chips, and the "Ends" chips + date field with its error line.
+ */
+@Composable
+private fun RecurrenceSection(
+    showCheckbox: Boolean,
+    recurring: Boolean, onRecurringChange: (Boolean) -> Unit,
+    recurringType: String, onRecurringTypeChange: (String) -> Unit,
+    endText: String, onEndTextChange: (String) -> Unit,
+    startDate: LocalDate,
+    endResult: EndDateResult
+) {
+    val strings = LocalizationManager.strings
+    if (showCheckbox) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Checkbox(checked = recurring, onCheckedChange = onRecurringChange, colors = CheckboxDefaults.colors(checkedColor = Purple80))
+            Text(strings.tasksRecurringLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    if (recurring) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(strings.tasksRepeatsLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+            listOf("daily", "weekdays", "weekly").forEach { t ->
+                FilterChip(selected = recurringType == t, onClick = { onRecurringTypeChange(t) }, label = { Text(t.replaceFirstChar { it.uppercase() }) })
+            }
+        }
+        val endChips = listOf(
+            EndChip.NEVER to SeriesText.chipNever,
+            EndChip.ONE_WEEK to SeriesText.chipOneWeek,
+            EndChip.ONE_MONTH to SeriesText.chipOneMonth,
+            EndChip.THREE_MONTHS to SeriesText.chipThreeMonths
+        )
+        Text(SeriesText.endsLabel, color = OnSurface2, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            endChips.forEach { (chip, chipLabel) ->
+                val chipText = TaskSeriesService.endDateForChip(startDate, chip)?.toString() ?: ""
+                FilterChip(selected = endText.trim() == chipText, onClick = { onEndTextChange(chipText) }, label = { Text(chipLabel) })
+            }
+        }
+        OutlinedTextField(
+            value = endText, onValueChange = onEndTextChange,
+            label = { Text(SeriesText.endsOnLabel) },
+            modifier = Modifier.fillMaxWidth(), colors = fieldColors(), singleLine = true,
+            isError = endResult is EndDateResult.Invalid
+        )
+        if (endResult is EndDateResult.Invalid) {
+            Text(SeriesText.endDateProblem(endResult.problem), color = Error, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}

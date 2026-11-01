@@ -61,7 +61,7 @@ class DatabaseSchemaGuardTest {
         }
         assertEquals(9, userVersion(dbFile))
         assertIs<DbInitResult.Ready>(init(dbFile))
-        assertEquals(10, userVersion(dbFile))
+        assertEquals(11, userVersion(dbFile))
     }
 
     @Test

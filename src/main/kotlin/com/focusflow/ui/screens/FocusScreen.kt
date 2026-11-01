@@ -128,7 +128,7 @@ fun FocusScreen(
         reloadAllowances()
         scope.launch {
             try {
-                val rt  = withContext(Dispatchers.IO) { Database.getTasks().filter { !it.completed }.take(10) }
+                val rt  = withContext(Dispatchers.IO) { Database.getTasks().filter { !it.completed && !it.skipped }.take(10) }
                 val aoe = withContext(Dispatchers.IO) { Database.getSetting("always_on_enforcement") == "true" }
                 val brc = withContext(Dispatchers.IO) { Database.getBlockRules().count { it.enabled } }
                 val sc  = withContext(Dispatchers.IO) { Database.getBlockSchedules().count { it.enabled } }

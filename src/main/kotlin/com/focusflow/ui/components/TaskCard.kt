@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.focusflow.data.models.Task
 import com.focusflow.i18n.LocalizationManager
+import com.focusflow.services.SeriesRole
+import com.focusflow.services.TaskSeriesService
 import com.focusflow.ui.theme.*
 import java.time.LocalDate
 
@@ -28,6 +30,7 @@ fun TaskCard(
     onStartFocus: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onSkip: (() -> Unit)? = null,
+    onDeleteAndStop: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val s = LocalizationManager.strings
@@ -178,20 +181,55 @@ fun TaskCard(
     }
 
     if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            containerColor   = Surface2,
-            title = { Text(s.taskCardDeleteTitle, color = Error) },
-            text  = { Text("\"${task.title}\" ${s.taskCardDeleteBody}", color = OnSurface2) },
-            confirmButton = {
-                Button(
-                    onClick = { showDeleteConfirm = false; onDelete() },
-                    colors  = ButtonDefaults.buttonColors(containerColor = Error)
-                ) { Text(s.btnDelete) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) { Text(s.btnCancel, color = OnSurface2) }
-            }
+        val stopAndClose: (() -> Unit)? =
+            if (onDeleteAndStop != null) ({ showDeleteConfirm = false; onDeleteAndStop() }) else null
+        DeleteTaskDialog(
+            task            = task,
+            onDismiss       = { showDeleteConfirm = false },
+            onDeleteOnly    = { showDeleteConfirm = false; onDelete() },
+            onDeleteAndStop = stopAndClose
         )
     }
+}
+
+/**
+ * Delete confirmation. A repeating task asks whether to delete only this task or to stop the
+ * series as well; a plain task (or a caller that cannot stop a series, [onDeleteAndStop] = null)
+ * gets the simple confirm it always had.
+ */
+@Composable
+internal fun DeleteTaskDialog(
+    task: Task,
+    onDismiss: () -> Unit,
+    onDeleteOnly: () -> Unit,
+    onDeleteAndStop: (() -> Unit)?
+) {
+    val s = LocalizationManager.strings
+    val role = TaskSeriesService.roleOf(task)
+    val seriesAware = onDeleteAndStop != null && role != SeriesRole.NONE
+    val body = when {
+        !seriesAware                -> "\"${task.title}\" ${s.taskCardDeleteBody}"
+        role == SeriesRole.TEMPLATE -> SeriesText.deleteOriginalBody(task.title)
+        else                        -> SeriesText.deleteCopyBody(task.title)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = Surface2,
+        title = { Text(s.taskCardDeleteTitle, color = Error) },
+        text  = { Text(body, color = OnSurface2) },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (seriesAware && role == SeriesRole.COPY) {
+                    OutlinedButton(onClick = onDeleteOnly) { Text(SeriesText.deleteOnlyButton, color = OnSurface) }
+                }
+                Button(
+                    onClick = { if (seriesAware) onDeleteAndStop?.invoke() else onDeleteOnly() },
+                    colors  = ButtonDefaults.buttonColors(containerColor = Error)
+                ) { Text(if (seriesAware) SeriesText.deleteAndStopButton else s.btnDelete) }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(s.btnCancel, color = OnSurface2) }
+        }
+    )
 }

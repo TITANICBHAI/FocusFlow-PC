@@ -22,7 +22,12 @@ data class Task(
     val focusIntensity: String = "standard",
     val focusBlockedApps: List<String> = emptyList(),
     val focusRequirePin: Boolean = false,
-    val recurringParentId: String? = null
+    val recurringParentId: String? = null,
+    /**
+     * Last day (inclusive) on which a repeating task creates copies.
+     * Only meaningful on the series original; repeat copies never carry it. null = never ends.
+     */
+    val recurringUntil: LocalDate? = null
 )
 
 data class FocusSession(

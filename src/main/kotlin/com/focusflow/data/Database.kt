@@ -737,7 +737,7 @@ object Database {
     // Every new schema change gets its own numbered migrate_vN() function.
     // Never edit an existing migrate_vN() — add a new one and bump TARGET_VERSION.
     //
-    private val TARGET_VERSION = 10
+    private val TARGET_VERSION = 11
     private const val UNINSTALL_WIZARD_BUSY_TIMEOUT_MS = 1_000
 
     private val REQUIRED_SCHEMA_COLUMNS = linkedMapOf(
@@ -747,7 +747,8 @@ object Database {
             "focus_intensity",
             "focus_blocked_apps",
             "focus_require_pin",
-            "recurring_parent_id"
+            "recurring_parent_id",
+            "recurring_until"
         ),
         "daily_completions" to listOf("total_count", "focus_minutes"),
         "block_rules" to listOf("source")
@@ -781,6 +782,7 @@ object Database {
             if (lockedVersion < 8) migrateV8()
             if (lockedVersion < 9) migrateV9()
             if (lockedVersion < 10) migrateV10()
+            if (lockedVersion < 11) migrateV11()
 
             // Bump stored version only after ALL steps succeed
             connection.createStatement().use { statement ->
@@ -1135,6 +1137,21 @@ object Database {
         addColumnIfMissing("tasks", "recurring_parent_id", "TEXT")
     }
 
+    // v11 — repeating tasks can end (tasks.recurring_until), and a day the user deleted or
+    // moved is remembered (recurring_skips) so the series does not re-create it.
+    private fun migrateV11() {
+        addColumnIfMissing("tasks", "recurring_until", "TEXT")
+        connection.createStatement().use { st ->
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS recurring_skips (
+                    parent_id TEXT NOT NULL,
+                    skip_date TEXT NOT NULL,
+                    PRIMARY KEY (parent_id, skip_date)
+                )
+            """.trimIndent())
+        }
+    }
+
     // v4 — network cutoff rules (domain + keyword, with optional per-app targeting)
     private fun migrateV4() {
         connection.createStatement().use { st ->
@@ -1201,8 +1218,9 @@ object Database {
             INSERT OR REPLACE INTO tasks
             (id, title, description, duration_minutes, scheduled_date, scheduled_time,
              completed, skipped, recurring, recurring_type, priority, tags, created_at, completed_at,
-             focus_mode, focus_intensity, focus_blocked_apps, focus_require_pin, recurring_parent_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             focus_mode, focus_intensity, focus_blocked_apps, focus_require_pin, recurring_parent_id,
+             recurring_until)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """.trimIndent()).use { ps ->
             ps.setString(1, task.id)
             ps.setString(2, task.title)
@@ -1223,6 +1241,7 @@ object Database {
             ps.setString(17, task.focusBlockedApps.joinToString(","))
             ps.setInt(18, if (task.focusRequirePin) 1 else 0)
             ps.setString(19, task.recurringParentId)
+            ps.setString(20, task.recurringUntil?.format(dateFmt))
             ps.executeUpdate()
         }
     }
@@ -1300,6 +1319,7 @@ object Database {
     @Synchronized fun clearAllTasks() {
         connection.createStatement().use { statement ->
             statement.executeUpdate("DELETE FROM tasks")
+            statement.executeUpdate("DELETE FROM recurring_skips")
         }
     }
 
@@ -1309,6 +1329,7 @@ object Database {
                 statement.executeUpdate("DELETE FROM focus_sessions")
                 statement.executeUpdate("DELETE FROM daily_completions")
                 statement.executeUpdate("DELETE FROM tasks")
+                statement.executeUpdate("DELETE FROM recurring_skips")
                 statement.executeUpdate("DELETE FROM daily_notes")
                 statement.executeUpdate("DELETE FROM temptation_log")
             }
@@ -1324,6 +1345,91 @@ object Database {
                 while (rs.next()) list.add(rowToTask(rs))
                 list
             }
+        }
+    }
+
+    // ── Repeating-task series (schema v11) ──────────────────────────────────
+
+    @Synchronized fun getTaskById(id: String): Task? {
+        return connection.prepareStatement("SELECT * FROM tasks WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) rowToTask(rs) else null }
+        }
+    }
+
+    /** The series original plus every copy that was created from it. */
+    @Synchronized fun countSeriesOccurrences(templateId: String): Int {
+        return connection.prepareStatement(
+            "SELECT COUNT(*) FROM tasks WHERE id = ? OR recurring_parent_id = ?"
+        ).use { ps ->
+            ps.setString(1, templateId)
+            ps.setString(2, templateId)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+        }
+    }
+
+    /** Remember that series [parentId] must not auto-create a copy on [date] (the user deleted or moved it). */
+    @Synchronized fun addRecurringSkip(parentId: String, date: LocalDate) {
+        connection.prepareStatement(
+            "INSERT OR IGNORE INTO recurring_skips (parent_id, skip_date) VALUES (?, ?)"
+        ).use { ps ->
+            ps.setString(1, parentId)
+            ps.setString(2, date.format(dateFmt))
+            ps.executeUpdate()
+        }
+    }
+
+    /** Ids of the series that must not auto-create a copy on [date]. */
+    @Synchronized fun getRecurringSkipParentIds(date: LocalDate): Set<String> {
+        return connection.prepareStatement(
+            "SELECT parent_id FROM recurring_skips WHERE skip_date = ?"
+        ).use { ps ->
+            ps.setString(1, date.format(dateFmt))
+            ps.executeQuery().use { rs ->
+                val ids = mutableSetOf<String>()
+                while (rs.next()) ids.add(rs.getString(1))
+                ids
+            }
+        }
+    }
+
+    /**
+     * Ends a series: the original (kept as an ordinary task) and every still-open copy dated
+     * [from] or later stop being "recurring". Past, completed and skipped copies are untouched.
+     * Nothing is deleted.
+     */
+    @Synchronized fun stopRecurringSeries(templateId: String, from: LocalDate) {
+        inTransaction {
+            connection.prepareStatement(
+                "UPDATE tasks SET recurring = 0, recurring_type = NULL WHERE id = ?"
+            ).use { ps ->
+                ps.setString(1, templateId)
+                ps.executeUpdate()
+            }
+            connection.prepareStatement(
+                "UPDATE tasks SET recurring = 0, recurring_type = NULL " +
+                    "WHERE recurring_parent_id = ? AND completed = 0 AND skipped = 0 " +
+                    "AND scheduled_date IS NOT NULL AND scheduled_date >= ?"
+            ).use { ps ->
+                ps.setString(1, templateId)
+                ps.setString(2, from.format(dateFmt))
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    /**
+     * Closes missed repeats: open repeat copies dated before [before] become "skipped" so they
+     * stop piling up as Overdue. Never deletes anything. Returns how many rows were closed.
+     */
+    @Synchronized fun expireStaleSeriesCopies(before: LocalDate): Int {
+        return connection.prepareStatement(
+            "UPDATE tasks SET skipped = 1 WHERE recurring_parent_id IS NOT NULL " +
+                "AND completed = 0 AND skipped = 0 " +
+                "AND scheduled_date IS NOT NULL AND scheduled_date < ?"
+        ).use { ps ->
+            ps.setString(1, before.format(dateFmt))
+            ps.executeUpdate()
         }
     }
 
@@ -2480,7 +2586,8 @@ object Database {
         focusIntensity    = rs.getString("focus_intensity") ?: "standard",
         focusBlockedApps  = try { rs.getString("focus_blocked_apps")?.split(",")?.filter { it.isNotBlank() } ?: emptyList() } catch (_: Exception) { emptyList() },
         focusRequirePin   = try { rs.getInt("focus_require_pin") == 1 } catch (_: Exception) { false },
-        recurringParentId = rs.getString("recurring_parent_id")
+        recurringParentId = rs.getString("recurring_parent_id"),
+        recurringUntil    = try { rs.getString("recurring_until")?.let { LocalDate.parse(it, dateFmt) } } catch (_: Exception) { null }
     )
 
     private fun rowToSession(rs: java.sql.ResultSet): FocusSession = FocusSession(
