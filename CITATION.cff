@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you mention or build on FocusFlow, please cite it as below."
+title: "FocusFlow — Deep Focus & App Blocker for Windows"
+type: software
+authors:
+  - name: "TBTechs"
+    website: "https://tbtechs.pages.dev"
+repository-code: "https://github.com/TITANICBHAI/FocusFlow-PC"
+url: "https://focusflowpc.pages.dev/"
+license: GPL-2.0-only
+abstract: >-
+  FocusFlow is a free, open-source app blocker, website blocker and focus timer
+  for Windows 10 and 11. It force-closes distracting apps, blocks websites
+  through the hosts file, and can lock the desktop with a PIN-protected kiosk
+  mode called Focus Launcher. All data stays on the user's PC.
+keywords:
+  - app blocker
+  - website blocker
+  - focus timer
+  - pomodoro
+  - productivity
+  - windows
+  - kotlin
+  - compose multiplatform
