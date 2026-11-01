@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in FocusFlow isn't working as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Is your PC stuck in a locked state** (hidden taskbar, blocked websites, leftover firewall rules)? Run the [Emergency Recovery Tool](https://github.com/TITANICBHAI/FocusFlow-PC/blob/main/recovery/README.txt) first, then come back and tell us what happened.
+  - type: input
+    id: version
+    attributes:
+      label: FocusFlow version
+      description: Find it in Windows Settings → Apps → Installed apps → FocusFlow.
+      placeholder: "e.g. 2.0.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install FocusFlow?
+      options:
+        - Microsoft Store
+        - EXE installer
+        - MSI installer
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "e.g. Windows 11 23H2"
+    validations:
+      required: true
+  - type: dropdown
+    id: admin
+    attributes:
+      label: Was FocusFlow running as administrator?
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect to see instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Block Apps and add ...
+        2. Start a focus session ...
+        3. ...
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Paste any error or crash details FocusFlow showed. Screenshots help too. Please don't include passwords or PINs.

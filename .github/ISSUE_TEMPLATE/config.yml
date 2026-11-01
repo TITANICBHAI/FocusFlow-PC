@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: My PC is stuck in a locked state (taskbar hidden, sites blocked)
+    url: https://github.com/TITANICBHAI/FocusFlow-PC/blob/main/recovery/README.txt
+    about: The Emergency Recovery Tool restores the taskbar and removes FocusFlow's hosts-file and firewall entries.
+  - name: Report a security problem
+    url: https://github.com/TITANICBHAI/FocusFlow-PC/security/policy
+    about: Please report vulnerabilities privately instead of opening a public issue.
+  - name: FocusFlow website and help
+    url: https://focusflowpc.pages.dev/
+    about: Features, privacy policy and general help.

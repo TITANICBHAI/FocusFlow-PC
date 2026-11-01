@@ -1,50 +1,49 @@
-# FocusFlow — Deep Focus App Blocker for Windows
-# https://focusflowpc.pages.dev/
-# By TBTechs
+# FocusFlow — Free App Blocker & Focus Timer for Windows
+
+> FocusFlow is a free, open-source (GPL-2.0) app blocker, website blocker and focus timer for Windows 10 and 11. It force-closes the apps you block, blocks websites through the Windows hosts file, and can lock the desktop with a PIN-protected kiosk mode called Focus Launcher. No account is needed and all data stays on the PC. Made by TBTechs.
 
 ## What is FocusFlow?
-FocusFlow is a free Windows 10/11 desktop productivity application that enforces deep focus sessions by using real Win32 API calls to forcibly terminate blocked processes. Unlike browser extensions or soft timers, FocusFlow kills distracting applications at the OS level the moment they appear — no grace period, no workarounds.
+FocusFlow is a free Windows 10/11 desktop productivity application that enforces deep focus sessions. Unlike browser extensions or soft timers, it closes distracting applications at the operating-system level as soon as they come to the foreground. Results depend on Windows permissions and system settings (see Limits below).
 
 ## Key Features
-- **Focus Launcher (Kiosk Mode):** Replaces the Windows desktop/taskbar with a locked, distraction-free workspace during sessions.
-- **Real Process Enforcement:** Uses SetWinEventHook + 500ms polling and ProcessHandle.destroyForcibly() / taskkill /F to kill blocked apps instantly.
-- **Nuclear Mode:** Blocks 30+ escape routes including Task Manager, PowerShell, CMD, Run dialog, and WSL.
-- **Website Blocker:** Blocks domains at the hosts-file level, affecting every browser simultaneously without any extension.
-- **Windows Firewall Rules:** Adds outbound netsh advfirewall rules for network-level app blocking.
-- **PIN-Gated Breaks:** SHA-256 PIN required to take breaks or end sessions early.
-- **Sound Aversion:** Plays an annoying tone every time a blocked app is attempted.
-- **Block Schedules:** Recurring time windows where apps are automatically blocked (e.g. social media blocked 9am-5pm weekdays).
-- **Daily Allowances:** Time budgets per app (e.g. 30 min YouTube/day).
-- **Keyword Blocker:** Blocks any window whose title contains a keyword.
-- **Pomodoro + Custom Timer:** Session lengths from 5 min to 4 hours.
-- **Habit Tracker:** 7-day streak grid linked to focus sessions.
-- **Task Manager:** Full CRUD with priorities, due dates, recurring rules, and Windows alarm notifications.
-- **Stats & Reports:** Focus streaks, session history, temptation log charts, and weekly focus reports.
-- **Daily Notes:** Private journal linked to session data.
-- **Crash-Safe Design:** Taskbar restored via 4 independent safety layers even if the app crashes.
+- **Focus Launcher (kiosk mode):** a full-screen workspace on every monitor. It hides the taskbar and lets through only the apps you allow. Breaks of 3, 5, 10 or 15 minutes need a one-time PIN, or use Hard Lock for no breaks.
+- **App blocking:** foreground detection through a Windows event hook with a polling fallback. Blocked processes are ended with taskkill /F. Microsoft Store (UWP) apps are covered.
+- **Nuclear Mode:** closes 30+ escape routes such as Task Manager, PowerShell, Command Prompt, the Run dialog and WSL.
+- **Website blocker:** blocks domains for the whole PC through the Windows hosts file (IPv4 and IPv6). Works in every browser without an extension and needs administrator permission.
+- **VPN & Network Shield:** closes popular VPN clients and adds Windows Firewall network-cutoff rules for chosen apps.
+- **Keyword blocker:** matches foreground window titles. An optional Microsoft Edge extension adds browser URL matching.
+- **Block schedules, daily allowances and standalone timed blocks.**
+- **PIN protection:** Session, Global and Nuclear PINs, stored as SHA-256 hashes.
+- **Sound aversion:** an optional warning tone when a blocked app is opened.
+- **Productivity tools:** Pomodoro and custom focus sessions, tasks with recurring rules and alarms, habit tracker, daily notes, stats, weekly report, temptation log and CSV export.
+- **Safety nets:** an Emergency Break (5 minutes per day, from the tray menu), a taskbar restored by four independent mechanisms, and a standalone Emergency Recovery Tool.
 
 ## Privacy
-FocusFlow is local-first and collects no personal data. Tasks, notes, habits, and session history are stored locally in a SQLite database at %USERPROFILE%\.focusflow\focusflow.db. No account is required and internet access is not needed for normal use. If the user enables anonymous diagnostics, a limited crash or critical-error report may be sent after an error; it contains technical exception details only, not user-created content, usernames, file paths, or other personal information. There is no analytics or usage tracking.
+FocusFlow is local-first. Tasks, notes, habits and session history are stored in a local SQLite database at %USERPROFILE%\.focusflow\. No account is required, internet access is not needed for normal use, and there is no analytics or usage tracking. Crash reports are off until the user opts in. If enabled, a bounded technical report is sent to the developers through a Discord webhook, and Discord receives the user's IP address. FocusFlow redacts the username, home path and computer name before sending but cannot guarantee that every identifier is removed. Full crash logs stay on the PC. Feedback is sent only when the user submits it.
 
-## Tech Stack
-- Language: Kotlin 1.9.22
-- UI: Compose Multiplatform Desktop 1.6.1 (Material 3)
-- Native: JNA 5.14 (Win32 APIs — user32.dll, kernel32.dll)
-- Database: SQLite via org.xerial:sqlite-jdbc
-- Build: Gradle 8.14.2, GraalVM CE 19
-- Packaging: jpackage → EXE, MSI, MSIX (Microsoft Store)
-- CI/CD: GitHub Actions (windows-latest)
+## Limits
+- Windows 10 and 11 (64-bit) only. There is no macOS or Linux enforcement.
+- Website blocking through the hosts file can be affected by Secure DNS, VPNs, cached DNS and existing connections.
+- Some features need administrator permission, and Windows may protect certain processes.
+- FocusFlow adds friction against impulsive workarounds. A Windows administrator can still remove it.
 
-## Supported Languages
-English, Spanish (Español), French (Français), German (Deutsch), Japanese (日本語), Chinese Simplified (中文简体), Korean (한국어)
-
-## Downloads
+## Install
 - Microsoft Store: https://apps.microsoft.com/detail/9NJN9FPRQ7T1
-- Direct EXE: https://github.com/TITANICBHAI/FocusFlow-PC/releases
-- Android version: https://focusflowapp.pages.dev
+- winget: winget install --id 9NJN9FPRQ7T1 --source msstore
+- EXE / MSI installer: https://github.com/TITANICBHAI/FocusFlow-PC/releases
+- Android version (separate app): https://focusflowapp.pages.dev
+- Microsoft Edge extension: https://microsoftedge.microsoft.com/addons/detail/mmjhejklaaljidnmabjiloceniacihkk
 
 ## Source Code
-https://github.com/TITANICBHAI/FocusFlow-PC
+- https://github.com/TITANICBHAI/FocusFlow-PC (GPL-2.0)
+
+## Tech Stack
+- Kotlin 1.9.22 on JDK 19, Compose Multiplatform Desktop 1.6.1 (Material 3)
+- JNA 5.14 (Win32 APIs), SQLite via sqlite-jdbc, kotlinx.coroutines
+- Gradle 8.6, jpackage (EXE, MSI) and MSIX (Microsoft Store), GitHub Actions CI
+
+## Supported Languages
+English, Spanish (Español), Brazilian Portuguese (Português), French (Français), German (Deutsch), Japanese (日本語), Chinese Simplified (中文简体), Korean (한국어)
 
 ## Website Pages
 - Home (EN): https://focusflowpc.pages.dev/
@@ -54,8 +53,12 @@ https://github.com/TITANICBHAI/FocusFlow-PC
 - Home (JA): https://focusflowpc.pages.dev/ja/
 - Home (ZH): https://focusflowpc.pages.dev/zh/
 - Home (KO): https://focusflowpc.pages.dev/ko/
+- Home (PT-BR): https://focusflowpc.pages.dev/pt-br/
+- Features: https://focusflowpc.pages.dev/features/
+- Data and backups: https://focusflowpc.pages.dev/data-and-backups/
+- Blog: https://focusflowpc.pages.dev/blog/
 - Privacy Policy: https://focusflowpc.pages.dev/privacy-policy/
 - Terms of Service: https://focusflowpc.pages.dev/terms-of-service/
 
 ## Developer
-TBTechs — https://titanicbhai.github.io
+TBTechs, an independent software studio — https://tbtechs.pages.dev
