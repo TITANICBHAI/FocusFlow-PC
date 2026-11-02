@@ -26,6 +26,8 @@ import com.focusflow.services.CrashReporter
 import com.focusflow.services.ReviewPromptService
 import com.focusflow.services.AppLifecycle
 import com.focusflow.services.AutoBackupService
+import com.focusflow.services.BackupActionPolicy
+import com.focusflow.services.GlobalPin
 import com.focusflow.services.BackupEntry
 import com.focusflow.services.BackupLocation
 import com.focusflow.services.BackupRecoveryService
@@ -36,6 +38,7 @@ import com.focusflow.services.SafetyBackupDeleteResult
 import com.focusflow.services.SecondaryBackupDeleteResult
 import com.focusflow.services.SecondaryCopyStatus
 import com.focusflow.services.SecondaryLocationUpdate
+import com.focusflow.ui.components.PinGateDialog
 import com.focusflow.ui.components.openUrl
 import com.focusflow.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -478,6 +481,7 @@ internal fun BackupRecoverySection() {
     var restoreSource by remember { mutableStateOf<BackupEntry?>(null) }
     var deleteSource by remember { mutableStateOf<BackupEntry?>(null) }
     var deleteArchive by remember { mutableStateOf<RestoreArchiveEntry?>(null) }
+    var pinGateAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun refresh() {
         scope.launch {
@@ -504,6 +508,38 @@ internal fun BackupRecoverySection() {
     }
 
     LaunchedEffect(Unit) { refresh() }
+
+    // Restoring, deleting backups and changing the backup folder can all be used to get back to a
+    // weaker set of protections, so they need the Global PIN when one is set (fail-closed).
+    fun withBackupPin(action: () -> Unit) {
+        scope.launch {
+            val pinState = withContext(Dispatchers.IO) { GlobalPin.state() }
+            if (BackupActionPolicy.requiresPin(pinState)) {
+                pinGateAction = action
+            } else {
+                action()
+            }
+        }
+    }
+
+    fun removeSecondaryFolder() {
+        scope.launch {
+            working = true
+            val result = withContext(Dispatchers.IO) {
+                BackupRecoveryService.configureSecondaryBackupDirectory(null)
+            }
+            when (result) {
+                SecondaryLocationUpdate.Removed -> {
+                    secondaryDirectory = null
+                    statusMessage = "Secondary folder removed. Existing backups were left untouched."
+                }
+                is SecondaryLocationUpdate.Failed -> statusMessage = result.reason
+                is SecondaryLocationUpdate.Saved -> Unit
+            }
+            refresh()
+            working = false
+        }
+    }
 
     fun chooseSecondaryFolder() {
         val chooser = JFileChooser().apply {
@@ -669,31 +705,14 @@ internal fun BackupRecoverySection() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(onClick = ::chooseSecondaryFolder, enabled = !working) {
+                OutlinedButton(onClick = { withBackupPin { chooseSecondaryFolder() } }, enabled = !working) {
                     Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(if (secondaryDirectory == null) "Choose folder" else "Change folder")
                 }
                 if (secondaryDirectory != null) {
                     TextButton(
-                        onClick = {
-                            scope.launch {
-                                working = true
-                                val result = withContext(Dispatchers.IO) {
-                                    BackupRecoveryService.configureSecondaryBackupDirectory(null)
-                                }
-                                when (result) {
-                                    SecondaryLocationUpdate.Removed -> {
-                                        secondaryDirectory = null
-                                        statusMessage = "Secondary folder removed. Existing backups were left untouched."
-                                    }
-                                    is SecondaryLocationUpdate.Failed -> statusMessage = result.reason
-                                    is SecondaryLocationUpdate.Saved -> Unit
-                                }
-                                refresh()
-                                working = false
-                            }
-                        },
+                        onClick = { withBackupPin { removeSecondaryFolder() } },
                         enabled = !working
                     ) { Text("Remove folder") }
                 }
@@ -832,7 +851,7 @@ internal fun BackupRecoverySection() {
                     onClick = {
                         val selected = restoreSource
                         restoreSource = null
-                        if (selected != null) stageRestore(selected)
+                        if (selected != null) withBackupPin { stageRestore(selected) }
                     },
                     enabled = !working
                 ) { Text("Stage restore") }
@@ -870,10 +889,12 @@ internal fun BackupRecoverySection() {
             confirmButton = {
                 Button(
                     onClick = {
-                        if (entry.location == BackupLocation.SECONDARY) {
-                            deleteSecondaryBackup(entry)
-                        } else {
-                            deleteSafetyBackup(entry)
+                        withBackupPin {
+                            if (entry.location == BackupLocation.SECONDARY) {
+                                deleteSecondaryBackup(entry)
+                            } else {
+                                deleteSafetyBackup(entry)
+                            }
                         }
                     },
                     enabled = !working,
@@ -900,7 +921,7 @@ internal fun BackupRecoverySection() {
             },
             confirmButton = {
                 Button(
-                    onClick = { deleteRestoreArchive(archive) },
+                    onClick = { withBackupPin { deleteRestoreArchive(archive) } },
                     enabled = !working,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) { Text("Delete archive") }
@@ -908,6 +929,20 @@ internal fun BackupRecoverySection() {
             dismissButton = {
                 TextButton(onClick = { deleteArchive = null }, enabled = !working) { Text("Keep archive") }
             }
+        )
+    }
+
+    pinGateAction?.let { pending ->
+        PinGateDialog(
+            title = "Enter your PIN",
+            subtitle = "Restoring or deleting backups, and changing the backup folder, need your Global PIN.",
+            allowReset = false,
+            requireConfiguredPin = true,
+            onSuccess = {
+                pinGateAction = null
+                pending()
+            },
+            onDismiss = { pinGateAction = null }
         )
     }
 }

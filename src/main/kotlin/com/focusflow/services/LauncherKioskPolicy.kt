@@ -70,7 +70,11 @@ object LauncherKioskPolicy {
         // Name and path-based escape-tool detection always wins over ordinary
         // app names, descendants, and install-root allowances.
         if (NuclearMode.isEscapeTool(processName, executablePath)) return Decision.BLOCK
-        if (processName in safeNames) return Decision.ALLOW
+        if (processName in safeNames &&
+            !isImpostorOfWindowsComponent(processName, executablePath, systemRoot)
+        ) {
+            return Decision.ALLOW
+        }
 
         if (isAllowedApp(processName, executablePath, names, pathByName)) {
             return Decision.ALLOW
@@ -119,6 +123,32 @@ object LauncherKioskPolicy {
         }
 
         return Decision.BLOCK
+    }
+
+    /**
+     * Core Windows programs that always live in the Windows folder. A process that uses one of
+     * these names but runs from a normal drive path OUTSIDE the Windows folder is a renamed copy
+     * of something else, so the safe-list name alone must not let it through. Unknown paths
+     * (not resolvable, device or network form) keep the old behaviour: never risk blocking a
+     * real system process.
+     */
+    internal val windowsOwnedNames: Set<String> = setOf(
+        "explorer.exe", "dwm.exe", "winlogon.exe", "csrss.exe", "wininit.exe", "services.exe",
+        "lsass.exe", "svchost.exe", "smss.exe", "fontdrvhost.exe", "spoolsv.exe", "conhost.exe",
+        "dllhost.exe", "taskhostw.exe", "sihost.exe", "ctfmon.exe"
+    )
+
+    private val driveLetterPath = Regex("^[a-z]:\\\\.*")
+
+    internal fun isImpostorOfWindowsComponent(
+        processName: String,
+        executablePath: String?,
+        systemRoot: String?
+    ): Boolean {
+        if (normalizeName(processName) !in windowsOwnedNames) return false
+        if (systemRoot.isNullOrBlank() || executablePath.isNullOrBlank()) return false
+        if (!driveLetterPath.matches(normalizePath(executablePath))) return false
+        return !isWithin(executablePath, systemRoot)
     }
 
     fun isFocusFlowOwnedUtility(

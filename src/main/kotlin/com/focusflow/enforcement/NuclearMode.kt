@@ -392,6 +392,12 @@ object NuclearMode {
                 // finishing. Never apply rules for a mode that is no longer active.
                 if (_isActiveState.value) applyFirewallLock()
             }
+            // Optional (hidden setting): make "end task" / taskkill on FocusFlow fail while Nuclear
+            // Mode is on. Re-check afterwards in case disable() won the race.
+            if (_isActiveState.value) {
+                ProcessHardening.enableIfConfigured()
+                if (!_isActiveState.value) ProcessHardening.disable()
+            }
         }
 
         monitorJob = scope.launch {
@@ -409,7 +415,11 @@ object NuclearMode {
             }
             SystemTrayManager.showNotification(
                 "Nuclear Mode ON",
-                "All escape routes are blocked.$uninstallNotice Stay focused.",
+                if (ElevationManager.isElevated || !InstallVariant.isWindows) {
+                    "All escape routes are blocked.$uninstallNotice Stay focused."
+                } else {
+                    "Process blocking is on, but FocusFlow is not running as administrator: the firewall lock is off and tools started as administrator may survive. Use Restart as admin.$uninstallNotice"
+                },
                 TrayIcon.MessageType.WARNING
             )
             SystemTrayManager.updateTooltip("FocusFlow — NUCLEAR MODE ACTIVE")
@@ -424,6 +434,7 @@ object NuclearMode {
      *               show confusing "Nuclear Mode OFF / Normal operation resumed" popups.
      */
     fun disable(silent: Boolean = false) {
+        com.focusflow.services.LooseningCoolOff.cancel(com.focusflow.services.LooseningCoolOff.KEY_NUCLEAR_OFF)
         synchronized(lifecycleLock) {
             _isActiveState.value = false
             monitorJob?.cancel()
@@ -441,6 +452,8 @@ object NuclearMode {
             // awaitCleanup() joins this thread before JVM exit, so persistence is safe
             // even when disable() is called from the shutdown sequence.
             val t = Thread({
+                // First, so a locked database can never keep FocusFlow un-killable.
+                ProcessHardening.disable()
                 synchronized(firewallLock) {
                     persistSetting("nuclear_mode", "false", "Nuclear Mode state")
                     removeFirewallLock()
@@ -479,6 +492,7 @@ object NuclearMode {
             monitorJob = null
             escapeCounts.values.sum()
         }
+        ProcessHardening.disable()
         if (totalAttemptsSnapshot > 0) {
             persistSetting(
                 "nuclear_last_session_attempts",

@@ -407,7 +407,8 @@ fun NuclearModeScreen() {
             onDismiss  = { showPinGate = false },
             onVerified = {
                 showPinGate   = false
-                NuclearMode.disable()
+                // With the (default-off) cool-off switch on, this only starts the 10-minute cool-off.
+                com.focusflow.services.LooseningCoolOff.requestNuclearOff()
                 nuclearActive = NuclearMode.isActive
             }
         )

@@ -293,6 +293,97 @@ fun SettingsScreen(
         }
 
         item {
+            var coolOffGlobal by remember { mutableStateOf(false) }
+            var coolOffNuclear by remember { mutableStateOf(false) }
+            var coolOffGate by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                withContext(Dispatchers.IO) {
+                    coolOffGlobal = com.focusflow.services.LooseningCoolOff.isEnabled(com.focusflow.services.LooseningCoolOff.GLOBAL_SETTING)
+                    coolOffNuclear = com.focusflow.services.LooseningCoolOff.isEnabled(com.focusflow.services.LooseningCoolOff.NUCLEAR_SETTING)
+                }
+            }
+            fun switchOff(settingKey: String, hasPin: Boolean, apply: () -> Unit) {
+                if (hasPin) {
+                    coolOffGate = settingKey
+                } else {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { com.focusflow.services.LooseningCoolOff.setEnabled(settingKey, false) }
+                        apply()
+                    }
+                }
+            }
+            SectionCard(title = "Cool-off before loosening") {
+                Text(
+                    "Off by default. When a switch is on, turning that protection off (after its PIN check) only starts a 10-minute cool-off. Ask again to cancel it. Turning a switch off also waits 10 minutes when its PIN is set.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface2
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Always-On enforcement (Global PIN)", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = coolOffGlobal,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                coolOffGlobal = true
+                                scope.launch { withContext(Dispatchers.IO) { com.focusflow.services.LooseningCoolOff.setEnabled(com.focusflow.services.LooseningCoolOff.GLOBAL_SETTING, true) } }
+                            } else {
+                                scope.launch {
+                                    val hasPin = withContext(Dispatchers.IO) { GlobalPin.state() != com.focusflow.services.PinState.NOT_SET }
+                                    switchOff(com.focusflow.services.LooseningCoolOff.GLOBAL_SETTING, hasPin) { coolOffGlobal = false }
+                                }
+                            }
+                        }
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Nuclear Mode (Nuclear PIN)", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = coolOffNuclear,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                coolOffNuclear = true
+                                scope.launch { withContext(Dispatchers.IO) { com.focusflow.services.LooseningCoolOff.setEnabled(com.focusflow.services.LooseningCoolOff.NUCLEAR_SETTING, true) } }
+                            } else {
+                                scope.launch {
+                                    val hasPin = withContext(Dispatchers.IO) { NuclearPin.isSet() }
+                                    switchOff(com.focusflow.services.LooseningCoolOff.NUCLEAR_SETTING, hasPin) { coolOffNuclear = false }
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+            when (coolOffGate) {
+                com.focusflow.services.LooseningCoolOff.GLOBAL_SETTING -> PinGateDialog(
+                    title = "Enter your PIN",
+                    subtitle = "Turning the cool-off off needs your Global PIN and then waits 10 minutes.",
+                    allowReset = false,
+                    requireConfiguredPin = true,
+                    onSuccess = {
+                        coolOffGate = null
+                        scope.launch {
+                            val offNow = withContext(Dispatchers.IO) { com.focusflow.services.LooseningCoolOff.requestSwitchOff(com.focusflow.services.LooseningCoolOff.GLOBAL_SETTING) }
+                            if (offNow) coolOffGlobal = false
+                        }
+                    },
+                    onDismiss = { coolOffGate = null }
+                )
+                com.focusflow.services.LooseningCoolOff.NUCLEAR_SETTING -> NuclearPinGateDialog(
+                    onDismiss = { coolOffGate = null },
+                    onVerified = {
+                        coolOffGate = null
+                        scope.launch {
+                            val offNow = withContext(Dispatchers.IO) { com.focusflow.services.LooseningCoolOff.requestSwitchOff(com.focusflow.services.LooseningCoolOff.NUCLEAR_SETTING) }
+                            if (offNow) coolOffNuclear = false
+                        }
+                    }
+                )
+                else -> Unit
+            }
+        }
+
+        item {
             SectionCard(title = strings.settingsLauncherChainAllowance) {
                 Text(
                     strings.settingsLauncherChainAllowanceDesc,
@@ -974,7 +1065,10 @@ fun SettingsScreen(
                             color = if (nuclearActive) Error else OnSurface
                         )
                         Text(
-                            "Kills Task Manager, regedit, cmd, PowerShell, Process Explorer when detected — no escape",
+                            if (com.focusflow.enforcement.ElevationManager.isElevated || !com.focusflow.enforcement.isWindows)
+                                "Kills Task Manager, regedit, cmd, PowerShell, Process Explorer when detected — no escape"
+                            else
+                                "Kills Task Manager, regedit, cmd, PowerShell, Process Explorer when detected. FocusFlow is not running as administrator: the firewall lock is OFF and tools started as administrator may survive. Use Restart as admin.",
                             style = MaterialTheme.typography.bodySmall,
                             color = OnSurface2
                         )
@@ -1063,9 +1157,11 @@ fun SettingsScreen(
             onDismiss = { showAlwaysOnPinDialog = false },
             onVerified = {
                 showAlwaysOnPinDialog = false
-                alwaysOn = false
-                ProcessMonitor.alwaysOnEnabled = false
-                scope.launch { withContext(Dispatchers.IO) { Database.setSetting("always_on_enforcement", "false") } }
+                scope.launch {
+                    // With the (default-off) cool-off switch on, this only starts the 10-minute cool-off.
+                    val offNow = withContext(Dispatchers.IO) { com.focusflow.services.LooseningCoolOff.requestAlwaysOnOff() }
+                    if (offNow) alwaysOn = false
+                }
             }
         )
     }
@@ -1098,7 +1194,8 @@ fun SettingsScreen(
             onDismiss  = { showNuclearPinGate = false },
             onVerified = {
                 showNuclearPinGate = false
-                NuclearMode.disable()
+                // With the (default-off) cool-off switch on, this only starts the 10-minute cool-off.
+                com.focusflow.services.LooseningCoolOff.requestNuclearOff()
                 nuclearActive = NuclearMode.isActive
             }
         )

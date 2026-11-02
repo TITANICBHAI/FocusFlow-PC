@@ -542,10 +542,20 @@ object BackupRecoveryService {
             .filterNot { it in brokenBeforeOpen }
         val newlyBroken = newlyBrokenNames.isNotEmpty()
         if (restoredResult == DbInitResult.Ready && !newlyBroken) {
+            val mergeFailure = mergeProtectionsIntoRestoredDatabase(
+                safetyBackup.file
+            )
+            if (mergeFailure != null) {
+                // The database is closed at this point, which is what rollbackAndReopen expects.
+                return rollbackAndReopen(
+                    applyingJournal,
+                    "FocusFlow could not keep your current protections while restoring ($mergeFailure), so the restore was undone and your previous database was put back."
+                )
+            }
             clearPendingRestoreFiles()
             RecoveryNoticeService.writeRestoreNotice(
                 "Backup restored",
-                "FocusFlow restored ${journalSourceName(journal)}. A verified safety backup and the previous database files were preserved in the backup folder."
+                "FocusFlow restored ${journalSourceName(journal)}. Protections you already had (PIN, always-on, block rules, schedules, limits) were kept, so a restore never weakens them. A verified safety backup and the previous database files were preserved in the backup folder."
             )
             return DbInitResult.Ready
         }
@@ -556,6 +566,22 @@ object BackupRecoveryService {
             "The selected backup did not initialize successfully. FocusFlow restored the database files that were present before the restore.",
             newlyBrokenNames
         )
+    }
+
+    /**
+     * A restore may bring back data, but it must never leave protections weaker than they were
+     * just before it. Returns null on success (the database is open again), or a short reason on
+     * failure (the database is closed, so the caller can roll back).
+     */
+    private fun mergeProtectionsIntoRestoredDatabase(safetyBackupFile: File): String? {
+        Database.close()
+        val merged = RestoreProtectionMerge.apply(AppPaths.dbFile, safetyBackupFile)
+        if (merged is RestoreProtectionMerge.MergeOutcome.Failed) return merged.reason
+        if (Database.init() != DbInitResult.Ready) {
+            Database.close()
+            return "the database did not reopen after the merge"
+        }
+        return null
     }
 
     private fun rollbackAndReopen(

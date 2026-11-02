@@ -233,7 +233,9 @@ object WindowsSessionStateMonitor {
         }
     }
 
-    private interface WindowProcedure : Callback {
+    // internal (public in bytecode), not private: JNA reads the structure fields by reflection and
+    // fails with "Exception reading field 'style'" when the structure class is not accessible.
+    internal interface WindowProcedure : Callback {
         fun callback(hwnd: HWND?, message: Int, wParam: Long, lParam: Long): Long
     }
 
@@ -241,7 +243,7 @@ object WindowsSessionStateMonitor {
         "style", "windowProcedure", "classExtra", "windowExtra", "hInstance",
         "icon", "cursor", "background", "menuName", "className"
     )
-    private class SessionWindowClass : Structure() {
+    internal class SessionWindowClass : Structure() {
         @JvmField var style: Int = 0
         @JvmField var windowProcedure: WindowProcedure? = null
         @JvmField var classExtra: Int = 0

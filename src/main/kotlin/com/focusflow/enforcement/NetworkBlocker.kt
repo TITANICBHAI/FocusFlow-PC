@@ -149,7 +149,7 @@ object NetworkBlocker {
         } else {
             EnforcementLog.warn(
                 "NetworkBlocker",
-                "Firewall rule was not confirmed for $processName (path=$exePath)"
+                "Firewall rule was not confirmed for $processName (path=$exePath, created=$created)"
             )
         }
         return verified

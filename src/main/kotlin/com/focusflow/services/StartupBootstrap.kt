@@ -75,7 +75,11 @@ object StartupBootstrap {
 
     fun startServices(onRestore: () -> Unit, onQuit: () -> Unit): StartOnceResult =
         startup.run {
+            // Before anything reads protection settings: put back a PIN / Always-On / Nuclear Mode
+            // that a deleted or reset database lost.
+            ProtectionSnapshotService.restoreIfNeeded()
             AutoBackupService.start()
+            ProtectionSnapshotService.start()
 
             ProcessMonitor.alwaysOnEnabled =
                 alwaysOnEnabledFromSetting(Database.readSetting("always_on_enforcement"))
@@ -155,6 +159,13 @@ object StartupBootstrap {
                         },
                         onKillSwitch = {
                             val wasActive = KillSwitchService.isActive.value
+                            if (!wasActive && !EmergencyBreakPin.authorizeStart()) {
+                                SystemTrayManager.showNotification(
+                                    "Emergency Break not started",
+                                    "The Global PIN is required to start an Emergency Break."
+                                )
+                                return@TrayCallbacks
+                            }
                             val activated = KillSwitchService.toggle()
                             when {
                                 !KillSwitchService.settingsAvailable.value &&

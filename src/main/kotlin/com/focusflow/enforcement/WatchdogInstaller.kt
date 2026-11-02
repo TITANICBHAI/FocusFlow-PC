@@ -48,24 +48,62 @@ object WatchdogInstaller {
 
     private fun installWatchdog() {
         val exePath = WindowsStartupManager.resolveExePath()
-        val safePath = exePath.replace("'", "''")
-        val psScript = "if (-not (Get-Process -Name 'FocusFlow' -ErrorAction SilentlyContinue))" +
-                " { Start-Process '$safePath' }"
+        val taskCommand = pathAwareTaskCommand(exePath) ?: WatchdogScript.legacyTaskCommand(exePath)
         try {
-            val exit = ProcessBuilder(
+            val process = ProcessBuilder(
                 "schtasks", "/create",
                 "/tn", TASK_NAME,
-                "/tr", "powershell -WindowStyle Hidden -NonInteractive -Command \"$psScript\"",
+                "/tr", taskCommand,
                 "/sc", "MINUTE",
                 "/mo", "2",
                 "/it",
                 "/f"
-            ).redirectErrorStream(true).start().waitFor()
-            if (exit != 0) EnforcementLog.warn("WatchdogInstaller", "schtasks /create $TASK_NAME exited with code $exit — watchdog may not self-restart")
-            else EnforcementLog.info("WatchdogInstaller", "$TASK_NAME registered (exe=$exePath)")
+            ).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            val exit = process.waitFor()
+            if (exit != 0) {
+                EnforcementLog.warn(
+                    "WatchdogInstaller",
+                    "schtasks /create $TASK_NAME exited with code $exit — watchdog may not self-restart" +
+                        " | commandLength=${taskCommand.length} | output=${output.take(300)}"
+                )
+            } else {
+                EnforcementLog.info("WatchdogInstaller", "$TASK_NAME registered (exe=$exePath)")
+            }
         } catch (e: Exception) {
             EnforcementLog.warn("WatchdogInstaller", "Failed to register $TASK_NAME", e)
         }
+    }
+
+    /**
+     * Direct installs only: writes the path-aware check next to the taskbar-guard script and
+     * returns the task command for it. Returns null (caller uses the old name-only command)
+     * whenever anything is unusual — see [WatchdogScript.shouldUsePathCheck].
+     */
+    private fun pathAwareTaskCommand(exePath: String): String? = try {
+        val appData = System.getenv("APPDATA")
+        if (appData.isNullOrBlank()) {
+            null
+        } else {
+            val scriptFile = File(File(appData, "FocusFlow"), "watchdog.ps1")
+            val command = WatchdogScript.taskCommandForScript(scriptFile.absolutePath)
+            if (!WatchdogScript.shouldUsePathCheck(
+                    exePath = exePath,
+                    exeExists = File(exePath).isFile,
+                    isDirectInstall = InstallVariant.isWindowsDirectInstall,
+                    taskCommand = command
+                )
+            ) {
+                null
+            } else {
+                scriptFile.parentFile.mkdirs()
+                scriptFile.writeText(WatchdogScript.script(File(exePath).absolutePath))
+                command
+            }
+        }
+    } catch (failure: Exception) {
+        EnforcementLog.warn("WatchdogInstaller", "Could not write the watchdog script; using the name-only check", failure)
+        null
     }
 
     /**
@@ -124,14 +162,19 @@ while (${D}true) {
 """.trimIndent())
 
             val safePath = scriptFile.absolutePath.replace("'", "''")
-            val exit = ProcessBuilder(
+            val exit: Int = ProcessBuilder(
                 "schtasks", "/create",
                 "/tn", GUARD_TASK_NAME,
                 "/tr", "powershell -ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File \"$safePath\"",
                 "/sc", "ONLOGON",
                 "/it",
                 "/f"
-            ).redirectErrorStream(true).start().waitFor()
+            ).redirectErrorStream(true).start().let { process ->
+                val output = process.inputStream.bufferedReader().readText().trim()
+                process.waitFor().also { code ->
+                    if (code != 0) EnforcementLog.warn("WatchdogInstaller", "$GUARD_TASK_NAME output=${output.take(300)}")
+                }
+            }
             if (exit != 0) EnforcementLog.warn("WatchdogInstaller", "schtasks /create $GUARD_TASK_NAME exited with code $exit — taskbar may not restore on next logon")
             else EnforcementLog.info("WatchdogInstaller", "$GUARD_TASK_NAME registered (script=${scriptFile.absolutePath})")
         } catch (e: Exception) {

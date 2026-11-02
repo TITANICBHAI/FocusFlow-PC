@@ -34,7 +34,9 @@ import kotlinx.coroutines.withContext
 private enum class PinGateStep { ENTER_PIN, FORGOT_CONFIRM, FORGOT_DONE }
 
 /**
- * @param allowReset When true (default), the "Forgot PIN?" reset link is shown
+ * @param allowReset OFF by default (owner decision O1-A: a PIN that can be reset from its own lock
+ *   dialog is no protection; PinResetPathSourceTest fails if a caller passes true). When true, the
+ *   "Forgot PIN?" reset link is shown
  *   after 2 failed attempts. Set to false for any PIN gate shown inside an active
  *   kiosk / Focus Launcher session — resetting the GlobalPin mid-session bypasses
  *   hard-lock entirely and must not be possible from within the overlay.
@@ -43,7 +45,7 @@ private enum class PinGateStep { ENTER_PIN, FORGOT_CONFIRM, FORGOT_DONE }
 fun PinGateDialog(
     title: String = "",
     subtitle: String = "",
-    allowReset: Boolean = true,
+    allowReset: Boolean = false,
     requireConfiguredPin: Boolean = false,
     onSuccess: () -> Unit,
     onDismiss: () -> Unit

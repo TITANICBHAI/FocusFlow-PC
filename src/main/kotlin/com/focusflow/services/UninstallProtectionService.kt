@@ -83,6 +83,13 @@ object UninstallProtectionService {
         if (!isDirectInstall) return true
 
         return runCatching {
+            // The database is missing or has lost its protections, but FocusFlow kept a snapshot of
+            // the last known ones: use it (read-only) so the usual PIN and blocks still apply.
+            if (ProtectionSnapshotService.shouldUseSnapshotForWizard() && openProtectionSnapshotForWizard()) {
+                ProcessMonitor.alwaysOnEnabled =
+                    (Database.readSetting("always_on_enforcement") as? SettingRead.Present)?.value == "true"
+                return@runCatching true
+            }
             val result = openWizardDatabaseWithBusyRetries()
             when (decideWizardDatabaseOutcome(result, Database.isReady)) {
                 WizardDatabaseDecision.BLOCK -> false
@@ -130,6 +137,11 @@ object UninstallProtectionService {
         }.getOrDefault(false)
     }
 
+    private fun openProtectionSnapshotForWizard(): Boolean {
+        val result = runCatching { Database.initReadOnlyForWizard(ProtectionSnapshotService.snapshotFile) }.getOrNull()
+        return result == DbInitResult.Ready && Database.isReady
+    }
+
     internal fun decideWizardDatabaseOutcome(
         result: DbInitResult,
         databaseReady: Boolean
@@ -154,8 +166,8 @@ object UninstallProtectionService {
      * close paths and is also the API for a future custom uninstaller helper.
      */
     fun authorizeQuit(): Boolean {
-        if (!isDirectInstall) return true
-
+        // Store/MSIX builds are gated too (owner decision O4-B). Only package REMOVAL is owned
+        // by Windows and is never intercepted here (see prepareForUninstallWizard).
         return authorizeRequirements(activeRequirements(Action.QUIT))
     }
 
