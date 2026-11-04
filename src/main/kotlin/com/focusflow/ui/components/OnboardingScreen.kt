@@ -39,6 +39,8 @@ import com.focusflow.data.models.BlockRule
 import com.focusflow.enforcement.BlockPreset
 import com.focusflow.enforcement.BlockPresets
 import com.focusflow.enforcement.InstalledAppsScanner
+import com.focusflow.enforcement.StartupEnableResult
+import com.focusflow.enforcement.StartupState
 import com.focusflow.enforcement.WindowsStartupManager
 import com.focusflow.enforcement.isWindows
 import com.focusflow.i18n.AppLanguage
@@ -930,11 +932,15 @@ private fun runShellCommand(vararg args: String) {
 private fun PermissionsPage() {
     val isAdmin = remember { com.focusflow.enforcement.ElevationManager.isElevated }
     var autoStartEnabled by remember { mutableStateOf(false) }
+    // Windows (Task Manager) has FocusFlow's startup entry switched off.
+    var autoStartBlockedByWindows by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
     LaunchedEffect(Unit) {
-        autoStartEnabled = withContext(Dispatchers.IO) { WindowsStartupManager.isEnabled() }
+        val startupState = withContext(Dispatchers.IO) { WindowsStartupManager.state() }
+        autoStartEnabled = startupState == StartupState.On
+        autoStartBlockedByWindows = startupState == StartupState.DisabledInWindows
     }
 
     // Header sits outside the scroll so it stays pinned
@@ -991,7 +997,9 @@ private fun PermissionsPage() {
                     iconTint = Success,
                     title = "Auto-Start with Windows",
                     subtitle = "FocusFlow launches automatically when you log in — blocking stays active across reboots",
-                    badge = if (autoStartEnabled) "✓ Enabled" else "Flip the switch →",
+                    badge = if (autoStartEnabled) "✓ Enabled"
+                            else if (autoStartBlockedByWindows) "Turned off in Windows — flip to re-enable"
+                            else "Flip the switch →",
                     badgeGranted = if (autoStartEnabled) true else null,
                     highlighted = !autoStartEnabled
                 ) {
@@ -999,9 +1007,16 @@ private fun PermissionsPage() {
                         checked = autoStartEnabled,
                         onCheckedChange = { checked ->
                             autoStartEnabled = checked
-                            scope.launch(Dispatchers.IO) {
-                                if (checked) WindowsStartupManager.enable()
-                                else WindowsStartupManager.disable()
+                            scope.launch {
+                                if (checked) {
+                                    val result = withContext(Dispatchers.IO) { WindowsStartupManager.enable() }
+                                    autoStartEnabled = result == StartupEnableResult.Enabled
+                                    autoStartBlockedByWindows = result == StartupEnableResult.DisabledByWindows
+                                } else {
+                                    val removed = withContext(Dispatchers.IO) { WindowsStartupManager.disable() }
+                                    autoStartEnabled = !removed
+                                    autoStartBlockedByWindows = false
+                                }
                             }
                         },
                         colors = SwitchDefaults.colors(

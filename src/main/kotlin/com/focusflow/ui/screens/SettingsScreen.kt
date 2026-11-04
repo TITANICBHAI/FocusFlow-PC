@@ -61,6 +61,9 @@ fun SettingsScreen(
 
     var alwaysOn         by remember { mutableStateOf(false) }
     var startWithWin     by remember { mutableStateOf(false) }
+    // Windows (Task Manager / Settings) has FocusFlow's startup entry switched off.
+    var startupDisabledByWindows by remember { mutableStateOf(false) }
+    var startupNotice    by remember { mutableStateOf<String?>(null) }
     var soundEnabled       by remember { mutableStateOf(true) }
     var soundVolume        by remember { mutableStateOf(1.0f) }
     var aversionSound      by remember { mutableStateOf(ChimeStyle.DEFAULT) }
@@ -111,7 +114,7 @@ fun SettingsScreen(
             val sound      = withContext(Dispatchers.IO) { Database.getSetting("sound_aversion") != "false" }
             val overlay    = withContext(Dispatchers.IO) { Database.getSetting("overlay_message") ?: "Stay focused. You've got this." }
             val pinIsSet   = withContext(Dispatchers.IO) { SessionPin.isSet() }
-            val sww        = withContext(Dispatchers.IO) { WindowsStartupManager.isEnabled() }
+            val startupState = withContext(Dispatchers.IO) { WindowsStartupManager.state() }
             val pw         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_work")   ?: "25" }
             val ps         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_short")  ?: "5" }
             val pl         = withContext(Dispatchers.IO) { Database.getSetting("pomodoro_long")   ?: "15" }
@@ -130,7 +133,8 @@ fun SettingsScreen(
             val gPinSet     = withContext(Dispatchers.IO) { GlobalPin.isSet() }
             withContext(Dispatchers.IO) { com.focusflow.services.LauncherChainAllowance.refresh() }
             alwaysOn        = ao
-            startWithWin    = sww
+            startWithWin    = startupState == StartupState.On
+            startupDisabledByWindows = startupState == StartupState.DisabledInWindows
             soundEnabled    = sound
             soundVolume     = vol.coerceIn(0f, 1f)
             overlayMessage  = overlay
@@ -197,10 +201,30 @@ fun SettingsScreen(
 
     fun setStartupEnabled(enabled: Boolean) {
         startWithWin = enabled
+        startupNotice = null
         scope.launch {
-            withContext(Dispatchers.IO) {
-                if (enabled) WindowsStartupManager.enable()
-                else WindowsStartupManager.disable()
+            if (enabled) {
+                // Report what really happened: the toggle must not claim ON when Windows
+                // still blocks the entry or the write failed.
+                val result = withContext(Dispatchers.IO) { WindowsStartupManager.enable() }
+                startWithWin = result == StartupEnableResult.Enabled
+                startupDisabledByWindows = result == StartupEnableResult.DisabledByWindows
+                startupNotice = when (result) {
+                    StartupEnableResult.Enabled, StartupEnableResult.NotSupported -> null
+                    StartupEnableResult.DisabledByWindows ->
+                        "Windows still has FocusFlow turned off. Open Task Manager › Startup apps, select FocusFlow and choose Enable."
+                    StartupEnableResult.NoLaunchCommand ->
+                        "FocusFlow could not find its own executable, so it was not added to startup."
+                    StartupEnableResult.WriteFailed ->
+                        "Windows did not allow FocusFlow to be added to startup."
+                }
+            } else {
+                val removed = withContext(Dispatchers.IO) { WindowsStartupManager.disable() }
+                if (!removed) {
+                    startWithWin = true
+                    startupNotice = "FocusFlow could not be removed from startup."
+                }
+                startupDisabledByWindows = false
             }
         }
     }
@@ -223,7 +247,8 @@ fun SettingsScreen(
         if (!openBackupRecovery) return@LaunchedEffect
         val itemCount = snapshotFlow { settingsListState.layoutInfo.totalItemsCount }
             .first { it > 0 }
-        settingsListState.animateScrollToItem(itemCount - 1)
+        // Backup & Recovery is the second-to-last item; the About card follows it.
+        settingsListState.animateScrollToItem((itemCount - 2).coerceAtLeast(0))
         onBackupRecoveryOpened()
     }
     Box(modifier = Modifier.fillMaxSize()) {
@@ -660,7 +685,8 @@ fun SettingsScreen(
                     label    = strings.settingsStartWithWindows,
                     subtitle = if (!isWindows) "Only available on Windows"
                                else if (startWithWin) "FocusFlow launches at login (HKCU\\Run)"
-                               else "FocusFlow does not start automatically",
+                               else if (startupDisabledByWindows) "Windows has FocusFlow turned off under Task Manager › Startup apps. Turn this on to re-enable it."
+                               else startupNotice ?: "FocusFlow does not start automatically",
                     trailing = {
                         Switch(
                             checked  = startWithWin,
@@ -1032,17 +1058,6 @@ fun SettingsScreen(
             }
         }
 
-        item {
-            SectionCard(title = strings.settingsAbout) {
-                Text("FocusFlow PC v${CrashReporter.APP_VERSION}", color = OnSurface)
-                Spacer(Modifier.height(4.dp))
-                Text("Kotlin 1.9.22 + Compose Multiplatform Desktop 1.6.1", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Text("Enforcement: JNA Win32 + WinEventHook + Nuclear Mode + Windows Firewall", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Text("Features: Pomodoro, Daily Notes, 7-Day Stats, Task Alarms, App Scanner", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                Text("Database: SQLite at %USERPROFILE%\\.focusflow\\focusflow.db", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-            }
-        }
-
         // ── Advanced enforcement controls ─────────────────────────────────────
         item {
             SectionCard(title = "⚠ Advanced") {
@@ -1104,46 +1119,24 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = Warning
                 )
-                Spacer(Modifier.height(10.dp))
-                HorizontalDivider(color = Surface3, thickness = 1.dp)
-                Spacer(Modifier.height(10.dp))
-                // ── Nuclear Mode PIN ──────────────────────────────────────────
-                Row(
-                    modifier              = Modifier.fillMaxWidth(),
-                    verticalAlignment     = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text(
-                            "Nuclear Mode PIN",
-                            color = OnSurface,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            if (nuclearPinSet) "4-char PIN active — required to turn Nuclear Mode off"
-                            else              "Optional: require a PIN to turn Nuclear Mode off",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = OnSurface2
-                        )
-                    }
-                    Button(
-                        onClick = { showNuclearPinSetup = true },
-                        colors  = ButtonDefaults.buttonColors(
-                            containerColor = if (nuclearPinSet) Error.copy(alpha = 0.15f)
-                                             else              Purple80.copy(alpha = 0.15f)
-                        )
-                    ) {
-                        Text(
-                            if (nuclearPinSet) "Change / Clear" else "Set PIN",
-                            color = if (nuclearPinSet) Error else Purple80
-                        )
-                    }
-                }
             }
         }
 
         item(key = "backup-recovery") {
             BackupRecoverySection()
+        }
+
+        // ── About (kept last) ─────────────────────────────────────────────────
+        // The "open Backup & Recovery" scroll above relies on this being the final item.
+        item(key = "about") {
+            SectionCard(title = strings.settingsAbout) {
+                Text("FocusFlow PC v${CrashReporter.APP_VERSION}", color = OnSurface)
+                Spacer(Modifier.height(4.dp))
+                Text("Kotlin 1.9.22 + Compose Multiplatform Desktop 1.6.1", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                Text("Enforcement: JNA Win32 + WinEventHook + Nuclear Mode + Windows Firewall", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                Text("Features: Pomodoro, Daily Notes, 7-Day Stats, Task Alarms, App Scanner", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+                Text("Database: SQLite at %USERPROFILE%\\.focusflow\\focusflow.db", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
+            }
         }
     }
     FfVerticalScrollbar(
