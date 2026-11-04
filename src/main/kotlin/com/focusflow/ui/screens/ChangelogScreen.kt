@@ -32,9 +32,9 @@ internal data class ChangelogEntry(
 internal val CHANGELOG = listOf(
     ChangelogEntry(
         version    = "2.0.6",
-        date       = "Planned for 2.0.6",
-        badge      = "PLANNED",
-        badgeColor = OnSurface2,
+        date       = "November 2026",
+        badge      = "RELEASED",
+        badgeColor = Success,
         changes    = listOf(
             "IMP" to "Clearer recovery guidance when FocusFlow cannot safely open its saved data or a required component",
             "SEC" to "Focus protections and PIN checks will fail safely when the settings they rely on cannot be read",
