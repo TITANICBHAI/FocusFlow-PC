@@ -46,4 +46,21 @@ class SecurityWiringSourceTest {
         // isEnabled() is true only for an explicit "true"; a missing setting means no cool-off.
         assertTrue(source("services/LooseningCoolOff.kt").contains("== \"true\" }.getOrDefault(false)"))
     }
+
+    @Test
+    fun theUninstallGuardIsStartedAtStartupAndNotOnlyByNuclearMode() {
+        assertTrue(source("services/StartupBootstrap.kt").contains("UninstallGuard.start()"))
+        // Nuclear Mode must decide without a dialog first, so a denied installer is killed at once.
+        val nuclear = source("enforcement/NuclearMode.kt")
+        assertTrue(nuclear.contains("uninstallAttemptVerdict()"))
+        assertTrue(!nuclear.contains("!UninstallProtectionService.authorizeUninstallAttempt()"))
+    }
+
+    @Test
+    fun theUninstallWizardTellsTheRunningGuardBeforeItStartsWindowsInstaller() {
+        val text = source("services/UninstallWizard.kt")
+        val grant = text.indexOf("UninstallAuthorizationHandoff.grant()")
+        val start = text.indexOf("ProcessBuilder(")
+        assertTrue(grant in 0 until start, "the grant must be written before the installer is started")
+    }
 }

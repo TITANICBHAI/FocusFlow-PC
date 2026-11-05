@@ -202,7 +202,18 @@ object NuclearMode {
     private fun shouldBlockInstallerProcess(processName: String): Boolean {
         if (InstallVariant.isMsix && processName in directInstallerProcesses) return false
         if (InstallVariant.isWindowsDirectInstall && processName in directInstallerProcesses) {
-            return !UninstallProtectionService.authorizeUninstallAttempt()
+            // Decide without any dialog so the caller kills a denied installer at
+            // once. The old code showed a Standalone Block message or a PIN prompt
+            // first, which stalled this scan and left the installer running (and
+            // able to finish) behind that dialog. The shared guard prompt runs
+            // after the kill.
+            return when (UninstallProtectionService.uninstallAttemptVerdict()) {
+                UninstallProtectionService.UninstallVerdict.Allow -> false
+                is UninstallProtectionService.UninstallVerdict.Deny -> {
+                    UninstallGuard.reportBlockedAttempt()
+                    true
+                }
+            }
         }
         return true
     }

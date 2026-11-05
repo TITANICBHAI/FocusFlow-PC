@@ -69,6 +69,38 @@ object UninstallProtectionService {
         ) : Requirement
     }
 
+    /** Result of [uninstallAttemptVerdict]: no dialogs, no waiting. */
+    internal sealed interface UninstallVerdict {
+        object Allow : UninstallVerdict
+        data class Deny(val requirements: List<Requirement>) : UninstallVerdict
+    }
+
+    /**
+     * Decides, without showing anything, whether a FocusFlow removal that is
+     * already running may continue.
+     *
+     * The uninstall guard calls this the moment it sees a Windows Installer
+     * removal process, kills the process first when the verdict is [UninstallVerdict.Deny],
+     * and only then prompts. Asking first would leave the installer running
+     * (and able to finish) behind an unattended dialog.
+     */
+    internal fun uninstallAttemptVerdict(): UninstallVerdict {
+        if (!isDirectInstall) return UninstallVerdict.Allow
+        if (hasActiveAuthorization()) return UninstallVerdict.Allow
+        val requirements = runCatching { activeRequirements(Action.UNINSTALL) }
+            .getOrElse { failure ->
+                // Fail closed for the one running attempt: the wizard stays
+                // available (it has its own typed-phrase path for an unreadable database).
+                listOf(unreadableRequirement("Uninstall protection", failure))
+            }
+        return if (requirements.isEmpty()) UninstallVerdict.Allow else UninstallVerdict.Deny(requirements)
+    }
+
+    /** True while a PIN-authorized window (this process) or a wizard grant (other process) is open. */
+    private fun hasActiveAuthorization(): Boolean =
+        authorizedUninstallUntilMs.get() > System.currentTimeMillis() ||
+            UninstallAuthorizationHandoff.isGranted()
+
     /**
      * Prepare the standalone uninstall-wizard JVM to read the same persisted
      * state as the running app. The wizard starts before the normal application
@@ -161,9 +193,10 @@ object UninstallProtectionService {
      * Returns true when the user has satisfied every active protection.
      *
      * The stock jpackage uninstaller cannot call Compose code before removing
-     * an installation.  Nuclear Mode separately blocks common uninstaller
-     * processes while active; this gate protects FocusFlow's normal Quit and
-     * close paths and is also the API for a future custom uninstaller helper.
+     * an installation.  The uninstall guard (see UninstallGuard) separately stops a
+     * Windows Installer removal of FocusFlow while any protection is active, and
+     * Nuclear Mode blocks common uninstaller processes; this gate protects
+     * FocusFlow's normal Quit and close paths.
      */
     fun authorizeQuit(): Boolean {
         // Store/MSIX builds are gated too (owner decision O4-B). Only package REMOVAL is owned
@@ -221,6 +254,8 @@ object UninstallProtectionService {
 
         val now = System.currentTimeMillis()
         if (authorizedUninstallUntilMs.get() > now) return true
+        // The uninstall wizard (a separate process) already checked every PIN and block.
+        if (UninstallAuthorizationHandoff.isGranted()) return true
 
         synchronized(uninstallPromptLock) {
             val refreshedNow = System.currentTimeMillis()
@@ -480,6 +515,7 @@ object UninstallProtectionService {
         pinPromptForTest = null
         messageDialogForTest = null
         authorizedUninstallUntilMs.set(0L)
+        UninstallAuthorizationHandoff.resetForTest()
     }
 
     private fun authorizeRequirements(
@@ -548,6 +584,9 @@ object UninstallProtectionService {
             }
         }
     }
+
+    /** Shows a short notice to the user (used by the uninstall guard after it stops an attempt). */
+    internal fun showNotice(title: String, message: String) = showMessage(title, message)
 
     private fun showMessage(title: String, message: String) {
         val dialogForTest = messageDialogForTest

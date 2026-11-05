@@ -100,6 +100,9 @@ object StartupBootstrap {
             RecurringTaskService.start()
             BlockScheduleService.start()
             StandaloneBlockService.loadFromDb()
+            // Stops a Windows Installer removal of FocusFlow while any protection is
+            // active, independent of Nuclear Mode and of the registry redirect.
+            com.focusflow.enforcement.UninstallGuard.start()
 
             try {
                 FocusLauncherService.restoreInterruptedSession()

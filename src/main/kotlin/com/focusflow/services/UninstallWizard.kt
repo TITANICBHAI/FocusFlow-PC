@@ -1,5 +1,6 @@
 package com.focusflow.services
 
+import com.focusflow.enforcement.EnforcementLog
 import com.focusflow.enforcement.InstallVariant
 import java.awt.GraphicsEnvironment
 import javax.swing.JOptionPane
@@ -48,6 +49,15 @@ object UninstallWizard {
             JOptionPane.WARNING_MESSAGE
         )
         if (confirmed != JOptionPane.YES_OPTION) return
+
+        // The running app's uninstall guard would otherwise stop the installer
+        // this wizard is about to start. Every PIN and block was checked above.
+        if (!UninstallAuthorizationHandoff.grant()) {
+            EnforcementLog.warn(
+                "UninstallWizard",
+                "could not write the uninstall authorization; a running FocusFlow may stop the uninstall"
+            )
+        }
 
         try {
             // The original command is created by jpackage and retained in the
