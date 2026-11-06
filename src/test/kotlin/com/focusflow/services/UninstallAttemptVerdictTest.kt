@@ -6,8 +6,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 
 /**
  * The verdict is what the uninstall guard acts on. It must say "deny" for a
@@ -18,7 +18,7 @@ class UninstallAttemptVerdictTest {
     private lateinit var store: StubStore
     private lateinit var dir: java.io.File
 
-    @BeforeEach
+    @BeforeTest
     fun setUp() {
         Database.resetForTest()
         UninstallProtectionService.resetForTest()
@@ -29,7 +29,7 @@ class UninstallAttemptVerdictTest {
         UninstallAuthorizationHandoff.fileForTest = java.io.File(dir, "uninstall-authorization")
     }
 
-    @AfterEach
+    @AfterTest
     fun tearDown() {
         UninstallProtectionService.resetForTest()
         Database.resetForTest()
@@ -86,6 +86,83 @@ class UninstallAttemptVerdictTest {
     fun storeBuildsAreNeverIntercepted() {
         UninstallProtectionService.isDirectInstallForTest = false
         startStandaloneBlockInDatabase()
+
+        assertEquals(
+            UninstallProtectionService.UninstallVerdict.Allow,
+            UninstallProtectionService.uninstallAttemptVerdict()
+        )
+    }
+
+    // ── Armed but not yet fighting, and Always-On without a PIN ──────────────
+
+    private fun scheduleStandaloneBlockInDatabase(startsInMs: Long = 3_600_000L) {
+        val now = System.currentTimeMillis()
+        store.reads["standalone_block_start"] = Database.SettingRead.Present((now + startsInMs).toString())
+        store.reads["standalone_block_until"] = Database.SettingRead.Present((now + startsInMs + 3_600_000L).toString())
+        store.reads["standalone_block_processes"] = Database.SettingRead.Present("chrome.exe")
+    }
+
+    @Test
+    fun aScheduledWindowThatHasNotStartedYetStillDeniesTheUninstall() {
+        scheduleStandaloneBlockInDatabase()
+
+        val verdict = UninstallProtectionService.uninstallAttemptVerdict()
+
+        assertIs<UninstallProtectionService.UninstallVerdict.Deny>(verdict)
+        val wait = verdict.requirements
+            .filterIsInstance<UninstallProtectionService.Requirement.WaitForStandalone>().single()
+        assertTrue(wait.startsInMs > 0L, "the message can say when it starts")
+        assertTrue(wait.remainingMs > wait.startsInMs)
+    }
+
+    @Test
+    fun aScheduledWindowDoesNotChangeTrayQuit() {
+        scheduleStandaloneBlockInDatabase()
+        UninstallProtectionService.messageDialogForTest = { _, _ -> }
+
+        assertTrue(UninstallProtectionService.authorizeQuit())
+    }
+
+    @Test
+    fun aWindowThatAlreadyEndedNoLongerDeniesAnything() {
+        val now = System.currentTimeMillis()
+        store.reads["standalone_block_start"] = Database.SettingRead.Present((now - 7_200_000L).toString())
+        store.reads["standalone_block_until"] = Database.SettingRead.Present((now - 3_600_000L).toString())
+        store.reads["standalone_block_processes"] = Database.SettingRead.Present("chrome.exe")
+
+        assertEquals(
+            UninstallProtectionService.UninstallVerdict.Allow,
+            UninstallProtectionService.uninstallAttemptVerdict()
+        )
+    }
+
+    @Test
+    fun alwaysOnWithoutAGlobalPinDeniesTheUninstallButNotTrayQuit() {
+        store.reads["always_on_enforcement"] = Database.SettingRead.Present("true")
+        UninstallProtectionService.messageDialogForTest = { _, _ -> }
+
+        val verdict = UninstallProtectionService.uninstallAttemptVerdict()
+
+        assertIs<UninstallProtectionService.UninstallVerdict.Deny>(verdict)
+        assertTrue(verdict.requirements.any { it is UninstallProtectionService.Requirement.Blocked })
+        assertTrue(UninstallProtectionService.authorizeQuit(), "quit keeps its old behaviour")
+    }
+
+    @Test
+    fun alwaysOnWithAGlobalPinAsksForThePinInsteadOfRefusing() {
+        store.reads["always_on_enforcement"] = Database.SettingRead.Present("true")
+        store.reads["global_pin_hash"] = Database.SettingRead.Present("configured-global-pin-hash")
+
+        val verdict = UninstallProtectionService.uninstallAttemptVerdict()
+
+        assertIs<UninstallProtectionService.UninstallVerdict.Deny>(verdict)
+        assertTrue(verdict.requirements.any { it is UninstallProtectionService.Requirement.Pin })
+        assertTrue(verdict.requirements.none { it is UninstallProtectionService.Requirement.Blocked })
+    }
+
+    @Test
+    fun alwaysOnTurnedOffAllowsTheUninstall() {
+        store.reads["always_on_enforcement"] = Database.SettingRead.Present("false")
 
         assertEquals(
             UninstallProtectionService.UninstallVerdict.Allow,

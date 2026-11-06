@@ -90,6 +90,100 @@ compose.desktop {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Installer-level uninstall check (EXE and MSI)
+//
+// Windows Installer asks FocusFlow ("FocusFlow.exe --uninstall-check") before it
+// removes the product, so every route to an uninstall is covered, including when
+// FocusFlow is not running. The question is added by packaging/windows/main.wxs,
+// which jpackage only uses when it is found in its --resource-dir. Compose Desktop
+// 1.6.1 clears that directory on every run and offers no way to add to it, so these
+// tasks run jpackage themselves on the app image Compose already built, with the
+// same arguments Compose uses plus the resource dir, and replace Compose's installer
+// files in build/compose/binaries/main/{exe,msi}.
+//
+// Off by default; CI turns it on with -Pfocusflow.guardedInstaller=true.
+// If it is on and anything goes wrong the build fails: an installer silently built
+// without the check would look protected and not be.
+// ─────────────────────────────────────────────────────────────────────────────
+val guardedInstaller = providers.gradleProperty("focusflow.guardedInstaller")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+
+for ((installerFormat, taskSuffix) in listOf("msi" to "Msi", "exe" to "Exe")) {
+    val guardedTask = tasks.register("packageGuarded$taskSuffix") {
+        group = "distribution"
+        description = "Rebuilds the $installerFormat installer with FocusFlow's pre-removal uninstall check " +
+            "(requires -Pfocusflow.guardedInstaller=true)."
+        onlyIf { guardedInstaller.get() }
+        dependsOn("createDistributable")
+
+        val appImage = layout.buildDirectory.dir("compose/binaries/main/app/FocusFlow")
+        val workDir = layout.buildDirectory.dir("compose/guarded/$installerFormat")
+        val publishDir = layout.buildDirectory.dir("compose/binaries/main/$installerFormat")
+        val resourceDir = layout.projectDirectory.dir("packaging/windows")
+        val iconFile = layout.projectDirectory.file("src/main/resources/focusflow.ico")
+        val appVersion = project.version.toString()
+
+        doLast {
+            check(System.getProperty("os.name").startsWith("Windows")) {
+                "The guarded installer can only be built on Windows."
+            }
+            // packaging/windows/main.wxs is a copy of the JDK 19 template. Another JDK may
+            // expect a different template, so stop instead of building something subtly wrong.
+            check(JavaVersion.current().majorVersion == "19") {
+                "packaging/windows/main.wxs is a copy of the JDK 19 jpackage template, but Gradle is running " +
+                    "on JDK ${JavaVersion.current().majorVersion}. Copy that JDK's main.wxs into " +
+                    "packaging/windows/ (keeping the FocusFlow addition) and update this check."
+            }
+            val appImageDir = appImage.get().asFile
+            check(appImageDir.isDirectory) { "App image not found at $appImageDir (run createDistributable)." }
+
+            val outDir = workDir.get().asFile
+            outDir.deleteRecursively()
+            outDir.mkdirs()
+
+            val jpackage = File(System.getProperty("java.home"), "bin/jpackage.exe")
+            check(jpackage.isFile) { "jpackage.exe not found at $jpackage" }
+
+            // Same options Compose Desktop passes for this project, plus the resource dir.
+            val command = listOf(
+                jpackage.absolutePath,
+                "--type", installerFormat,
+                "--app-image", appImageDir.absolutePath,
+                "--dest", outDir.absolutePath,
+                "--name", "FocusFlow",
+                "--description", "Focus & productivity app with real app blocking",
+                "--copyright", "© 2025 TBTechs",
+                "--app-version", appVersion,
+                "--vendor", "TBTechs",
+                "--icon", iconFile.asFile.absolutePath,
+                "--win-dir-chooser",
+                "--win-per-user-install",
+                "--win-shortcut",
+                "--win-menu",
+                "--win-menu-group", "FocusFlow",
+                "--win-upgrade-uuid", "B4C3F3A2-8E41-4D9A-B7C6-D1E0F2A34B56",
+                "--resource-dir", resourceDir.asFile.absolutePath
+            )
+            logger.lifecycle("Running: ${command.joinToString(" ")}")
+            val exitCode = ProcessBuilder(command).inheritIO().start().waitFor()
+            check(exitCode == 0) { "jpackage failed with exit code $exitCode" }
+
+            val built = outDir.listFiles { file -> file.extension.equals(installerFormat, ignoreCase = true) }
+                .orEmpty()
+            check(built.size == 1) { "Expected exactly one .$installerFormat in $outDir but found ${built.toList()}" }
+
+            val publish = publishDir.get().asFile
+            publish.mkdirs()
+            val target = File(publish, built.single().name)
+            built.single().copyTo(target, overwrite = true)
+            logger.lifecycle("Guarded installer written to $target")
+        }
+    }
+    tasks.matching { it.name == "package$taskSuffix" }.configureEach { finalizedBy(guardedTask) }
+}
+
 kotlin {
     jvmToolchain {
         languageVersion.set(JavaLanguageVersion.of(19))

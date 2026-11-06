@@ -4,21 +4,21 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 
 class UninstallAuthorizationHandoffTest {
     private var now = 1_000_000L
     private lateinit var dir: java.io.File
 
-    @BeforeEach
+    @BeforeTest
     fun setUp() {
         dir = Files.createTempDirectory("ff-handoff").toFile()
         UninstallAuthorizationHandoff.fileForTest = java.io.File(dir, "uninstall-authorization")
         UninstallAuthorizationHandoff.nowForTest = { now }
     }
 
-    @AfterEach
+    @AfterTest
     fun tearDown() {
         UninstallAuthorizationHandoff.resetForTest()
         dir.deleteRecursively()

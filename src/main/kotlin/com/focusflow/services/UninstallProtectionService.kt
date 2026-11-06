@@ -56,7 +56,8 @@ object UninstallProtectionService {
         get() = isDirectInstallForTest ?: InstallVariant.isWindowsDirectInstall
 
     internal sealed interface Requirement {
-        data class WaitForStandalone(val remainingMs: Long) : Requirement
+        /** [startsInMs] is above zero for a scheduled window that has not begun yet. */
+        data class WaitForStandalone(val remainingMs: Long, val startsInMs: Long = 0L) : Requirement
         data class Blocked(
             val feature: String,
             val message: String,
@@ -266,11 +267,7 @@ object UninstallProtectionService {
                 .filterIsInstance<Requirement.WaitForStandalone>()
                 .firstOrNull()
             if (standalone != null) {
-                showMessage(
-                    "Uninstall protection is active",
-                    "A Standalone Block is active. FocusFlow must remain installed until it ends.\n\n" +
-                        "Time remaining: ${formatRemaining(standalone.remainingMs)}"
-                )
+                showMessage("Uninstall protection is active", standaloneMessage(standalone))
                 return false
             }
 
@@ -279,7 +276,15 @@ object UninstallProtectionService {
             // exists; otherwise a valid PIN opens a short MSI window.
             val pins = requirements.filterIsInstance<Requirement.Pin>()
             val blocked = requirements.filterIsInstance<Requirement.Blocked>().firstOrNull()
-            if (blocked != null) return false
+            if (blocked != null) {
+                // The caller is about to stop the installer, so say why.
+                showMessage(
+                    "Action blocked",
+                    "${blocked.message}\n\n" +
+                        "FocusFlow will keep running and your Windows installation is unchanged."
+                )
+                return false
+            }
             if (pins.isEmpty()) return true
             pins.forEach { requirement ->
                 if (!promptForPin(requirement)) return false
@@ -288,6 +293,8 @@ object UninstallProtectionService {
             authorizedUninstallUntilMs.set(
                 System.currentTimeMillis() + AUTHORIZATION_WINDOW_MS
             )
+            // The installer's own check (a separate process) must not ask for the same PIN again.
+            UninstallAuthorizationHandoff.grant(AUTHORIZATION_WINDOW_MS)
             return true
         }
     }
@@ -352,6 +359,46 @@ object UninstallProtectionService {
                     ((persistedUntil ?: 0L) - now).coerceAtLeast(0L)
                 }
                 result += Requirement.WaitForStandalone(remaining)
+            } else if (action == Action.UNINSTALL) {
+                // A scheduled window that has not started yet. The user has already told
+                // FocusFlow to fight later, so uninstalling before it starts would defeat it
+                // just as much as uninstalling during it. Quit is unchanged.
+                val scheduledPersisted = persistedProcesses.isNotBlank() &&
+                    (persistedUntil ?: 0L) > now &&
+                    (persistedStart ?: 0L) > now
+                if (StandaloneBlockService.isScheduled || scheduledPersisted) {
+                    val inMemory = StandaloneBlockService.isScheduled
+                    result += Requirement.WaitForStandalone(
+                        remainingMs = if (inMemory) {
+                            StandaloneBlockService.remainingMs()
+                        } else {
+                            ((persistedUntil ?: 0L) - now).coerceAtLeast(0L)
+                        },
+                        startsInMs = if (inMemory) {
+                            StandaloneBlockService.startsInMs()
+                        } else {
+                            ((persistedStart ?: 0L) - now).coerceAtLeast(0L)
+                        }
+                    )
+                }
+            }
+        }
+
+        fun addAlwaysOnRequirement() {
+            if (GlobalPin.isSet()) {
+                result += Requirement.Pin(
+                    feature = "Always-On enforcement",
+                    prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
+                    verify = GlobalPin::verifyResult
+                )
+            } else if (action == Action.UNINSTALL) {
+                // Same rule as an active focus session without a Global PIN: nothing to ask,
+                // so the way out is to turn Always-On off inside FocusFlow first.
+                result += Requirement.Blocked(
+                    feature = "Always-On enforcement",
+                    message = "FocusFlow cannot be uninstalled while Always-On enforcement is on. " +
+                        "Turn Always-On enforcement off inside FocusFlow first, or set a Global PIN."
+                )
             }
         }
 
@@ -365,21 +412,9 @@ object UninstallProtectionService {
                         IllegalArgumentException("Malformed Always-On setting.")
                     )
                 }
-                if ((ProcessMonitor.alwaysOnEnabled || setting.value == "true") && GlobalPin.isSet()) {
-                    result += Requirement.Pin(
-                        feature = "Always-On enforcement",
-                        prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
-                        verify = GlobalPin::verifyResult
-                    )
-                }
+                if (ProcessMonitor.alwaysOnEnabled || setting.value == "true") addAlwaysOnRequirement()
             }
-            SettingRead.Absent -> if (ProcessMonitor.alwaysOnEnabled && GlobalPin.isSet()) {
-                result += Requirement.Pin(
-                    feature = "Always-On enforcement",
-                    prompt = "Enter the Global PIN to quit or uninstall while Always-On enforcement is active:",
-                    verify = GlobalPin::verifyResult
-                )
-            }
+            SettingRead.Absent -> if (ProcessMonitor.alwaysOnEnabled) addAlwaysOnRequirement()
         }
 
         runCatching {
@@ -518,6 +553,16 @@ object UninstallProtectionService {
         UninstallAuthorizationHandoff.resetForTest()
     }
 
+    private fun standaloneMessage(standalone: Requirement.WaitForStandalone): String =
+        if (standalone.startsInMs > 0L) {
+            "A Standalone Block is scheduled and starts in ${formatRemaining(standalone.startsInMs)}. " +
+                "FocusFlow must remain installed until it ends.\n\n" +
+                "Time remaining after it starts: ${formatRemaining(standalone.remainingMs)}"
+        } else {
+            "A Standalone Block is active. FocusFlow must remain installed until it ends.\n\n" +
+                "Time remaining: ${formatRemaining(standalone.remainingMs)}"
+        }
+
     private fun authorizeRequirements(
         requirements: List<Requirement>
     ): Boolean {
@@ -528,11 +573,7 @@ object UninstallProtectionService {
         // continues to enforce normally.
         val standalone = requirements.filterIsInstance<Requirement.WaitForStandalone>().firstOrNull()
         if (standalone != null) {
-            showMessage(
-                "Uninstall protection is active",
-                "A Standalone Block is active. FocusFlow must remain installed until it ends.\n\n" +
-                    "Time remaining: ${formatRemaining(standalone.remainingMs)}"
-            )
+            showMessage("Uninstall protection is active", standaloneMessage(standalone))
             return false
         }
 

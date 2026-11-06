@@ -160,7 +160,7 @@ internal object UninstallGuard {
     }
 
     private fun inMemoryProtectionActive(): Boolean =
-        StandaloneBlockService.isActive ||
+        StandaloneBlockService.isScheduled ||
             FocusSessionService.state.value.isActive ||
             FocusLauncherService.isActive.value ||
             ProcessMonitor.alwaysOnEnabled ||

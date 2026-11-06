@@ -155,6 +155,13 @@ private class DesktopLaunch(val isHandoffChild: Boolean = false) {
 }
 
 fun main(args: Array<String>) {
+    // Windows Installer asks "may this removal proceed?" before it changes anything.
+    // Like the wizard this runs outside the single-instance/database bootstrap, and it
+    // must end the process itself with the exit code the installer reads.
+    if (com.focusflow.services.UninstallCheckFlag.isRequested(args)) {
+        kotlin.system.exitProcess(com.focusflow.services.UninstallCheck.run())
+    }
+
     // The standalone uninstaller is intentionally outside the normal
     // single-instance/database bootstrap path and is never allowed recovery.
     if (UninstallWizardFlag.isRequested(args)) {

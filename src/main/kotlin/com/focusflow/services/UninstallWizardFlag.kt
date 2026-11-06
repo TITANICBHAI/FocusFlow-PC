@@ -10,3 +10,11 @@ object UninstallWizardFlag {
     fun isRequested(args: Array<String>): Boolean =
         args.any { it.equals("--uninstall", ignoreCase = true) }
 }
+/**
+ * Reads the private switch the Windows Installer package passes when it asks
+ * FocusFlow whether a removal may proceed (see packaging/windows/main.wxs).
+ */
+object UninstallCheckFlag {
+    fun isRequested(args: Array<String>): Boolean =
+        args.any { it.equals("--uninstall-check", ignoreCase = true) }
+}

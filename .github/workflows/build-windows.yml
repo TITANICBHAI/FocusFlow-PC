@@ -124,14 +124,32 @@ jobs:
           $ms.Dispose()
           Write-Host "icon.ico created (sizes: $($sizes -join ', ')px)"
 
+      # -Pfocusflow.guardedInstaller=true makes jpackage use packaging/windows/main.wxs, so
+      # Windows Installer asks FocusFlow before it removes the app (see build.gradle.kts).
       - name: Build EXE (bundled JRE, x64)
-        run: gradle packageExe --no-daemon --stacktrace
+        run: gradle packageExe -Pfocusflow.guardedInstaller=true --no-daemon --stacktrace
         shell: cmd
 
       - name: Build MSI
-        run: gradle packageMsi --no-daemon
+        run: gradle packageMsi -Pfocusflow.guardedInstaller=true --no-daemon
         shell: cmd
         continue-on-error: true
+
+      # An installer built without the check looks fine and protects nothing, so fail the
+      # build if it is missing. Also installs and silently uninstalls the MSI on the runner.
+      - name: Verify the installers ask FocusFlow before uninstalling
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem "build/compose/binaries/main/msi/*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $exe = Get-ChildItem "build/compose/binaries/main/exe/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "No EXE was built" }
+          if ($msi) {
+            ./scripts/verify-installer-uninstall-check.ps1 -Msi $msi.FullName -Exe $exe.FullName -Smoke
+          } else {
+            Write-Warning "No MSI was built (the MSI step is allowed to fail); checking the EXE only"
+            ./scripts/verify-installer-uninstall-check.ps1 -Exe $exe.FullName
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Distributable (for MSIX)
         run: gradle createDistributable --no-daemon
