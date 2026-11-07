@@ -1,6 +1,11 @@
 package com.focusflow.enforcement
 
+import com.focusflow.AppPaths
+import com.sun.jna.platform.win32.Advapi32Util
+import com.sun.jna.platform.win32.WinReg
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 /**
  * WatchdogInstaller — self-restart guardian for FocusFlow.
@@ -9,7 +14,7 @@ import java.io.File
  *
  *   1. FocusFlowWatchdog — fires every 2 minutes. Checks whether FocusFlow.exe
  *      is running and, if not, relaunches it. Handles force-kills, crashes, and
- *      OOM terminations. Uses /IT (interactive token) — no admin rights needed.
+ *      OOM terminations. Runs in the user's interactive session — no admin rights needed.
  *
  *   2. FocusFlowTaskbarGuard — fires at every user logon. Unconditionally restores
  *      the Windows taskbar (primary + all secondary monitors) using a Win32
@@ -17,6 +22,15 @@ import java.io.File
  *      active" scenario: if FocusFlow is killed at the OS level and never relaunched,
  *      the user's taskbar is guaranteed to reappear on their next login, even if
  *      FocusFlow is uninstalled.
+ *
+ * Both tasks run PowerShell through `conhost.exe --headless` (Windows 10 1809+), so no console
+ * window ever flashes — see [WatchdogScript]. They are registered from XML so the power options
+ * are explicit: they also run on battery. The task names are unchanged, so every launch of a newer
+ * FocusFlow replaces an older install's tasks in place.
+ *
+ * The scripts live in the data directory (`~/.focusflow`), which is outside AppData. A packaged
+ * (MSIX) app has its AppData writes redirected into the package, where a scheduled task could not
+ * find them; the data directory is not redirected, so the EXE, MSI and MSIX builds behave the same.
  */
 object WatchdogInstaller {
 
@@ -25,6 +39,11 @@ object WatchdogInstaller {
 
     private const val TASK_NAME         = "FocusFlowWatchdog"
     private const val GUARD_TASK_NAME   = "FocusFlowTaskbarGuard"
+
+    private const val WATCHDOG_SCRIPT_NAME = "watchdog.ps1"
+    private const val GUARD_SCRIPT_NAME    = "taskbar-guard.ps1"
+
+    private val startBoundaryFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
 
     fun isInstalled(): Boolean {
         if (!isWindows) return false
@@ -38,7 +57,8 @@ object WatchdogInstaller {
 
     /**
      * Creates (or overwrites) both the watchdog task and the taskbar-guard task.
-     * Safe to call on every launch — /f overwrites silently.
+     * Safe to call on every launch — /f overwrites silently. That is also how an older install's
+     * tasks get the no-flash launcher: the next launch of the new version replaces them.
      */
     fun install() {
         if (!isWindows) return
@@ -48,58 +68,53 @@ object WatchdogInstaller {
 
     private fun installWatchdog() {
         val exePath = WindowsStartupManager.resolveExePath()
-        val taskCommand = pathAwareTaskCommand(exePath) ?: WatchdogScript.legacyTaskCommand(exePath)
-        try {
-            val process = ProcessBuilder(
-                "schtasks", "/create",
-                "/tn", TASK_NAME,
-                "/tr", taskCommand,
-                "/sc", "MINUTE",
-                "/mo", "2",
-                "/it",
-                "/f"
-            ).redirectErrorStream(true).start()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            val exit = process.waitFor()
-            if (exit != 0) {
-                EnforcementLog.warn(
-                    "WatchdogInstaller",
-                    "schtasks /create $TASK_NAME exited with code $exit — watchdog may not self-restart" +
-                        " | commandLength=${taskCommand.length} | output=${output.take(300)}"
-                )
-            } else {
-                EnforcementLog.info("WatchdogInstaller", "$TASK_NAME registered (exe=$exePath)")
-            }
-        } catch (e: Exception) {
-            EnforcementLog.warn("WatchdogInstaller", "Failed to register $TASK_NAME", e)
+        val systemRoot = systemRoot()
+        val host = headlessHost(systemRoot)
+        val scriptPath = pathAwareScript(exePath, headless = host != null)
+
+        val action = if (scriptPath != null) {
+            WatchdogScript.scriptAction(scriptPath, systemRoot, host)
+        } else {
+            WatchdogScript.legacyAction(exePath, systemRoot, host)
         }
+        val fallbackCommand = if (scriptPath != null) {
+            WatchdogScript.taskCommandForScript(scriptPath, headless = host != null)
+        } else {
+            WatchdogScript.legacyTaskCommand(exePath, headless = host != null)
+        }
+
+        val registered = register(
+            taskName = TASK_NAME,
+            description = "FocusFlow self-restart watchdog: relaunches FocusFlow if it stops unexpectedly.",
+            trigger = WatchdogTaskXml.Trigger.EVERY_TWO_MINUTES,
+            action = action,
+            fallbackCommand = fallbackCommand,
+            fallbackSchedule = listOf("/sc", "MINUTE", "/mo", "2")
+        )
+        // The old script lived under AppData. Remove it only once the task no longer points there.
+        if (registered && scriptPath != null) removeOldAppDataScript(WATCHDOG_SCRIPT_NAME)
     }
 
     /**
-     * Direct installs only: writes the path-aware check next to the taskbar-guard script and
-     * returns the task command for it. Returns null (caller uses the old name-only command)
-     * whenever anything is unusual — see [WatchdogScript.shouldUsePathCheck].
+     * Direct installs only: writes the path-aware check into the data directory and returns its
+     * path. Returns null (caller uses the old name-only command) whenever anything is unusual —
+     * see [WatchdogScript.shouldUsePathCheck].
      */
-    private fun pathAwareTaskCommand(exePath: String): String? = try {
-        val appData = System.getenv("APPDATA")
-        if (appData.isNullOrBlank()) {
+    private fun pathAwareScript(exePath: String, headless: Boolean): String? = try {
+        val scriptFile = File(AppPaths.dataDir, WATCHDOG_SCRIPT_NAME)
+        val command = WatchdogScript.taskCommandForScript(scriptFile.absolutePath, headless)
+        if (!WatchdogScript.shouldUsePathCheck(
+                exePath = exePath,
+                exeExists = File(exePath).isFile,
+                isDirectInstall = InstallVariant.isWindowsDirectInstall,
+                taskCommand = command
+            )
+        ) {
             null
         } else {
-            val scriptFile = File(File(appData, "FocusFlow"), "watchdog.ps1")
-            val command = WatchdogScript.taskCommandForScript(scriptFile.absolutePath)
-            if (!WatchdogScript.shouldUsePathCheck(
-                    exePath = exePath,
-                    exeExists = File(exePath).isFile,
-                    isDirectInstall = InstallVariant.isWindowsDirectInstall,
-                    taskCommand = command
-                )
-            ) {
-                null
-            } else {
-                scriptFile.parentFile.mkdirs()
-                scriptFile.writeText(WatchdogScript.script(File(exePath).absolutePath))
-                command
-            }
+            scriptFile.parentFile.mkdirs()
+            scriptFile.writeText(WatchdogScript.script(File(exePath).absolutePath))
+            scriptFile.absolutePath
         }
     } catch (failure: Exception) {
         EnforcementLog.warn("WatchdogInstaller", "Could not write the watchdog script; using the name-only check", failure)
@@ -109,20 +124,18 @@ object WatchdogInstaller {
     /**
      * Installs a logon-triggered scheduled task that restores the Windows taskbar.
      *
-     * Writes a small .ps1 script to %APPDATA%\FocusFlow\ and creates a task that
-     * runs it at every logon. The script uses Win32 ShowWindow to un-hide both the
-     * primary taskbar (Shell_TrayWnd) and all secondary taskbars
-     * (Shell_SecondaryTrayWnd), then deletes itself from the scheduled tasks once
-     * the taskbar was already visible (indicating no crash guard was needed).
+     * Writes a small .ps1 script to the data directory and creates a task that runs it at every
+     * logon. The script uses Win32 ShowWindow to un-hide both the primary taskbar
+     * (Shell_TrayWnd) and all secondary taskbars (Shell_SecondaryTrayWnd).
      *
      * This task is INDEPENDENT of FocusFlow — it runs even if FocusFlow is
      * uninstalled, ensuring users never get stuck with a permanently hidden taskbar.
      */
     private fun installTaskbarGuard() {
         try {
-            val appDataDir = File(System.getenv("APPDATA") ?: return, "FocusFlow")
-            appDataDir.mkdirs()
-            val scriptFile = File(appDataDir, "taskbar-guard.ps1")
+            val dataDir = AppPaths.dataDir
+            dataDir.mkdirs()
+            val scriptFile = File(dataDir, GUARD_SCRIPT_NAME)
 
             // PowerShell script: show primary + ALL secondary taskbar windows via Win32.
             // Uses a loop with FindWindowEx to handle 3+ monitor setups.
@@ -161,25 +174,129 @@ while (${D}true) {
 }
 """.trimIndent())
 
-            val safePath = scriptFile.absolutePath.replace("'", "''")
-            val exit: Int = ProcessBuilder(
-                "schtasks", "/create",
-                "/tn", GUARD_TASK_NAME,
-                "/tr", "powershell -ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File \"$safePath\"",
-                "/sc", "ONLOGON",
-                "/it",
-                "/f"
-            ).redirectErrorStream(true).start().let { process ->
-                val output = process.inputStream.bufferedReader().readText().trim()
-                process.waitFor().also { code ->
-                    if (code != 0) EnforcementLog.warn("WatchdogInstaller", "$GUARD_TASK_NAME output=${output.take(300)}")
-                }
-            }
-            if (exit != 0) EnforcementLog.warn("WatchdogInstaller", "schtasks /create $GUARD_TASK_NAME exited with code $exit — taskbar may not restore on next logon")
-            else EnforcementLog.info("WatchdogInstaller", "$GUARD_TASK_NAME registered (script=${scriptFile.absolutePath})")
+            val systemRoot = systemRoot()
+            val host = headlessHost(systemRoot)
+            val registered = register(
+                taskName = GUARD_TASK_NAME,
+                description = "FocusFlow taskbar guard: brings the Windows taskbar back at sign-in if FocusFlow was killed while it was hidden.",
+                trigger = WatchdogTaskXml.Trigger.AT_LOGON,
+                action = WatchdogScript.scriptAction(scriptFile.absolutePath, systemRoot, host),
+                fallbackCommand = WatchdogScript.taskCommandForScript(scriptFile.absolutePath, headless = host != null),
+                fallbackSchedule = listOf("/sc", "ONLOGON")
+            )
+            if (registered) removeOldAppDataScript(GUARD_SCRIPT_NAME)
         } catch (e: Exception) {
             EnforcementLog.warn("WatchdogInstaller", "Failed to register $GUARD_TASK_NAME", e)
         }
+    }
+
+    /**
+     * Registers [taskName] from XML (power options set explicitly). If that fails for any reason,
+     * falls back to the older `schtasks /tr` form, which still avoids the console flash.
+     * Returns true when either way succeeded.
+     */
+    private fun register(
+        taskName: String,
+        description: String,
+        trigger: WatchdogTaskXml.Trigger,
+        action: WatchdogScript.TaskAction,
+        fallbackCommand: String,
+        fallbackSchedule: List<String>
+    ): Boolean {
+        if (registerFromXml(taskName, description, trigger, action)) {
+            EnforcementLog.info("WatchdogInstaller", "$taskName registered (action=${action.commandLine.take(300)})")
+            return true
+        }
+        return try {
+            val (exit, output) = schtasks(
+                "/create", "/tn", taskName, "/tr", fallbackCommand,
+                *fallbackSchedule.toTypedArray(), "/it", "/f"
+            )
+            if (exit != 0) {
+                EnforcementLog.warn(
+                    "WatchdogInstaller",
+                    "schtasks /create $taskName (fallback) exited with code $exit" +
+                        " | commandLength=${fallbackCommand.length} | output=${output.take(300)}"
+                )
+                false
+            } else {
+                EnforcementLog.info("WatchdogInstaller", "$taskName registered with the fallback command")
+                true
+            }
+        } catch (e: Exception) {
+            EnforcementLog.warn("WatchdogInstaller", "Failed to register $taskName", e)
+            false
+        }
+    }
+
+    private fun registerFromXml(
+        taskName: String,
+        description: String,
+        trigger: WatchdogTaskXml.Trigger,
+        action: WatchdogScript.TaskAction
+    ): Boolean {
+        var xmlFile: File? = null
+        return try {
+            val xml = WatchdogTaskXml.build(
+                description = description,
+                trigger = trigger,
+                action = action,
+                userId = WatchdogTaskXml.userId(System.getenv("USERDOMAIN"), System.getenv("USERNAME")),
+                startBoundary = LocalDateTime.now().format(startBoundaryFormat)
+            )
+            xmlFile = File.createTempFile("focusflow-task-", ".xml")
+            xmlFile.writeBytes(WatchdogTaskXml.encode(xml))
+            val (exit, output) = schtasks("/create", "/tn", taskName, "/xml", xmlFile.absolutePath, "/f")
+            if (exit != 0) {
+                EnforcementLog.warn(
+                    "WatchdogInstaller",
+                    "schtasks /create $taskName from XML exited with code $exit — trying the fallback | output=${output.take(300)}"
+                )
+            }
+            exit == 0
+        } catch (e: Exception) {
+            EnforcementLog.warn("WatchdogInstaller", "Could not register $taskName from XML — trying the fallback", e)
+            false
+        } finally {
+            try { xmlFile?.delete() } catch (_: Exception) { }
+        }
+    }
+
+    private fun schtasks(vararg args: String): Pair<Int, String> {
+        val process = ProcessBuilder("schtasks", *args).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText().trim()
+        return process.waitFor() to output
+    }
+
+    private fun systemRoot(): String? =
+        System.getenv("SystemRoot")?.takeIf { it.isNotBlank() }
+            ?: System.getenv("windir")?.takeIf { it.isNotBlank() }
+
+    /** conhost.exe's full path when this Windows can run PowerShell with no window, else null. */
+    private fun headlessHost(systemRoot: String?): String? = try {
+        WatchdogScript.headlessHost(systemRoot, windowsBuild()) { File(it).isFile }
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun windowsBuild(): Int? = try {
+        Advapi32Util.registryGetStringValue(
+            WinReg.HKEY_LOCAL_MACHINE,
+            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+            "CurrentBuildNumber"
+        ).trim().toIntOrNull()
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Best-effort: earlier versions kept the scripts in %APPDATA%\FocusFlow. */
+    private fun removeOldAppDataScript(name: String) {
+        try {
+            val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() } ?: return
+            val dir = File(appData, "FocusFlow")
+            File(dir, name).delete()
+            dir.delete() // only succeeds when the folder is empty
+        } catch (_: Exception) { }
     }
 
     fun uninstall() {
