@@ -156,6 +156,7 @@ Pick a commercial blocker if you need one subscription across Windows, macOS and
 | Scheduled tasks `FocusFlowWatchdog` and `FocusFlowTaskbarGuard` | Relaunch FocusFlow if it stops unexpectedly; restore the taskbar at sign-in | They stay after an uninstall on purpose, so your taskbar can always come back. Delete them in Task Scheduler if you want them gone |
 | `Run` key in the current user's registry | Optional start with Windows | Toggle it in Settings |
 | Folder `%USERPROFILE%\.focusflow\` | Your database and backups | Delete the folder |
+| Folder `%USERPROFILE%\.focusflow-tasks\` | The two small scripts the scheduled tasks above run. Kept apart from your data so that clearing the data folder does not switch the tasks off | Delete the folder when you delete the two tasks |
 
 ### Honest limits
 

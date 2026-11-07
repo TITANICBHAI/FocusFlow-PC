@@ -41,6 +41,10 @@ class AppPathsTest {
                 assertEquals(File(expectedDataDir, "recovery-notice-seen"), AppPaths.recoveryNoticeSeenFile)
                 assertEquals(File(expectedDataDir, "telemetry-consent"), AppPaths.consentFile)
                 assertEquals(File(expectedDataDir, "native"), AppPaths.nativeDir)
+                // The scheduled-task scripts sit NEXT TO the data directory, never inside it:
+                // deleting the data folder must not switch the watchdog and taskbar guard off.
+                assertEquals(File(home, ".focusflow-tasks"), AppPaths.taskScriptsDir)
+                assertEquals(File(home), AppPaths.taskScriptsDir.parentFile)
             }
         } finally {
             if (previousHome == null) {

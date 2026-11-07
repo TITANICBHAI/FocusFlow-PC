@@ -28,9 +28,13 @@ import java.time.format.DateTimeFormatter
  * are explicit: they also run on battery. The task names are unchanged, so every launch of a newer
  * FocusFlow replaces an older install's tasks in place.
  *
- * The scripts live in the data directory (`~/.focusflow`), which is outside AppData. A packaged
- * (MSIX) app has its AppData writes redirected into the package, where a scheduled task could not
- * find them; the data directory is not redirected, so the EXE, MSI and MSIX builds behave the same.
+ * The two scripts live in their own small folder, [AppPaths.taskScriptsDir] (`~/.focusflow-tasks`),
+ * not in the data directory: that folder is the database and backups, people are told they may
+ * delete it, and the tasks have to keep working after that and after an uninstall. It is also not
+ * under AppData: a packaged (MSIX) app has its AppData writes redirected into a private per-app
+ * folder that a scheduled task cannot see, while the rest of the profile is not redirected, so the
+ * EXE, MSI and MSIX builds behave the same. Scripts are written with a UTF-8 byte-order mark so
+ * Windows PowerShell 5.1 reads a profile name with accents correctly.
  */
 object WatchdogInstaller {
 
@@ -91,17 +95,17 @@ object WatchdogInstaller {
             fallbackCommand = fallbackCommand,
             fallbackSchedule = listOf("/sc", "MINUTE", "/mo", "2")
         )
-        // The old script lived under AppData. Remove it only once the task no longer points there.
-        if (registered && scriptPath != null) removeOldAppDataScript(WATCHDOG_SCRIPT_NAME)
+        // Older scripts lived under AppData. Remove them only once the task no longer points there.
+        if (registered && scriptPath != null) removeOldScript(WATCHDOG_SCRIPT_NAME)
     }
 
     /**
-     * Direct installs only: writes the path-aware check into the data directory and returns its
+     * Direct installs only: writes the path-aware check into the task-scripts folder and returns its
      * path. Returns null (caller uses the old name-only command) whenever anything is unusual —
      * see [WatchdogScript.shouldUsePathCheck].
      */
     private fun pathAwareScript(exePath: String, headless: Boolean): String? = try {
-        val scriptFile = File(AppPaths.dataDir, WATCHDOG_SCRIPT_NAME)
+        val scriptFile = File(AppPaths.taskScriptsDir, WATCHDOG_SCRIPT_NAME)
         val command = WatchdogScript.taskCommandForScript(scriptFile.absolutePath, headless)
         if (!WatchdogScript.shouldUsePathCheck(
                 exePath = exePath,
@@ -113,7 +117,7 @@ object WatchdogInstaller {
             null
         } else {
             scriptFile.parentFile.mkdirs()
-            scriptFile.writeText(WatchdogScript.script(File(exePath).absolutePath))
+            scriptFile.writeBytes(WatchdogScript.scriptBytes(WatchdogScript.script(File(exePath).absolutePath)))
             scriptFile.absolutePath
         }
     } catch (failure: Exception) {
@@ -124,7 +128,7 @@ object WatchdogInstaller {
     /**
      * Installs a logon-triggered scheduled task that restores the Windows taskbar.
      *
-     * Writes a small .ps1 script to the data directory and creates a task that runs it at every
+     * Writes a small .ps1 script to the task-scripts folder and creates a task that runs it at every
      * logon. The script uses Win32 ShowWindow to un-hide both the primary taskbar
      * (Shell_TrayWnd) and all secondary taskbars (Shell_SecondaryTrayWnd).
      *
@@ -133,14 +137,14 @@ object WatchdogInstaller {
      */
     private fun installTaskbarGuard() {
         try {
-            val dataDir = AppPaths.dataDir
-            dataDir.mkdirs()
-            val scriptFile = File(dataDir, GUARD_SCRIPT_NAME)
+            val scriptsDir = AppPaths.taskScriptsDir
+            scriptsDir.mkdirs()
+            val scriptFile = File(scriptsDir, GUARD_SCRIPT_NAME)
 
             // PowerShell script: show primary + ALL secondary taskbar windows via Win32.
             // Uses a loop with FindWindowEx to handle 3+ monitor setups.
             val D = '$'
-            scriptFile.writeText("""
+            scriptFile.writeBytes(WatchdogScript.scriptBytes("""
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -172,7 +176,7 @@ while (${D}true) {
     [FocusFlowTaskbarGuard]::ShowWindow(${D}sec, ${D}SW_SHOW) | Out-Null
     ${D}prev = ${D}sec
 }
-""".trimIndent())
+""".trimIndent()))
 
             val systemRoot = systemRoot()
             val host = headlessHost(systemRoot)
@@ -184,16 +188,16 @@ while (${D}true) {
                 fallbackCommand = WatchdogScript.taskCommandForScript(scriptFile.absolutePath, headless = host != null),
                 fallbackSchedule = listOf("/sc", "ONLOGON")
             )
-            if (registered) removeOldAppDataScript(GUARD_SCRIPT_NAME)
+            if (registered) removeOldScript(GUARD_SCRIPT_NAME)
         } catch (e: Exception) {
             EnforcementLog.warn("WatchdogInstaller", "Failed to register $GUARD_TASK_NAME", e)
         }
     }
 
     /**
-     * Registers [taskName] from XML (power options set explicitly). If that fails for any reason,
-     * falls back to the older `schtasks /tr` form, which still avoids the console flash.
-     * Returns true when either way succeeded.
+     * Registers [taskName] from XML (power options set explicitly). If that fails, tries the same
+     * XML once more without a user name, and if that fails too, falls back to the older
+     * `schtasks /tr` form, which still avoids the console flash. Returns true when any way worked.
      */
     private fun register(
         taskName: String,
@@ -203,8 +207,20 @@ while (${D}true) {
         fallbackCommand: String,
         fallbackSchedule: List<String>
     ): Boolean {
-        if (registerFromXml(taskName, description, trigger, action)) {
+        val user = WatchdogTaskXml.userId(System.getenv("USERDOMAIN"), System.getenv("USERNAME"))
+        if (registerFromXml(taskName, description, trigger, action, user)) {
             EnforcementLog.info("WatchdogInstaller", "$taskName registered (action=${action.commandLine.take(300)})")
+            return true
+        }
+        // Some accounts cannot be named from these two environment variables (a work or school
+        // account, for example). With no name, Task Scheduler uses the account that registers the
+        // task, and the explicit power options and time limit still apply. Only worth a second
+        // try when a name was actually sent the first time.
+        if (user != null && registerFromXml(taskName, description, trigger, action, null)) {
+            EnforcementLog.info(
+                "WatchdogInstaller",
+                "$taskName registered without a user name (action=${action.commandLine.take(300)})"
+            )
             return true
         }
         return try {
@@ -233,7 +249,8 @@ while (${D}true) {
         taskName: String,
         description: String,
         trigger: WatchdogTaskXml.Trigger,
-        action: WatchdogScript.TaskAction
+        action: WatchdogScript.TaskAction,
+        userId: String?
     ): Boolean {
         var xmlFile: File? = null
         return try {
@@ -241,7 +258,7 @@ while (${D}true) {
                 description = description,
                 trigger = trigger,
                 action = action,
-                userId = WatchdogTaskXml.userId(System.getenv("USERDOMAIN"), System.getenv("USERNAME")),
+                userId = userId,
                 startBoundary = LocalDateTime.now().format(startBoundaryFormat)
             )
             xmlFile = File.createTempFile("focusflow-task-", ".xml")
@@ -250,12 +267,12 @@ while (${D}true) {
             if (exit != 0) {
                 EnforcementLog.warn(
                     "WatchdogInstaller",
-                    "schtasks /create $taskName from XML exited with code $exit — trying the fallback | output=${output.take(300)}"
+                    "schtasks /create $taskName from XML exited with code $exit — trying the next option | output=${output.take(300)}"
                 )
             }
             exit == 0
         } catch (e: Exception) {
-            EnforcementLog.warn("WatchdogInstaller", "Could not register $taskName from XML — trying the fallback", e)
+            EnforcementLog.warn("WatchdogInstaller", "Could not register $taskName from XML — trying the next option", e)
             false
         } finally {
             try { xmlFile?.delete() } catch (_: Exception) { }
@@ -289,13 +306,22 @@ while (${D}true) {
         null
     }
 
-    /** Best-effort: earlier versions kept the scripts in %APPDATA%\FocusFlow. */
-    private fun removeOldAppDataScript(name: String) {
+    /**
+     * Best-effort clean-up once a task points at the new location. Earlier versions kept the
+     * scripts in %APPDATA%\FocusFlow, and an interim build kept them next to the database. Only
+     * these two script files are ever removed from the data directory, never the folder itself.
+     */
+    private fun removeOldScript(name: String) {
         try {
-            val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() } ?: return
-            val dir = File(appData, "FocusFlow")
-            File(dir, name).delete()
-            dir.delete() // only succeeds when the folder is empty
+            val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
+            if (appData != null) {
+                val dir = File(appData, "FocusFlow")
+                File(dir, name).delete()
+                dir.delete() // only succeeds when the folder is empty
+            }
+        } catch (_: Exception) { }
+        try {
+            File(AppPaths.dataDir, name).delete()
         } catch (_: Exception) { }
     }
 

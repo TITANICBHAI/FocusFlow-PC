@@ -124,6 +124,18 @@ class WatchdogScriptTest {
     }
 
     @Test
+    fun scriptFilesStartWithAByteOrderMarkSoAccentedProfileNamesSurvive() {
+        val text = WatchdogScript.script("C:\\Users\\Jos\u00e9\\AppData\\Local\\FocusFlow\\FocusFlow.exe")
+        val bytes = WatchdogScript.scriptBytes(text)
+
+        assertEquals(listOf(0xEF, 0xBB, 0xBF), bytes.take(3).map { it.toInt() and 0xFF })
+        assertEquals(text, String(bytes, 3, bytes.size - 3, Charsets.UTF_8))
+        // Without the mark, Windows PowerShell 5.1 reads these bytes with the ANSI code page and
+        // sees a different name. That is the bug the mark prevents.
+        assertTrue(String(text.toByteArray(Charsets.UTF_8), Charsets.ISO_8859_1) != text)
+    }
+
+    @Test
     fun theFallbackCommandLineIsShortAndStillHeadlessWhenSupported() {
         val plain = WatchdogScript.taskCommandForScript(scriptPath)
         assertTrue(plain.startsWith("powershell.exe -WindowStyle Hidden "), plain)

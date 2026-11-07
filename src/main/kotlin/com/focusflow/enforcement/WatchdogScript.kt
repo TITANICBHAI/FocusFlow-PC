@@ -43,6 +43,16 @@ foreach (${'$'}p in @(Get-Process -Name 'FocusFlow' -ErrorAction SilentlyContinu
 if (-not ${'$'}running) { Start-Process -FilePath ${'$'}exe }
 """.trimIndent() + "\n"
 
+    /**
+     * The bytes to write for a script file: UTF-8 with a byte-order mark. Windows PowerShell 5.1
+     * reads a .ps1 that has no mark using the system's ANSI code page, which turns a profile name
+     * such as "José" into garbage inside the quoted FocusFlow.exe path. The watchdog then can
+     * neither recognise nor start FocusFlow.
+     */
+    fun scriptBytes(text: String): ByteArray = UTF8_BYTE_ORDER_MARK + text.toByteArray(Charsets.UTF_8)
+
+    private val UTF8_BYTE_ORDER_MARK = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+
     /** A program and its arguments, in the shape Task Scheduler's `<Exec>` element wants them. */
     data class TaskAction(val command: String, val arguments: String) {
         /** The same action as one line, for `schtasks /tr` and for log messages. */
