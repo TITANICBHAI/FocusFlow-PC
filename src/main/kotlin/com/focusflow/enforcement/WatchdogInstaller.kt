@@ -6,6 +6,7 @@ import com.sun.jna.platform.win32.WinReg
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 
 /**
  * WatchdogInstaller — self-restart guardian for FocusFlow.
@@ -46,6 +47,9 @@ object WatchdogInstaller {
 
     private const val WATCHDOG_SCRIPT_NAME = "watchdog.ps1"
     private const val GUARD_SCRIPT_NAME    = "taskbar-guard.ps1"
+
+    /** Longest a quit or an uninstall waits on any one schtasks call (a stuck Task Scheduler must not hold either up). */
+    private const val QUICK_STEP_TIMEOUT_SECONDS = 10L
 
     private val startBoundaryFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
 
@@ -325,15 +329,65 @@ while (${D}true) {
         } catch (_: Exception) { }
     }
 
+    /**
+     * Takes everything this installer put on the PC off again: both scheduled tasks and the two
+     * scripts, with their folder if nothing else is in it. Called when an uninstall goes ahead
+     * (see [com.focusflow.services.UninstallCleanup]). Safe to call when nothing is installed.
+     *
+     * This runs inside the installer's uninstall check, which must neither fail nor hang, so each
+     * step is time-limited and failures are logged, never thrown. Nothing else in the data
+     * directory is touched, and the scripts folder is never deleted recursively.
+     */
     fun uninstall() {
         if (!isWindows) return
+        deleteTask(TASK_NAME)
+        deleteTask(GUARD_TASK_NAME)
+        for (name in listOf(WATCHDOG_SCRIPT_NAME, GUARD_SCRIPT_NAME)) {
+            removeOldScript(name) // copies left by earlier versions
+            try {
+                File(AppPaths.taskScriptsDir, name).delete()
+            } catch (_: Exception) { }
+        }
         try {
-            ProcessBuilder("schtasks", "/delete", "/tn", TASK_NAME, "/f")
-                .redirectErrorStream(true).start().waitFor()
+            AppPaths.taskScriptsDir.delete() // only succeeds when the folder is empty
         } catch (_: Exception) { }
+    }
+
+    /**
+     * Switches the watchdog off until FocusFlow is started again. Called when the user has quit
+     * FocusFlow on purpose, after every Quit protection was satisfied: the watchdog is there to
+     * bring back an app that crashed or was killed, not one the user chose to close. The next
+     * launch registers the task again, switched on (see [install]), so nothing else is needed to
+     * turn it back on. Time-limited and never throws; if it fails, the watchdog simply stays on.
+     */
+    fun pauseWatchdog() {
+        if (!isWindows) return
+        quickSchtasks("$TASK_NAME paused", "/change", "/tn", TASK_NAME, "/disable")
+    }
+
+    /** Best-effort and time-limited. Never throws. */
+    private fun deleteTask(taskName: String) {
+        quickSchtasks("$taskName deleted", "/delete", "/tn", taskName, "/f")
+    }
+
+    /**
+     * Runs one short schtasks command for the quit and uninstall paths, which must never hang:
+     * output is discarded and the wait is limited. Failures are logged, never thrown.
+     */
+    private fun quickSchtasks(what: String, vararg args: String) {
         try {
-            ProcessBuilder("schtasks", "/delete", "/tn", GUARD_TASK_NAME, "/f")
-                .redirectErrorStream(true).start().waitFor()
-        } catch (_: Exception) { }
+            val process = ProcessBuilder("schtasks", *args)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
+            if (!process.waitFor(QUICK_STEP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                EnforcementLog.warn("WatchdogInstaller", "$what: timed out and was given up on")
+                return
+            }
+            EnforcementLog.info("WatchdogInstaller", "$what (exit code ${process.exitValue()})")
+        } catch (failure: Exception) {
+            EnforcementLog.warn("WatchdogInstaller", "$what: could not run schtasks", failure)
+        }
     }
 }

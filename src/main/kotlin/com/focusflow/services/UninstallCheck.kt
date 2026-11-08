@@ -21,6 +21,9 @@ import com.focusflow.enforcement.InstallVariant
  * [EXIT_DENY] to "stop the uninstall" and EVERYTHING else to "continue", so a
  * crash, a launch failure or a missing JVM can never trap someone with a broken
  * install who needs to remove it. Keep [EXIT_DENY] equal to the value in main.wxs.
+ *
+ * When the answer lets the removal go ahead, [UninstallCleanup] first takes FocusFlow's two
+ * scheduled tasks and their scripts off the PC, so nothing keeps running once the app is gone.
  */
 object UninstallCheck {
     const val EXIT_ALLOW = 0
@@ -38,6 +41,9 @@ object UninstallCheck {
             EXIT_ALLOW
         }
         EnforcementLog.info(LOG_TAG, if (code == EXIT_DENY) "removal denied" else "removal allowed")
+        // The removal is going ahead: take the scheduled tasks off the PC first. This never
+        // changes the answer and never throws.
+        UninstallCleanup.runIfNeeded(code, InstallVariant.isWindowsDirectInstall)
         return code
     }
 

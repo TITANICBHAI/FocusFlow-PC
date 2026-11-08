@@ -41,13 +41,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
-private val DURATION_PRESETS = listOf(
-    "No limit" to null,
-    "30 min"   to 30,
-    "1 hour"   to 60,
-    "2 hours"  to 120,
-    "4 hours"  to 240
-)
+// The quick lengths in chip order, and the chip selected on open: see FocusLauncherDurations.
+private val DURATION_PRESETS = FocusLauncherDurations.presets
 private const val CUSTOM_DURATION_INDEX = -1
 private const val MAX_CUSTOM_DURATION_MINUTES = 24 * 60
 private const val LOCKDOWN_NOTICE_DISMISSED_SETTING = "launcher_lockdown_notice_dismissed"
@@ -113,7 +108,7 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
     var selectedApps     by remember { mutableStateOf<Set<String>>(emptySet()) }
     var availableApps    by remember { mutableStateOf<List<FocusLauncherApp>>(emptyList()) }
     var searchQuery      by remember { mutableStateOf("") }
-    var durationIndex    by remember { mutableStateOf(0) }
+    var durationIndex    by remember { mutableStateOf(FocusLauncherDurations.defaultIndex) }
     var customDurationMinutes by remember { mutableStateOf<Int?>(null) }
     var showCustomDurationDialog by remember { mutableStateOf(false) }
     var customHoursText   by remember { mutableStateOf("1") }

@@ -153,10 +153,10 @@ Pick a commercial blocker if you need one subscription across Windows, macOS and
 | Lines tagged `# FocusFlow` in the Windows hosts file | Website blocking | Removed when you unblock, or by the Recovery Tool |
 | Firewall rules named `FocusFlow_Block_*` | Network cutoff rules | Removed when you unblock, or by the Recovery Tool |
 | Registry policies `DisableTaskMgr` and `NoLogOff` (current user) and `HideFastUserSwitching` (machine, admin only) | Focus Launcher lock-down | Restored when the session ends and by crash recovery |
-| Scheduled tasks `FocusFlowWatchdog` and `FocusFlowTaskbarGuard` | Relaunch FocusFlow if it stops unexpectedly; restore the taskbar at sign-in | They stay after an uninstall on purpose, so your taskbar can always come back. Delete them in Task Scheduler if you want them gone |
+| Scheduled tasks `FocusFlowWatchdog` and `FocusFlowTaskbarGuard` | Relaunch FocusFlow if it crashes or is killed (not when you quit it yourself, until you start it again); restore the taskbar at sign-in | Removed automatically when you uninstall FocusFlow with the installer (not on upgrades). On the Microsoft Store build, delete them in Task Scheduler after removing the app |
 | `Run` key in the current user's registry | Optional start with Windows | Toggle it in Settings |
 | Folder `%USERPROFILE%\.focusflow\` | Your database and backups | Delete the folder |
-| Folder `%USERPROFILE%\.focusflow-tasks\` | The two small scripts the scheduled tasks above run. Kept apart from your data so that clearing the data folder does not switch the tasks off | Delete the folder when you delete the two tasks |
+| Folder `%USERPROFILE%\.focusflow-tasks\` | The two small scripts the scheduled tasks above run. Kept apart from your data so that clearing the data folder does not switch the tasks off | Removed together with the two tasks when you uninstall |
 
 ### Honest limits
 

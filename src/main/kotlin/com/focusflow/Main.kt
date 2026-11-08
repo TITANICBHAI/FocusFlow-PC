@@ -312,6 +312,10 @@ private fun FocusFlowDesktop(
                     shutdownStarted.set(false)
                     return@Thread
                 }
+                // A Quit the user chose and was allowed to make: the watchdog is for a crash or a
+                // kill, so it must not start FocusFlow again behind their back. Starting FocusFlow
+                // again switches it back on. Never throws and never delays the Quit for long.
+                com.focusflow.enforcement.WatchdogPause.pauseIfDeliberateQuit(skipQuitAuthorization, preserveNuclearMode)
                 com.focusflow.services.FocusLauncherService.exit()
                 KillSwitchService.deactivate()
                 FocusSessionService.end(completed = false)
