@@ -31,10 +31,24 @@ internal data class ChangelogEntry(
 
 internal val CHANGELOG = listOf(
     ChangelogEntry(
-        version    = "2.0.6",
+        version    = "2.0.7",
         date       = "November 2026",
         badge      = "RELEASED",
         badgeColor = Success,
+        changes    = listOf(
+            "SEC" to "FocusFlow now ships with a current, security-supported Java runtime (JDK 21). The previous one (JDK 19) stopped receiving security fixes in 2023",
+            "IMP" to "Updated FocusFlow's foundations to current versions: Kotlin 2.2, the Compose Multiplatform user-interface toolkit 1.9, and the Gradle build tool",
+            "IMP" to "Updated the Windows installer template to match the new Java runtime; the uninstall protection check works as before",
+            "IMP" to "Secure (HTTPS) connections now include the encryption support modern servers expect, for example the optional Discord diagnostics webhook",
+            "FIX" to "Removed an outdated startup setting that does not exist on Windows and would have broken any future network feature",
+            "UPD" to "No features or settings changed in this release. Windows-specific behavior still needs hands-on verification"
+        )
+    ),
+    ChangelogEntry(
+        version    = "2.0.6",
+        date       = "November 2026",
+        badge      = "SEC",
+        badgeColor = Color(0xFF29B6F6),
         changes    = listOf(
             "IMP" to "Clearer recovery guidance when FocusFlow cannot safely open its saved data or a required component",
             "SEC" to "Focus protections and PIN checks will fail safely when the settings they rely on cannot be read",

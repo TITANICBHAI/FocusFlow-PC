@@ -2,7 +2,7 @@
 <!--
   FocusFlow installer template.
 
-  This is JDK 19's own jpackage main.wxs (jdk-19-ga, src/jdk.jpackage/windows/classes/
+  This is JDK 21's own jpackage main.wxs (jdk-21-ga, src/jdk.jpackage/windows/classes/
   jdk/jpackage/internal/resources/main.wxs) with ONE addition, marked
   "FocusFlow addition" below: before Windows Installer removes the product it asks
   FocusFlow itself (by running FocusFlow.exe with its uninstall-check switch) whether that is allowed.
@@ -81,6 +81,10 @@
     <CustomAction Id="JpDisallowDowngrade" Error="!(loc.DowngradeErrorMessage)" />
     <?endif?>
 
+    <Binary Id="JpCaDll" SourceFile="wixhelper.dll"/>
+
+    <CustomAction Id="JpFindRelatedProducts" BinaryKey="JpCaDll" DllEntry="FindRelatedProductsEx" />
+
     <!-- Standard required root -->
     <Directory Id="TARGETDIR" Name="SourceDir"/>
 
@@ -155,17 +159,22 @@
       <?endif?>
 
       <?ifndef JpAllowUpgrades ?>
-      <Custom Action="JpDisallowUpgrade" After="FindRelatedProducts">JP_UPGRADABLE_FOUND</Custom>
+      <Custom Action="JpDisallowUpgrade" After="JpFindRelatedProducts">JP_UPGRADABLE_FOUND</Custom>
       <?endif?>
       <?ifndef JpAllowDowngrades ?>
-      <Custom Action="JpDisallowDowngrade" After="FindRelatedProducts">JP_DOWNGRADABLE_FOUND</Custom>
+      <Custom Action="JpDisallowDowngrade" After="JpFindRelatedProducts">JP_DOWNGRADABLE_FOUND</Custom>
       <?endif?>
       <RemoveExistingProducts Before="CostInitialize"/>
+      <Custom Action="JpFindRelatedProducts" After="FindRelatedProducts"/>
 
       <!-- FocusFlow addition. REMOVE="ALL" is an uninstall; UPGRADINGPRODUCTCODE is set
            when a newer FocusFlow replaces this one, which must not be blocked. -->
       <Custom Action="FfUninstallCheck" After="CostFinalize">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
+
+    <InstallUISequence>
+      <Custom Action="JpFindRelatedProducts" After="FindRelatedProducts"/>
+    </InstallUISequence>
 
   </Product>
 </Wix>

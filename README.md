@@ -18,7 +18,7 @@ Free · Open source · No account · Works offline
 ![Price: free](https://img.shields.io/badge/price-free-4caf50)
 [![Last commit](https://img.shields.io/github/last-commit/TITANICBHAI/FocusFlow-PC?color=4fc3f7)](https://github.com/TITANICBHAI/FocusFlow-PC/commits/main)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin&logoColor=white)
-![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.6.1-4285F4?logo=jetpackcompose&logoColor=white)
+![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.9.3-4285F4?logo=jetpackcompose&logoColor=white)
 
 </div>
 
@@ -218,7 +218,7 @@ The Microsoft Store version updates automatically and is removed through Windows
 
 ## Build from source
 
-You need **JDK 19** (Temurin recommended). The repo includes the Gradle wrapper (Gradle 8.6).
+You need **JDK 21** (Temurin recommended). The repo includes the Gradle wrapper (Gradle 8.14.3).
 
 ```bash
 ./gradlew run          # start the app (enforcement features need Windows)
@@ -231,12 +231,12 @@ You need **JDK 19** (Temurin recommended). The repo includes the Gradle wrapper 
 
 | Layer | Choice |
 |---|---|
-| Language | Kotlin 1.9.22 on JDK 19 |
-| UI | Compose Multiplatform Desktop 1.6.1, Material 3 |
+| Language | Kotlin 2.2.21 on JDK 21 |
+| UI | Compose Multiplatform Desktop 1.9.3, Material 3 |
 | Windows access | JNA 5.14.0 (Win32 APIs) |
 | Database | SQLite via sqlite-jdbc 3.47.1.0 |
 | Async | kotlinx.coroutines 1.7.3 |
-| Build and packaging | Gradle 8.6, `jpackage` (EXE, MSI) and MSIX for the Microsoft Store |
+| Build and packaging | Gradle 8.14.3, `jpackage` (EXE, MSI) and MSIX for the Microsoft Store |
 | CI | GitHub Actions on `windows-latest` |
 
 <details>

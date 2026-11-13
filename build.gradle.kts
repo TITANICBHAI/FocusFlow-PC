@@ -1,8 +1,12 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
-    kotlin("jvm") version "1.9.22"
-    id("org.jetbrains.compose") version "1.6.1"
+    kotlin("jvm") version "2.2.21"
+    // Kotlin 2.x ships the Compose compiler as this plugin (replaces the old
+    // org.jetbrains.compose.compiler that Compose 1.6.1 bundled). Keep it on the SAME
+    // version as the Kotlin plugin above.
+    kotlin("plugin.compose") version "2.2.21"
+    id("org.jetbrains.compose") version "1.9.3"
 }
 
 group = "com.focusflow"
@@ -11,7 +15,6 @@ version = providers.gradleProperty("appVersion").get()
 repositories {
     google()
     mavenCentral()
-    maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
 }
 
 dependencies {
@@ -22,12 +25,12 @@ dependencies {
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
     implementation("net.java.dev.jna:jna:5.14.0")
     implementation("net.java.dev.jna:jna-platform:5.14.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
 
     testImplementation(kotlin("test-junit5"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
 }
 
@@ -51,11 +54,13 @@ compose.desktop {
             "-Dfile.encoding=UTF-8",
             "-Dfocusflow.app.version=${project.version}",
             "-Djava.awt.headless=false",
-            "-Dskiko.renderApi=SOFTWARE",
-            // Required when running inside MSIX AppContainer: Java NIO Selectors using
-            // epoll/kqueue fail in the sandboxed environment. PollSelectorProvider is the
-            // correct fallback and avoids "No such file or directory" selector errors.
-            "-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.PollSelectorProvider"
+            "-Dskiko.renderApi=SOFTWARE"
+            // 2.0.7: removed -Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.PollSelectorProvider.
+            // That class does not exist in Windows JDKs (checked in the Windows JDK 19 and JDK 25
+            // images: only WindowsSelectorProvider exists), so with the flag set any NIO
+            // Selector / java.net.http.HttpClient use throws ServiceConfigurationError. The
+            // app only uses HttpURLConnection and blocking sockets, so it never hit this.
+            // The MSIX is a runFullTrust package, not an AppContainer, and Windows has no epoll.
         )
 
         nativeDistributions {
@@ -75,6 +80,9 @@ compose.desktop {
                 "java.naming",
                 "java.net.http",
                 "java.sql",
+                // Elliptic-curve TLS (ECDHE/ECDSA). A separate module up to JDK 21 and not pulled in
+                // by jlink on its own; modern HTTPS servers (e.g. the Discord webhook) need it.
+                "jdk.crypto.ec",
                 "jdk.unsupported"
             )
 
@@ -97,7 +105,7 @@ compose.desktop {
 // removes the product, so every route to an uninstall is covered, including when
 // FocusFlow is not running. The question is added by packaging/windows/main.wxs,
 // which jpackage only uses when it is found in its --resource-dir. Compose Desktop
-// 1.6.1 clears that directory on every run and offers no way to add to it, so these
+// (checked on 1.6.1) clears that directory on every run and offers no way to add to it, so these
 // tasks run jpackage themselves on the app image Compose already built, with the
 // same arguments Compose uses plus the resource dir, and replace Compose's installer
 // files in build/compose/binaries/main/{exe,msi}.
@@ -129,10 +137,10 @@ for ((installerFormat, taskSuffix) in listOf("msi" to "Msi", "exe" to "Exe")) {
             check(System.getProperty("os.name").startsWith("Windows")) {
                 "The guarded installer can only be built on Windows."
             }
-            // packaging/windows/main.wxs is a copy of the JDK 19 template. Another JDK may
+            // packaging/windows/main.wxs is a copy of the JDK 21 template. Another JDK may
             // expect a different template, so stop instead of building something subtly wrong.
-            check(JavaVersion.current().majorVersion == "19") {
-                "packaging/windows/main.wxs is a copy of the JDK 19 jpackage template, but Gradle is running " +
+            check(JavaVersion.current().majorVersion == "21") {
+                "packaging/windows/main.wxs is a copy of the JDK 21 jpackage template, but Gradle is running " +
                     "on JDK ${JavaVersion.current().majorVersion}. Copy that JDK's main.wxs into " +
                     "packaging/windows/ (keeping the FocusFlow addition) and update this check."
             }
@@ -186,6 +194,6 @@ for ((installerFormat, taskSuffix) in listOf("msi" to "Msi", "exe" to "Exe")) {
 
 kotlin {
     jvmToolchain {
-        languageVersion.set(JavaLanguageVersion.of(19))
+        languageVersion.set(JavaLanguageVersion.of(21))
     }
 }

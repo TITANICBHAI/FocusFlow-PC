@@ -4,8 +4,8 @@ A real-enforcement productivity & focus app for Windows, built with Kotlin + Com
 
 ## Architecture
 
-- **Language**: Kotlin 1.9.22
-- **UI**: Compose Multiplatform Desktop 1.6.1 (Material 3)
+- **Language**: Kotlin 2.2.21
+- **UI**: Compose Multiplatform Desktop 1.9.3 (Material 3)
 - **Database**: SQLite via org.xerial:sqlite-jdbc
 - **Native Interop**: JNA 5.14 (Win32 APIs — Windows-only enforcement)
 - **Async**: kotlinx.coroutines-swing
@@ -88,7 +88,7 @@ src/main/kotlin/com/focusflow/
 ## Replit Environment Setup
 
 ### Java / Gradle
-- **Java**: GraalVM CE 19 (Java 19)
+- **Java**: the project targets JDK 21 (Gradle toolchain). The GraalVM CE 19 path below is the older Replit setup; Gradle's own JDK 21 should satisfy the toolchain, but re-check on the first Replit run after 2.0.7
   - Path: `/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1`
 - **Gradle**: System Gradle 8.14.2 (installed via Nix)
 
@@ -126,7 +126,7 @@ These values MUST match Partner Center exactly. The identity name and publisher 
 |---|---|
 | `Identity/@Name` | `TBTechs.FocusFlowDeepFocusAppBlocker` |
 | `Identity/@Publisher` | `CN=E08824C8-6F22-4DC2-8025-DD8C707E2BE9` |
-| `Identity/@Version` | `2.0.6.0` (generated from appVersion; 4th digit is 0 for Store) |
+| `Identity/@Version` | `2.0.7.0` (generated from appVersion; 4th digit is 0 for Store) |
 | `Properties/DisplayName` | `FocusFlow - Deep Focus App Blocker` |
 | `Properties/PublisherDisplayName` | `TBTechs` |
 

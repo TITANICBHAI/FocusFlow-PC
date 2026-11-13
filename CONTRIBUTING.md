@@ -10,7 +10,7 @@ Thanks for wanting to help! FocusFlow is a free, open-source app blocker and foc
 
 ## Set up
 
-You need **JDK 19** (Temurin recommended). The repo includes the Gradle wrapper.
+You need **JDK 21** (Temurin recommended). The repo includes the Gradle wrapper.
 
 ```bash
 ./gradlew run     # start the app

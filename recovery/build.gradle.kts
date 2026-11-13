@@ -1,8 +1,9 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
-    kotlin("jvm") version "1.9.22"
-    id("org.jetbrains.compose") version "1.6.1"
+    kotlin("jvm") version "2.2.21"
+    kotlin("plugin.compose") version "2.2.21"
+    id("org.jetbrains.compose") version "1.9.3"
 }
 
 group = "com.focusflow"
@@ -13,7 +14,6 @@ version = file("../gradle.properties").useLines { lines ->
 repositories {
     google()
     mavenCentral()
-    maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
 }
 
 dependencies {
@@ -23,9 +23,9 @@ dependencies {
 
     implementation("net.java.dev.jna:jna:5.14.0")
     implementation("net.java.dev.jna:jna-platform:5.14.0")
-    implementation("org.xerial:sqlite-jdbc:3.45.1.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.7.3")
+    implementation("org.xerial:sqlite-jdbc:3.47.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.10.2")
 }
 
 compose.desktop {
@@ -59,6 +59,7 @@ compose.desktop {
                 "java.naming",
                 "java.net.http",
                 "java.sql",
+                "jdk.crypto.ec",
                 "jdk.unsupported"
             )
 
@@ -76,7 +77,7 @@ compose.desktop {
 
 kotlin {
     jvmToolchain {
-        languageVersion.set(JavaLanguageVersion.of(19))
+        languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
 

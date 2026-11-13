@@ -21,7 +21,7 @@
   .agents/memory/windows-uninstall-protection.md.
 
 .EXAMPLE
-  ./scripts/verify-installer-uninstall-check.ps1 -Msi build\compose\binaries\main\msi\FocusFlow-2.0.6.msi -Exe build\compose\binaries\main\exe\FocusFlow-2.0.6.exe -Smoke
+  ./scripts/verify-installer-uninstall-check.ps1 -Msi build\compose\binaries\main\msi\FocusFlow-2.0.7.msi -Exe build\compose\binaries\main\exe\FocusFlow-2.0.7.exe -Smoke
 #>
 param(
     [string]$Msi = "",
