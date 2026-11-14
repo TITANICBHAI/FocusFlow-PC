@@ -78,7 +78,9 @@ data class WindowRef(
     val hasTitle: Boolean = true,
     val toolWindow: Boolean = false,
     val reasonableSize: Boolean = true,
-    val zOrder: Int = 0
+    val zOrder: Int = 0,
+    /** True when the window is minimised: still restorable, but not on screen. */
+    val isMinimized: Boolean = false
 )
 
 internal fun orderLauncherWindows(windows: List<WindowRef>): List<WindowRef> =
@@ -87,12 +89,51 @@ internal fun orderLauncherWindows(windows: List<WindowRef>): List<WindowRef> =
             compareByDescending<WindowRef> { it.ownerless }
                 .thenByDescending { it.hasTitle }
                 .thenBy { it.toolWindow }
+                .thenBy { it.isMinimized }
                 .thenByDescending { it.reasonableSize }
                 .thenBy { it.zOrder }
         )
 
+/**
+ * True only while an app that FocusFlow itself started (at [ownLaunchStartedAtMs])
+ * may still be bringing up its first window. Background or helper processes that
+ * merely share the app's executable name do not count, because they can be created
+ * continuously (Edge) without any window ever being on its way.
+ */
+internal fun hasPendingOwnLaunch(
+    processes: List<Pair<Long, Long?>>,
+    ownLaunchStartedAtMs: Long?,
+    nowMs: Long,
+    staleIdentities: Set<ProcessIdentity>
+): Boolean {
+    val launchedAt = ownLaunchStartedAtMs ?: return false
+    return processes.any { (pid, createdAt) ->
+        if (createdAt == null) return@any false
+        val age = nowMs - createdAt
+        ProcessIdentity(pid, createdAt) !in staleIdentities &&
+            age in 0..LauncherLaunchCoordinator.ATTACH_WINDOW_MS &&
+            createdAt >= launchedAt - LauncherLaunchCoordinator.ATTACH_SPAWN_SLACK_MS
+    }
+}
+
+/** Whether a process runs with administrator rights; [Unknown] when it can't be proven. */
+enum class ProcessElevation { Elevated, NotElevated, Unknown }
+
 sealed interface SpawnResult {
-    data class Started(val pid: Long, val creationTimeMs: Long? = null) : SpawnResult
+    /** [method] names the launch strategy, so it can be remembered once it is verified. */
+    data class Started(
+        val pid: Long,
+        val creationTimeMs: Long? = null,
+        val method: String? = null
+    ) : SpawnResult
+
+    /**
+     * The app was handed to the running Windows shell, which starts it with the
+     * user's normal rights. No app PID is known, so the coordinator finds the new
+     * process by name/path and gives it a longer start-up grace period.
+     */
+    data class Handoff(val method: String) : SpawnResult
+
     data class Failed(val message: String, val canRetry: Boolean = true) : SpawnResult
 }
 
@@ -166,6 +207,28 @@ interface LaunchPlatform {
     fun processIsAlive(pid: Long, creationTimeMs: Long?): Boolean? = processIsAlive(pid)
     fun finishAttempt(attemptId: String) {}
 
+    /**
+     * Elevation of exactly the process identified by [pid] and [creationTimeMs]. A
+     * process that is gone, or whose PID now belongs to a different process, is
+     * [ProcessElevation.Unknown], never a guess.
+     */
+    fun processElevation(pid: Long, creationTimeMs: Long): ProcessElevation =
+        ProcessElevation.Unknown
+
+    /**
+     * Ends exactly the process identified by [pid] and [creationTimeMs] (one the
+     * launcher itself started with admin rights). Returns false, and does nothing,
+     * if that identity no longer matches a live process.
+     */
+    fun terminateProcess(pid: Long, creationTimeMs: Long): Boolean = false
+
+    /**
+     * Called once a launch method has produced a window that was raised and, for a
+     * shell hand-off, whose processes were proven to run with normal rights. Only
+     * then may the method be remembered as the one to try first.
+     */
+    fun launchVerified(method: String) {}
+
     suspend fun processSnapshotAsync(app: FocusLauncherApp): List<ProcessSnapshotEntry> =
         withContext(Dispatchers.IO) { processSnapshot(app) }
 
@@ -192,6 +255,9 @@ class LauncherLaunchCoordinator(
 
         const val WINDOW_WAIT_MS = 60_000L
         const val CHAIN_GONE_GRACE_MS = 3_000L
+        const val HANDOFF_GONE_GRACE_MS = 20_000L
+        const val UNKNOWN_ELEVATION_GRACE_MS = 5_000L
+        const val ATTACH_SPAWN_SLACK_MS = 500L
         const val ATTACH_WINDOW_MS = 90_000L
         const val SPAWN_DEBOUNCE_MS = 2_000L
         const val WATCHDOG_MARGIN_MS = 5_000L
@@ -258,6 +324,12 @@ class LauncherLaunchCoordinator(
         var raiseMs: Long? = null
         var spawnPid: Long? = null
         var spawnCreationTimeMs: Long? = null
+        /** Launch strategy that produced this attempt's app (null: nothing was started). */
+        var launchMethod: String? = null
+        var handoffMethod: String? = null
+        var handoffStartedAtMs: Long? = null
+        val unelevatedIdentities = mutableSetOf<ProcessIdentity>()
+        val elevationUnknownSince = mutableMapOf<ProcessIdentity, Long>()
         var trackedPids: Set<Long> = emptySet()
         var trackedIdentities: Set<ProcessIdentity> = emptySet()
         var focusFlowElevated: Boolean? = null
@@ -277,6 +349,10 @@ class LauncherLaunchCoordinator(
     private val failureResetJobs = mutableMapOf<String, Job>()
     private val failedAttemptIds = mutableMapOf<String, String>()
     private val lastSpawnAtMonotonicMs = mutableMapOf<String, Long>()
+    private val lastSpawnAtWallMs = mutableMapOf<String, Long>()
+
+    /** Shell hand-off still in progress per app: method and when it began. */
+    private val lastHandoff = mutableMapOf<String, Pair<String, Long>>()
     private val timedOutChains = mutableMapOf<String, Set<ProcessIdentity>>()
 
     /**
@@ -301,6 +377,9 @@ class LauncherLaunchCoordinator(
             lastSpawnAtMonotonicMs.entries.removeIf {
                 now >= it.value && now - it.value >= SPAWN_DEBOUNCE_MS
             }
+            val wallNow = platform.nowMs()
+            lastSpawnAtWallMs.entries.removeIf { wallNow - it.value > ATTACH_WINDOW_MS }
+            lastHandoff.keys.removeIf { it !in lastSpawnAtWallMs }
             val launchStartedAt = platform.nowMs()
             val trace = AttemptTrace(
                 id = "launcher-${attemptSequence.incrementAndGet()}",
@@ -354,6 +433,8 @@ class LauncherLaunchCoordinator(
             failureResetJobs.clear()
             failedAttemptIds.clear()
             lastSpawnAtMonotonicMs.clear()
+            lastSpawnAtWallMs.clear()
+            lastHandoff.clear()
             timedOutChains.clear()
             _states.value = emptyMap()
         }
@@ -462,15 +543,27 @@ class LauncherLaunchCoordinator(
                 return
             }
 
+            // Only wait for a window when FocusFlow itself started this app a moment
+            // ago and its process chain is still coming up. A background or helper
+            // process (Edge keeps creating them) is not evidence that a window is
+            // on its way, so it must not block a fresh start.
             val staleIdentities = liveTimedOutIdentities(key, tracker.identities())
-            val hasRecentChain = tracker.liveProcesses().any { process ->
-                val createdAt = process.creationTimeMs ?: return@any false
-                val identity = ProcessIdentity(process.pid, createdAt)
-                val age = platform.nowMs() - createdAt
-                identity !in staleIdentities && age in 0..ATTACH_WINDOW_MS
-            }
+            val ownLaunchSince = synchronized(lock) { lastSpawnAtWallMs[key] }
+            val hasRecentChain = hasPendingOwnLaunch(
+                processes = tracker.liveProcesses().map { it.pid to it.creationTimeMs },
+                ownLaunchStartedAtMs = ownLaunchSince,
+                nowMs = platform.nowMs(),
+                staleIdentities = staleIdentities
+            )
 
             if (hasRecentChain) {
+                // An earlier attempt may have handed this app to the shell; its
+                // processes still need the same normal-rights check.
+                synchronized(lock) { lastHandoff[key] }?.let { (method, startedAt) ->
+                    trace.launchMethod = method
+                    trace.handoffMethod = method
+                    trace.handoffStartedAtMs = startedAt
+                }
                 handleWindowWait(
                     app,
                     key,
@@ -584,9 +677,11 @@ class LauncherLaunchCoordinator(
                 is SpawnResult.Started -> {
                     trace.spawnPid = result.pid
                     trace.spawnCreationTimeMs = result.creationTimeMs
+                    trace.launchMethod = result.method
                     synchronized(lock) {
                         if (activeAttempts[key] !== trace) return
                         lastSpawnAtMonotonicMs[key] = platform.monotonicNowMs()
+                        lastSpawnAtWallMs[key] = spawnStartedAt
                     }
                     tracker.addSpawnPid(result.pid, result.creationTimeMs)
                     updateTraceProcesses(trace, tracker)
@@ -597,6 +692,33 @@ class LauncherLaunchCoordinator(
                         trace,
                         tracker,
                         awaitWindow(app, key, tracker, trace, "spawn")
+                    )
+                }
+                is SpawnResult.Handoff -> {
+                    trace.launchMethod = result.method
+                    trace.handoffMethod = result.method
+                    trace.handoffStartedAtMs = spawnStartedAt
+                    synchronized(lock) {
+                        if (activeAttempts[key] !== trace) return
+                        lastSpawnAtMonotonicMs[key] = platform.monotonicNowMs()
+                        lastSpawnAtWallMs[key] = spawnStartedAt
+                        lastHandoff[key] = result.method to spawnStartedAt
+                    }
+                    logAttempt(trace, "event=spawned handoff=${result.method}")
+                    handleWindowWait(
+                        app,
+                        key,
+                        trace,
+                        tracker,
+                        awaitWindow(
+                            app,
+                            key,
+                            tracker,
+                            trace,
+                            "spawn-handoff",
+                            chainGoneGraceMs = HANDOFF_GONE_GRACE_MS,
+                            handoffStartedAtMs = spawnStartedAt
+                        )
                     )
                 }
             }
@@ -651,13 +773,118 @@ class LauncherLaunchCoordinator(
         }
     }
 
+    private enum class HandoffVerdict {
+        /** Nothing judged here is elevated, and the window owner is proven safe. */
+        Safe,
+
+        /** The window owner's elevation can't be read yet; keep waiting, don't raise. */
+        Pending,
+
+        /** The attempt was failed (and any elevated process we started closed). */
+        Failed
+    }
+
+    /**
+     * An app started through the Windows shell must run with the user's normal
+     * rights, and nothing may be brought to the front until that is proven.
+     *
+     * Judged are only processes created after this hand-off began, identified by
+     * PID *and* creation time, so a recycled PID, an instance the person already had
+     * running (possibly as administrator on purpose) and unrelated processes are
+     * never touched. If any such process is elevated, those processes are closed
+     * (identity re-checked at the moment of closing) and the attempt fails.
+     *
+     * If the process that owns the window about to be raised cannot be read
+     * ([ProcessElevation.Unknown]) it is not accepted: the verdict stays Pending for
+     * [UNKNOWN_ELEVATION_GRACE_MS], then the attempt fails without raising or closing
+     * anything, because "couldn't check" is not evidence of elevation.
+     *
+     * [windowPid] is the owner of the window about to be raised; null for the early
+     * periodic check, which only looks for elevated processes.
+     */
+    private fun evaluateHandoff(
+        app: FocusLauncherApp,
+        key: String,
+        trace: AttemptTrace,
+        tracker: ProcessLineageTracker,
+        windowPid: Long?
+    ): HandoffVerdict {
+        val handoffStartedAt = trace.handoffStartedAtMs ?: return HandoffVerdict.Safe
+        val now = platform.nowMs()
+        val ours = tracker.liveProcesses().mapNotNull { process ->
+            val createdAt = process.creationTimeMs ?: return@mapNotNull null
+            if (createdAt < handoffStartedAt - ATTACH_SPAWN_SLACK_MS) return@mapNotNull null
+            ProcessIdentity(process.pid, createdAt)
+        }
+
+        val elevated = mutableListOf<ProcessIdentity>()
+        for (identity in ours) {
+            if (identity in trace.unelevatedIdentities) continue
+            val state = runCatching {
+                platform.processElevation(identity.pid, identity.creationTimeMs)
+            }.getOrDefault(ProcessElevation.Unknown)
+            when (state) {
+                ProcessElevation.Elevated -> elevated += identity
+                ProcessElevation.NotElevated -> {
+                    trace.unelevatedIdentities += identity
+                    trace.elevationUnknownSince.remove(identity)
+                }
+                ProcessElevation.Unknown ->
+                    if (trace.elevationUnknownSince.putIfAbsent(identity, now) == null) {
+                        logAttempt(trace, "event=handoff-elevation-unknown pid=${identity.pid}")
+                    }
+            }
+        }
+
+        if (elevated.isNotEmpty()) {
+            val closed = elevated.filter { identity ->
+                runCatching {
+                    platform.terminateProcess(identity.pid, identity.creationTimeMs)
+                }.getOrDefault(false)
+            }
+            logAttempt(
+                trace,
+                "event=handoff-elevated-rejected method=${trace.handoffMethod} " +
+                    "pids=${formatPids(elevated.map { it.pid })} closed=${formatPids(closed.map { it.pid })}"
+            )
+            fail(
+                key,
+                trace,
+                "Windows started ${app.displayName} with administrator rights, " +
+                    "which Focus Launcher doesn't allow.",
+                AttemptFailureCode.NeedsElevation,
+                canRetry = false
+            )
+            return HandoffVerdict.Failed
+        }
+
+        if (windowPid == null) return HandoffVerdict.Safe
+        val owner = ours.firstOrNull { it.pid == windowPid } ?: return HandoffVerdict.Safe
+        if (owner in trace.unelevatedIdentities) return HandoffVerdict.Safe
+
+        val unknownSince = trace.elevationUnknownSince[owner] ?: now
+        if (now - unknownSince < UNKNOWN_ELEVATION_GRACE_MS) return HandoffVerdict.Pending
+        logAttempt(trace, "event=handoff-elevation-unverifiable pid=${owner.pid}")
+        fail(
+            key,
+            trace,
+            "Couldn't confirm that ${app.displayName} is running with normal rights, " +
+                "so it was not opened.",
+            AttemptFailureCode.Internal,
+            canRetry = true
+        )
+        return HandoffVerdict.Failed
+    }
+
     private suspend fun awaitWindow(
         app: FocusLauncherApp,
         key: String,
         tracker: ProcessLineageTracker,
         trace: AttemptTrace,
         reason: String,
-        initialCandidate: WindowRef? = null
+        initialCandidate: WindowRef? = null,
+        chainGoneGraceMs: Long = CHAIN_GONE_GRACE_MS,
+        handoffStartedAtMs: Long? = null
     ): AwaitWindowResult {
         logAttempt(
             trace,
@@ -681,6 +908,11 @@ class LauncherLaunchCoordinator(
                 tracker.update(snapshot)
                 updateTraceProcesses(trace, tracker)
                 lastProcessRefreshAt = now
+                // Check hand-off processes as soon as they exist, not only once a
+                // window shows up, so a windowless elevated process is caught too.
+                if (evaluateHandoff(app, key, trace, tracker, null) == HandoffVerdict.Failed) {
+                    return AwaitWindowResult.Superseded
+                }
             }
 
             val pids = tracker.livePids()
@@ -697,8 +929,17 @@ class LauncherLaunchCoordinator(
             } else if (candidateSince != null &&
                 now - candidateSince >= WINDOW_SELECTION_SETTLE_MS
             ) {
-                logAttempt(trace, "phase=awaitWindow result=window elapsedMs=${elapsedSince(startedAt)}")
-                return AwaitWindowResult.Found(best)
+                when (evaluateHandoff(app, key, trace, tracker, best.pid)) {
+                    HandoffVerdict.Safe -> {
+                        logAttempt(
+                            trace,
+                            "phase=awaitWindow result=window elapsedMs=${elapsedSince(startedAt)}"
+                        )
+                        return AwaitWindowResult.Found(best)
+                    }
+                    HandoffVerdict.Failed -> return AwaitWindowResult.Superseded
+                    HandoffVerdict.Pending -> Unit
+                }
             }
 
             val elapsed = now - startedAt
@@ -708,10 +949,20 @@ class LauncherLaunchCoordinator(
                 return AwaitWindowResult.NoWindow
             }
 
-            if (pids.isEmpty()) {
+            // After a shell hand-off, older background processes of the app say nothing
+            // about whether the hand-off worked. Only a process created since then does.
+            val chainAlive = if (handoffStartedAtMs == null) {
+                pids.isNotEmpty()
+            } else {
+                tracker.liveProcesses().any { process ->
+                    val createdAt = process.creationTimeMs ?: return@any false
+                    createdAt >= handoffStartedAtMs - ATTACH_SPAWN_SLACK_MS
+                }
+            }
+            if (!chainAlive) {
                 if (chainGoneSince == null) {
                     chainGoneSince = now
-                } else if (now - chainGoneSince >= CHAIN_GONE_GRACE_MS) {
+                } else if (now - chainGoneSince >= chainGoneGraceMs) {
                     logAttempt(
                         trace,
                         "phase=awaitWindow result=exitedEarly elapsedMs=${elapsedSince(startedAt)}"
@@ -776,6 +1027,14 @@ class LauncherLaunchCoordinator(
                     }
                     continue
                 }
+                if (evaluateHandoff(app, key, trace, tracker, window.pid) != HandoffVerdict.Safe) {
+                    // Failed: already reported. Pending: not proven yet, so never raised.
+                    if (!isCurrent(app, key, trace)) return
+                    failureCode = AttemptFailureCode.RaiseFailed
+                    trace.tierResults += "raise-attempt-${index + 1}=elevation-unverified"
+                    if (index < MAX_RAISE_ATTEMPTS - 1) delay(RAISE_RETRY_DELAY_MS)
+                    continue
+                }
                 sawCandidate = true
                 failureCode = AttemptFailureCode.RaiseFailed
 
@@ -803,6 +1062,7 @@ class LauncherLaunchCoordinator(
                         "foreground-owner=target-root"
                     }
                     if (finishSuccess(key, trace)) {
+                        rememberVerifiedMethod(trace)
                         trace.raiseMs =
                             platform.monotonicNowMs() - raiseStartedAtMonotonicMs
                         runCatching { onRaised(app) }
@@ -835,6 +1095,17 @@ class LauncherLaunchCoordinator(
             failureCode,
             canRetry = true
         )
+    }
+
+    /**
+     * A method is remembered only after the app it started was raised and, for a
+     * shell hand-off, at least one process it created was proven to be unelevated.
+     */
+    private fun rememberVerifiedMethod(trace: AttemptTrace) {
+        val method = trace.launchMethod ?: return
+        if (trace.handoffMethod != null && trace.unelevatedIdentities.isEmpty()) return
+        runCatching { platform.launchVerified(method) }
+            .onFailure { logAttemptWarning(trace, "could not record verified method", it) }
     }
 
     private fun fail(
@@ -953,6 +1224,10 @@ class LauncherLaunchCoordinator(
             failureResetJobs.remove(key)?.cancel()
             failedAttemptIds.remove(key)
             timedOutChains.remove(key)
+            // The launch we started has produced its window; processes left behind
+            // when the user later closes the app are not a launch in progress.
+            lastSpawnAtWallMs.remove(key)
+            lastHandoff.remove(key)
             _states.update { it + (key to LaunchState.Idle) }
             true
         }
@@ -1131,6 +1406,7 @@ class LauncherLaunchCoordinator(
     private fun spawnResultName(result: SpawnResult): String =
         when (result) {
             is SpawnResult.Started -> "started"
+            is SpawnResult.Handoff -> "handoff"
             is SpawnResult.Failed -> "failed"
         }
 

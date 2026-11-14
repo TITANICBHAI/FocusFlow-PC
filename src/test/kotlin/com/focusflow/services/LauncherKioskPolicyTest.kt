@@ -171,6 +171,61 @@ class LauncherKioskPolicyTest {
         )
     }
 
+    @Test
+    fun explorerHandoffIsAllowedFromTheWindowsFolderButASpoofedExplorerIsBlocked() {
+        val realExplorer = ProcessSnapshotEntry(
+            pid = 50L,
+            parentPid = ownPid,
+            creationTimeMs = 300L,
+            processName = "explorer.exe",
+            executablePath = "C:\\Windows\\explorer.exe"
+        )
+        val spoofedExplorer = realExplorer.copy(
+            pid = 51L,
+            executablePath = "C:\\Users\\User\\AppData\\Local\\Temp\\explorer.exe"
+        )
+        val snapshot = listOf(realExplorer, spoofedExplorer)
+
+        assertEquals(LauncherKioskPolicy.Decision.ALLOW, decide(realExplorer, snapshot, enabled = true))
+        assertEquals(LauncherKioskPolicy.Decision.ALLOW, decide(realExplorer, snapshot, enabled = false))
+        assertEquals(LauncherKioskPolicy.Decision.BLOCK, decide(spoofedExplorer, snapshot, enabled = true))
+        assertEquals(LauncherKioskPolicy.Decision.BLOCK, decide(spoofedExplorer, snapshot, enabled = false))
+    }
+
+    @Test
+    fun appStartedByTheShellKeepsItsHelpersWhileEscapeToolsStayBlocked() {
+        val shell = ProcessSnapshotEntry(
+            pid = 500L,
+            parentPid = 4L,
+            creationTimeMs = 10L,
+            processName = "explorer.exe",
+            executablePath = "C:\\Windows\\explorer.exe"
+        )
+        // Started by the running shell (hand-off), not by FocusFlow itself.
+        val app = steam().copy(parentPid = shell.pid)
+        val helper = ProcessSnapshotEntry(
+            pid = 14L,
+            parentPid = app.pid,
+            creationTimeMs = 230L,
+            processName = "steamwebhelper.exe",
+            executablePath = "C:\\Games\\Steam\\bin\\steamwebhelper.exe"
+        )
+        val taskManagerFromShell = ProcessSnapshotEntry(
+            pid = 15L,
+            parentPid = shell.pid,
+            creationTimeMs = 240L,
+            processName = "taskmgr.exe",
+            executablePath = "C:\\Windows\\System32\\taskmgr.exe"
+        )
+        val taskManagerFromApp = taskManagerFromShell.copy(pid = 16L, parentPid = app.pid)
+        val snapshot = listOf(shell, app, helper, taskManagerFromShell, taskManagerFromApp)
+
+        assertEquals(LauncherKioskPolicy.Decision.ALLOW, decide(app, snapshot, enabled = true))
+        assertEquals(LauncherKioskPolicy.Decision.ALLOW, decide(helper, snapshot, enabled = true))
+        assertEquals(LauncherKioskPolicy.Decision.BLOCK, decide(taskManagerFromShell, snapshot, enabled = true))
+        assertEquals(LauncherKioskPolicy.Decision.BLOCK, decide(taskManagerFromApp, snapshot, enabled = true))
+    }
+
     private fun steam() = ProcessSnapshotEntry(
         pid = 10L,
         parentPid = 2L,

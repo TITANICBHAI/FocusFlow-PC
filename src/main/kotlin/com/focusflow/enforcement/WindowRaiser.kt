@@ -132,17 +132,27 @@ object WindowRaiser {
 
                     val rawHandle = Pointer.nativeValue(hwnd.pointer)
                     if (rawHandle == 0L) return true
-                    val bounds = RECT()
-                    if (!api.GetWindowRect(hwnd, bounds)) return true
-                    val width = bounds.right - bounds.left
-                    val height = bounds.bottom - bounds.top
-                    if (width <= 0 || height <= 0) return true
-                    if (virtualWidth > 0 && virtualHeight > 0 &&
-                        (bounds.right <= virtualLeft ||
-                            bounds.left >= virtualLeft + virtualWidth ||
-                            bounds.bottom <= virtualTop ||
-                            bounds.top >= virtualTop + virtualHeight)
-                    ) return true
+
+                    // A minimised window keeps its visible style but Windows reports
+                    // its rectangle far off-screen (about -32000). Keep it as a
+                    // restorable candidate instead of dropping it with the
+                    // off-screen filter, and don't judge its size from that rectangle.
+                    val minimized = api.IsIconic(hwnd)
+                    var reasonableSize = true
+                    if (!minimized) {
+                        val bounds = RECT()
+                        if (!api.GetWindowRect(hwnd, bounds)) return true
+                        val width = bounds.right - bounds.left
+                        val height = bounds.bottom - bounds.top
+                        if (width <= 0 || height <= 0) return true
+                        if (virtualWidth > 0 && virtualHeight > 0 &&
+                            (bounds.right <= virtualLeft ||
+                                bounds.left >= virtualLeft + virtualWidth ||
+                                bounds.bottom <= virtualTop ||
+                                bounds.top >= virtualTop + virtualHeight)
+                        ) return true
+                        reasonableSize = width >= 160 && height >= 100
+                    }
 
                     val toolWindow = api.GetWindowLongW(hwnd, GWL_EXSTYLE) and
                         WS_EX_TOOLWINDOW != 0
@@ -156,8 +166,9 @@ object WindowRaiser {
                         ownerless = ownerless,
                         hasTitle = hasTitle,
                         toolWindow = toolWindow,
-                        reasonableSize = width >= 160 && height >= 100,
-                        zOrder = currentZOrder
+                        reasonableSize = reasonableSize,
+                        zOrder = currentZOrder,
+                        isMinimized = minimized
                     )
                     if (toolWindow) {
                         toolWindows += window

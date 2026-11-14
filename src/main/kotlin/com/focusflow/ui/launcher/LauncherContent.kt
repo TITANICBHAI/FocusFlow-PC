@@ -617,7 +617,7 @@ private fun SessionPinDialog(
             ) { Text("Confirm") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = LauncherColors.TextDim) }
+            TextButton(onClick = onDismiss) { Text("Cancel – Go back", color = LauncherColors.Text) }
         }
     )
 }

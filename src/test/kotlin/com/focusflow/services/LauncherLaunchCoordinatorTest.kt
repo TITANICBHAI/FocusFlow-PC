@@ -958,6 +958,665 @@ class LauncherLaunchCoordinatorTest {
             .contains("result=Failed(code=Cancelled)"))
     }
 
+    @Test
+    fun recentBackgroundProcessWithoutAnOwnLaunchSpawnsInsteadOfWaiting() = runTest {
+        // Edge-style case: helper processes keep being created, no window exists, and
+        // FocusFlow did not start them. The tile must start the app, not wait 60 s.
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(
+                pid = 77L,
+                startedAtMs = nowMs(),
+                processName = app.processName,
+                creationTimeMs = nowMs(),
+                executablePath = app.exePath
+            )
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+
+        assertEquals(1, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun pendingOwnLaunchRequiresAProcessCreatedAfterFocusFlowStartedTheApp() {
+        val now = 1_000_000L
+        val launchedAt = now - 5_000L
+        val none = emptySet<ProcessIdentity>()
+
+        // Never launched by FocusFlow: nothing to wait for.
+        assertFalse(
+            hasPendingOwnLaunch(listOf(1L to now - 1_000L), null, now, none)
+        )
+        // Process older than our own launch: a leftover, not ours.
+        assertFalse(
+            hasPendingOwnLaunch(listOf(1L to launchedAt - 60_000L), launchedAt, now, none)
+        )
+        // Created after our launch and still young: attach and wait.
+        assertTrue(
+            hasPendingOwnLaunch(listOf(1L to launchedAt + 200L), launchedAt, now, none)
+        )
+        // Too old to be a launch still in progress.
+        assertFalse(
+            hasPendingOwnLaunch(
+                listOf(1L to launchedAt + 200L),
+                launchedAt,
+                launchedAt + LauncherLaunchCoordinator.ATTACH_WINDOW_MS + 5_000L,
+                none
+            )
+        )
+        // A chain that already timed out is stale.
+        assertFalse(
+            hasPendingOwnLaunch(
+                listOf(1L to launchedAt + 200L),
+                launchedAt,
+                now,
+                setOf(ProcessIdentity(1L, launchedAt + 200L))
+            )
+        )
+    }
+
+    @Test
+    fun shellHandoffWaitsLongerThanADirectSpawnForTheAppToAppear() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            snapshotProvider = { now ->
+                if (now < 8_000L) emptyList()
+                else listOf(
+                    ProcessSnapshotEntry(
+                        pid = 300L,
+                        creationTimeMs = 8_000L,
+                        processName = app.processName,
+                        executablePath = app.exePath
+                    )
+                )
+            }
+            windowSchedule = { now, pids ->
+                if (now >= 8_500L && 300L in pids) {
+                    listOf(WindowRef(handle = 3_000L, pid = 300L))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        // A direct spawn with no live process would already have failed (3 s grace).
+        advanceTimeBy(6_000L)
+        runCurrent()
+        assertIs<LaunchState.Launching>(coordinator.states.value[app.processName])
+
+        advanceTimeBy(4_000L)
+        runCurrent()
+
+        assertEquals(1, platform.spawnCount)
+        assertEquals(listOf(3_000L), platform.raisedWindows.map { it.handle })
+        assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun shellHandoffGivesUpWithAClearFailureWhenNothingEverAppears() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            snapshotProvider = { _ -> emptyList() }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.HANDOFF_GONE_GRACE_MS + 2_000L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.ExitedEarly, failed.code)
+        assertTrue(failed.canRetry)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun appStartedWithAdminRightsByTheShellIsClosedAndRejected() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            elevatedPids += 300L
+            snapshotProvider = { _ ->
+                if (spawnCount == 0) emptyList()
+                else listOf(
+                    ProcessSnapshotEntry(
+                        pid = 300L,
+                        creationTimeMs = 0L,
+                        processName = app.processName,
+                        executablePath = app.exePath
+                    )
+                )
+            }
+            windowSchedule = { _, pids ->
+                if (spawnCount > 0 && 300L in pids) {
+                    listOf(WindowRef(handle = 3_000L, pid = 300L))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NeedsElevation, failed.code)
+        assertFalse(failed.canRetry)
+        assertEquals(listOf(300L), platform.terminatedPids)
+        assertTrue(platform.raisedWindows.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun minimizedWindowIsStillACandidateButRanksBehindANormalOne() {
+        val minimized = WindowRef(
+            handle = 1L, pid = 10L, ownerless = true, hasTitle = true,
+            reasonableSize = true, zOrder = 0, isMinimized = true
+        )
+        val normal = minimized.copy(handle = 2L, zOrder = 4, isMinimized = false)
+
+        assertEquals(
+            listOf(normal, minimized),
+            orderLauncherWindows(listOf(minimized, normal))
+        )
+        assertEquals(listOf(minimized), orderLauncherWindows(listOf(minimized)))
+    }
+
+    @Test
+    fun minimizedOnlyWindowIsRaisedWithoutSpawning() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(
+                pid = 42L,
+                startedAtMs = nowMs(),
+                processName = app.processName,
+                creationTimeMs = nowMs(),
+                executablePath = app.exePath
+            )
+            windowSchedule = { _, pids ->
+                if (42L in pids) {
+                    listOf(WindowRef(handle = 420L, pid = 42L, isMinimized = true))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(600L)
+        runCurrent()
+
+        assertEquals(0, platform.spawnCount)
+        assertEquals(listOf(420L), platform.raisedWindows.map { it.handle })
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun spawnStrategiesTryTheLastWorkingOneFirst() {
+        val token = LauncherSpawnStrategy.UserShellToken
+        val full = LauncherSpawnStrategy.UserShellTokenFull
+        val handoff = LauncherSpawnStrategy.ExplorerHandoff
+        assertEquals(listOf(token, full, handoff), orderedSpawnStrategies(null))
+        assertEquals(listOf(handoff, token, full), orderedSpawnStrategies(handoff))
+        assertEquals(listOf(full, token, handoff), orderedSpawnStrategies(full))
+        assertEquals(listOf(token, full, handoff), orderedSpawnStrategies(token))
+    }
+
+    @Test
+    fun windowlessElevatedHandoffProcessIsRejectedWithoutWaitingForAWindow() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            elevatedPids += 300L
+            snapshotProvider = { _ ->
+                if (spawnCount == 0) emptyList()
+                else listOf(
+                    ProcessSnapshotEntry(
+                        pid = 300L,
+                        creationTimeMs = 0L,
+                        processName = app.processName,
+                        executablePath = app.exePath
+                    )
+                )
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NeedsElevation, failed.code)
+        assertEquals(listOf(300L), platform.terminatedPids)
+        assertTrue(platform.raisedWindows.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun elevatedInstanceThatWasAlreadyRunningIsNeverTerminatedByAHandoffCheck() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            elevatedPids += 301L
+            snapshotProvider = { _ ->
+                val old = ProcessSnapshotEntry(
+                    pid = 301L,
+                    creationTimeMs = -100_000L,
+                    processName = app.processName,
+                    executablePath = app.exePath
+                )
+                if (spawnCount == 0) listOf(old)
+                else listOf(
+                    old,
+                    ProcessSnapshotEntry(
+                        pid = 300L,
+                        creationTimeMs = 0L,
+                        processName = app.processName,
+                        executablePath = app.exePath
+                    )
+                )
+            }
+            windowSchedule = { _, pids ->
+                if (spawnCount > 0 && 300L in pids) {
+                    listOf(WindowRef(handle = 3_000L, pid = 300L))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        assertTrue(platform.terminatedPids.isEmpty())
+        assertEquals(listOf(3_000L), platform.raisedWindows.map { it.handle })
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun handoffGivesUpAtTheShortGraceEvenWhenOldBackgroundProcessesAreStillAlive() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            snapshotProvider = { _ ->
+                listOf(
+                    ProcessSnapshotEntry(
+                        pid = 301L,
+                        creationTimeMs = -100_000L,
+                        processName = app.processName,
+                        executablePath = app.exePath
+                    )
+                )
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.HANDOFF_GONE_GRACE_MS + 2_000L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.ExitedEarly, failed.code)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun reopeningAfterASuccessfulLaunchSpawnsEvenWithYoungLeftoverProcesses() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResults.add(SpawnResult.Started(100L))
+            spawnResults.add(SpawnResult.Started(200L))
+            windowSchedule = { now, pids ->
+                if (now < 2_000L && 100L in pids) {
+                    listOf(WindowRef(handle = 1_100L, pid = 100L))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertEquals(LaunchState.Idle, coordinator.states.value[app.processName])
+        assertEquals(1, platform.raisedWindows.size)
+
+        // The window is closed but the process lingers in the background, young.
+        advanceTimeBy(4_000L)
+        assertTrue(coordinator.request(app))
+        runCurrent()
+
+        assertEquals(2, platform.spawnCount)
+        coordinator.cancelAll()
+    }
+
+    private fun handoffProcess(pid: Long, createdAt: Long) = ProcessSnapshotEntry(
+        pid = pid,
+        creationTimeMs = createdAt,
+        processName = app.processName,
+        executablePath = app.exePath
+    )
+
+    private fun FakeLaunchPlatform.handoffOf300WithWindow() {
+        spawnResult = SpawnResult.Handoff("explorer-handoff")
+        snapshotProvider = { _ ->
+            if (spawnCount == 0) emptyList() else listOf(handoffProcess(300L, 0L))
+        }
+        windowSchedule = { _, pids ->
+            if (spawnCount > 0 && 300L in pids) {
+                listOf(WindowRef(handle = 3_000L, pid = 300L))
+            } else {
+                emptyList()
+            }
+        }
+    }
+
+    @Test
+    fun windowOwnerWithUnknownElevationIsNeverRaisedAndIsNotClosed() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            handoffOf300WithWindow()
+            unknownElevationPids += 300L
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.UNKNOWN_ELEVATION_GRACE_MS - 1_000L)
+        runCurrent()
+        // Still within the grace period: waiting, nothing raised.
+        assertIs<LaunchState.Launching>(coordinator.states.value[app.processName])
+        assertTrue(platform.raisedWindows.isEmpty())
+
+        advanceTimeBy(3_000L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertTrue(failed.canRetry)
+        assertTrue(failed.reason.contains("normal rights"))
+        assertTrue(platform.raisedWindows.isEmpty())
+        assertTrue(platform.terminatedPids.isEmpty())
+        assertTrue(platform.verifiedMethods.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun elevationThatBecomesReadableAfterAMomentIsAcceptedWhenUnelevated() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            handoffOf300WithWindow()
+            unknownElevationPids += 300L
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(1_500L)
+        runCurrent()
+        assertTrue(platform.raisedWindows.isEmpty())
+
+        platform.unknownElevationPids.clear()
+        advanceTimeBy(1_500L)
+        runCurrent()
+
+        assertEquals(listOf(3_000L), platform.raisedWindows.map { it.handle })
+        assertEquals(listOf("explorer-handoff"), platform.verifiedMethods)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun elevationThatBecomesReadableAfterAMomentIsRejectedWhenElevated() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            handoffOf300WithWindow()
+            unknownElevationPids += 300L
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(1_500L)
+        runCurrent()
+
+        platform.unknownElevationPids.clear()
+        platform.elevatedPids += 300L
+        advanceTimeBy(1_500L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NeedsElevation, failed.code)
+        assertEquals(listOf(300L), platform.terminatedPids)
+        assertTrue(platform.raisedWindows.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun recycledPidIsNeverJudgedOrTerminatedAsTheHandoffProcess() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            handoffOf300WithWindow()
+            // PID 300 now belongs to a different, elevated process.
+            elevatedPids += 300L
+            pidOwners[300L] = 99_999L
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(LauncherLaunchCoordinator.UNKNOWN_ELEVATION_GRACE_MS + 2_000L)
+        runCurrent()
+
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertTrue(platform.terminatedPids.isEmpty())
+        assertTrue(platform.raisedWindows.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun pidThatChangesHandsAfterTheElevationReadIsNotTerminated() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            handoffOf300WithWindow()
+            elevatedPids += 300L
+            afterElevationRead = { pid -> pidOwners[pid] = 777L }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NeedsElevation, failed.code)
+        assertTrue(platform.terminatedPids.isEmpty())
+        assertTrue(platform.raisedWindows.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun shellStartedAppIsRememberedOnlyAfterItsProcessWasProvenUnelevated() = runTest {
+        val platform = FakeLaunchPlatform(this).apply { handoffOf300WithWindow() }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        assertTrue(platform.verifiedMethods.isEmpty())
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        assertEquals(listOf("explorer-handoff"), platform.verifiedMethods)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun handoffWhoseWindowComesFromAnOlderInstanceProvesNothingAboutTheHandoff() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            snapshotProvider = { _ -> listOf(handoffProcess(301L, -100_000L)) }
+            windowSchedule = { _, pids ->
+                if (spawnCount > 0 && 301L in pids) {
+                    listOf(WindowRef(handle = 3_010L, pid = 301L))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        assertEquals(listOf(3_010L), platform.raisedWindows.map { it.handle })
+        assertTrue(platform.verifiedMethods.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun tokenLaunchWhoseWindowCouldNotBeRaisedIsNotRemembered() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Started(100L, method = "user-shell-token-full")
+            raiseSuccess = false
+            windowSchedule = { _, pids ->
+                if (100L in pids) listOf(WindowRef(handle = 1_100L, pid = 100L)) else emptyList()
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(3_000L)
+        runCurrent()
+
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertTrue(platform.verifiedMethods.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun tokenLaunchIsRememberedOnceTheWindowWasRaised() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Started(100L, method = "user-shell-token-full")
+            windowSchedule = { _, pids ->
+                if (100L in pids) listOf(WindowRef(handle = 1_100L, pid = 100L)) else emptyList()
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        assertEquals(listOf("user-shell-token-full"), platform.verifiedMethods)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun failedSpawnNeverRemembersAMethod() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Failed("CreateProcessWithTokenW failed with Windows error=5")
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+
+        assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertTrue(platform.verifiedMethods.isEmpty())
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun repeatedShellLaunchesEachGetTheirOwnElevationCheck() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            spawnResult = SpawnResult.Handoff("explorer-handoff")
+            snapshotProvider = { now ->
+                when (spawnCount) {
+                    0 -> emptyList()
+                    1 -> listOf(handoffProcess(300L, 0L))
+                    // The first app lingers in the background; the second launch is new.
+                    else -> listOf(handoffProcess(300L, 0L), handoffProcess(301L, now))
+                }
+            }
+            windowSchedule = { now, pids ->
+                when {
+                    spawnCount == 1 && now < 2_000L && 300L in pids ->
+                        listOf(WindowRef(handle = 3_000L, pid = 300L))
+                    spawnCount >= 2 && 301L in pids ->
+                        listOf(WindowRef(handle = 3_010L, pid = 301L))
+                    else -> emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        coordinator.request(app)
+        runCurrent()
+        advanceTimeBy(1_000L)
+        runCurrent()
+        assertEquals(listOf(3_000L), platform.raisedWindows.map { it.handle })
+
+        // Second launch: its own process is elevated, the lingering first one is not judged.
+        platform.elevatedPids += 301L
+        advanceTimeBy(4_000L)
+        assertTrue(coordinator.request(app))
+        runCurrent()
+        advanceTimeBy(2_000L)
+        runCurrent()
+
+        assertEquals(2, platform.spawnCount)
+        assertEquals(listOf(301L), platform.terminatedPids)
+        val failed = assertIs<LaunchState.Failed>(coordinator.states.value[app.processName])
+        assertEquals(LaunchFailureCode.NeedsElevation, failed.code)
+        assertEquals(1, platform.raisedWindows.size)
+        coordinator.cancelAll()
+    }
+
+    @Test
+    fun minimizedAppOpenedFromTheBackgroundIsRestoredAfterAClosedLaunchToo() = runTest {
+        val platform = FakeLaunchPlatform(this).apply {
+            instances += RunningInstance(
+                pid = 42L,
+                startedAtMs = -200_000L,
+                processName = app.processName,
+                creationTimeMs = -200_000L,
+                executablePath = app.exePath
+            )
+            windowSchedule = { _, pids ->
+                if (42L in pids) {
+                    listOf(WindowRef(handle = 420L, pid = 42L, isMinimized = true))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+        val coordinator = coordinator(platform, backgroundScope)
+
+        repeat(2) {
+            assertTrue(coordinator.request(app))
+            runCurrent()
+            advanceTimeBy(600L)
+            runCurrent()
+        }
+
+        assertEquals(0, platform.spawnCount)
+        assertEquals(listOf(420L, 420L), platform.raisedWindows.map { it.handle })
+        coordinator.cancelAll()
+    }
+
     private fun coordinator(
         platform: FakeLaunchPlatform,
         scope: kotlinx.coroutines.CoroutineScope,
@@ -1126,5 +1785,37 @@ class LauncherLaunchCoordinatorTest {
         override fun lastForegroundLockCall(): String? = "lock=true"
 
         override fun processIsAlive(pid: Long): Boolean? = pid == spawnedPid
+
+        val elevatedPids = mutableSetOf<Long>()
+        val unknownElevationPids = mutableSetOf<Long>()
+        val terminatedPids = mutableListOf<Long>()
+        val verifiedMethods = mutableListOf<String>()
+
+        /** pid -> creation time of whatever process owns that PID now (simulates PID reuse). */
+        val pidOwners = mutableMapOf<Long, Long>()
+
+        /** Runs right after an elevation read, to simulate the PID changing hands. */
+        var afterElevationRead: (Long) -> Unit = {}
+
+        override fun processElevation(pid: Long, creationTimeMs: Long): ProcessElevation {
+            pidOwners[pid]?.let { if (it != creationTimeMs) return ProcessElevation.Unknown }
+            val state = when (pid) {
+                in elevatedPids -> ProcessElevation.Elevated
+                in unknownElevationPids -> ProcessElevation.Unknown
+                else -> ProcessElevation.NotElevated
+            }
+            afterElevationRead(pid)
+            return state
+        }
+
+        override fun terminateProcess(pid: Long, creationTimeMs: Long): Boolean {
+            pidOwners[pid]?.let { if (it != creationTimeMs) return false }
+            terminatedPids += pid
+            return true
+        }
+
+        override fun launchVerified(method: String) {
+            verifiedMethods += method
+        }
     }
 }

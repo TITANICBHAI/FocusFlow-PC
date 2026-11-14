@@ -1376,6 +1376,20 @@ fun FocusLauncherScreen(onNavigateToSettings: () -> Unit = {}) {
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                 ) { Text("I've noted it — Start") }
+            },
+            dismissButton = {
+                // Lets the user back out before the session starts. The PIN that was
+                // just generated is discarded, so it can't be used for anything later.
+                OutlinedButton(
+                    onClick = {
+                        showPinBeforeEnter = false
+                        generatedPin = ""
+                        chainAllowancePinVerified = false
+                        scope.launch(Dispatchers.IO) {
+                            FocusLauncherService.discardPreparedPin()
+                        }
+                    }
+                ) { Text("Cancel – Go back", color = OnSurface) }
             }
         )
     }

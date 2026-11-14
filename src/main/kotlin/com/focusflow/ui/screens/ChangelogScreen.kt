@@ -36,6 +36,11 @@ internal val CHANGELOG = listOf(
         badge      = "RELEASED",
         badgeColor = Success,
         changes    = listOf(
+            "FIX" to "Focus Launcher: if starting an app fails, FocusFlow now automatically tries other ways to start it with your normal (non-administrator) rights before giving up. A way is only remembered once the app has actually opened. An app that ends up with administrator rights, or whose rights can't be checked, is not brought forward",
+            "IMP" to "Focus Launcher: when Windows refuses to start an app, the log now records the facts needed to find out why (sessions, token type, required privilege, Secondary Logon service)",
+            "FIX" to "Focus Launcher: a minimized app is now found and restored when you tap its tile instead of being missed",
+            "FIX" to "Focus Launcher: an app that only had background processes (for example Edge with no window) is started right away instead of waiting a full minute for a window that never appears",
+            "NEW" to "Focus Launcher: the \"Your Session PIN\" screen now has a \"Cancel – Go back\" button, so you can back out without starting a session",
             "SEC" to "FocusFlow now ships with a current, security-supported Java runtime (JDK 21). The previous one (JDK 19) stopped receiving security fixes in 2023",
             "IMP" to "Updated FocusFlow's foundations to current versions: Kotlin 2.2, the Compose Multiplatform user-interface toolkit 1.9, and the Gradle build tool",
             "IMP" to "Updated the Windows installer template to match the new Java runtime; the uninstall protection check works as before",

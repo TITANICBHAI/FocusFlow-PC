@@ -107,31 +107,30 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
                 isWindowsHost = isWindows,
                 focusFlowElevated = if (isWindows) ElevationManager.isElevated else false
             )
-            val pid = if (spawnMode == LauncherSpawnMode.InteractiveUserToken) {
-                val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
-                EnforcementLog.info(
-                    "Launcher",
-                    "${prefix}spawn strategy=user-shell-token app=${app.processName}"
-                )
-                WindowsUnelevatedLauncher.start(executable, workingDirectory)
-            } else {
-                val process = ProcessBuilder(executable.absolutePath)
-                    .apply { workingDirectory?.let(::directory) }
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .redirectError(ProcessBuilder.Redirect.DISCARD)
-                    .start()
-                try {
-                    process.outputStream.close()
-                } catch (closeFailure: Exception) {
-                    EnforcementLog.warn(
-                        "Launcher",
-                        "spawned app but could not close child stdin app=${app.processName}",
-                        closeFailure
-                    )
-                }
-                process.pid()
+            if (spawnMode == LauncherSpawnMode.InteractiveUserToken) {
+                return spawnWithUserRights(app, executable, workingDirectory, attemptId)
             }
-            SpawnResult.Started(pid, processCreationTimeMs(pid))
+            val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
+            EnforcementLog.info(
+                "Launcher",
+                "${prefix}spawn strategy=direct app=${app.processName}"
+            )
+            val process = ProcessBuilder(executable.absolutePath)
+                .apply { workingDirectory?.let(::directory) }
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+            try {
+                process.outputStream.close()
+            } catch (closeFailure: Exception) {
+                EnforcementLog.warn(
+                    "Launcher",
+                    "spawned app but could not close child stdin app=${app.processName}",
+                    closeFailure
+                )
+            }
+            val pid = process.pid()
+            SpawnResult.Started(pid, processCreationTimeMs(pid), method = "direct")
         } catch (failure: Throwable) {
             if (failure is VirtualMachineError) throw failure
             val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
@@ -145,6 +144,130 @@ internal object JvmLauncherLaunchPlatform : LaunchPlatform {
                     "error=${failure.javaClass.simpleName} detail=$detail"
             )
             SpawnResult.Failed("Couldn't start this app. Tap to retry.")
+        }
+    }
+
+    /**
+     * Strategy whose launch was last *verified* (a real window of a normal-rights app
+     * was raised); tried first next time. Never set merely because a call returned.
+     */
+    @Volatile
+    private var preferredStrategy: LauncherSpawnStrategy? = null
+
+    private val privilegeChecked = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val diagnosticsLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * FocusFlow is elevated, so the app must be started with the user's normal
+     * rights. Try each supported method in turn, automatically, and report which
+     * one was used. Never fall back to starting the app with FocusFlow's own token.
+     * Nothing is remembered here: the coordinator calls [launchVerified] once the
+     * launch is proven by a raised window.
+     */
+    private fun spawnWithUserRights(
+        app: FocusLauncherApp,
+        executable: File,
+        workingDirectory: File?,
+        attemptId: String?
+    ): SpawnResult {
+        val prefix = attemptId?.let { "attemptId=$it " }.orEmpty()
+        val ownPid = ProcessHandle.current().pid()
+        val failures = mutableListOf<String>()
+
+        if (privilegeChecked.compareAndSet(false, true)) {
+            val state = runCatching { WindowsUnelevatedLauncher.ensureImpersonatePrivilege() }
+                .getOrElse { "unreadable(${it.javaClass.simpleName})" }
+            EnforcementLog.info("Launcher", "${prefix}token-launch SeImpersonatePrivilege=$state")
+        }
+
+        for (strategy in orderedSpawnStrategies(preferredStrategy)) {
+            EnforcementLog.info(
+                "Launcher",
+                "${prefix}spawn strategy=${strategy.logName} app=${app.processName} " +
+                    "focusFlowPid=$ownPid"
+            )
+            try {
+                return when (strategy) {
+                    LauncherSpawnStrategy.UserShellToken -> {
+                        val pid = WindowsUnelevatedLauncher.start(executable, workingDirectory)
+                        SpawnResult.Started(pid, processCreationTimeMs(pid), strategy.logName)
+                    }
+                    LauncherSpawnStrategy.UserShellTokenFull -> {
+                        val pid = WindowsUnelevatedLauncher.start(
+                            executable,
+                            workingDirectory,
+                            WindowsUnelevatedLauncher.TokenRights.Full
+                        )
+                        SpawnResult.Started(pid, processCreationTimeMs(pid), strategy.logName)
+                    }
+                    LauncherSpawnStrategy.ExplorerHandoff -> {
+                        WindowsExplorerLauncher.start(executable)
+                        SpawnResult.Handoff(strategy.logName)
+                    }
+                }
+            } catch (failure: Throwable) {
+                if (failure is VirtualMachineError) throw failure
+                val detail = failure.message
+                    ?.replace(Regex("[\\r\\n\\t]+"), " ")
+                    ?.take(160)
+                    ?: failure.javaClass.simpleName
+                failures += "${strategy.logName}: $detail"
+                EnforcementLog.warn(
+                    "Launcher",
+                    "${prefix}spawn exception strategy=${strategy.logName} " +
+                        "app=${app.processName} error=${failure.javaClass.simpleName} " +
+                        "detail=$detail"
+                )
+                if (strategy != LauncherSpawnStrategy.ExplorerHandoff &&
+                    diagnosticsLogged.compareAndSet(false, true)
+                ) {
+                    // Once per run: the facts that decide whether this API may be used
+                    // here, so the next log shows the real cause of a repeated failure.
+                    val facts = runCatching { WindowsUnelevatedLauncher.diagnostics() }
+                        .getOrElse { "unreadable(${it.javaClass.simpleName})" }
+                    EnforcementLog.warn("Launcher", "${prefix}token-launch diagnostics $facts")
+                }
+            }
+        }
+
+        return SpawnResult.Failed(
+            "Couldn't start this app. Tap to retry. [${failures.joinToString(" | ")}]"
+        )
+    }
+
+    override fun launchVerified(method: String) {
+        val strategy = LauncherSpawnStrategy.entries.firstOrNull { it.logName == method } ?: return
+        if (preferredStrategy != strategy) {
+            EnforcementLog.info(
+                "Launcher",
+                "spawn strategy=${strategy.logName} verified; it will be tried first from now on"
+            )
+            preferredStrategy = strategy
+        }
+    }
+
+    override fun processElevation(pid: Long, creationTimeMs: Long): ProcessElevation {
+        if (!isWindows) return ProcessElevation.Unknown
+        // The same process must be there before and after the token is read, so a
+        // recycled PID can never be judged (or later closed) as someone else's app.
+        if (ProcessSnapshot.isAlive(pid, creationTimeMs) != true) return ProcessElevation.Unknown
+        val elevated = WindowsUnelevatedLauncher.isProcessElevated(pid)
+            ?: return ProcessElevation.Unknown
+        if (ProcessSnapshot.isAlive(pid, creationTimeMs) != true) return ProcessElevation.Unknown
+        return if (elevated) ProcessElevation.Elevated else ProcessElevation.NotElevated
+    }
+
+    override fun terminateProcess(pid: Long, creationTimeMs: Long): Boolean {
+        return try {
+            // destroyForcibly() on a handle obtained here re-checks the start time in
+            // the JDK, so a PID recycled after this comparison is not terminated.
+            val handle = ProcessHandle.of(pid).orElse(null) ?: return false
+            val startedAt = handle.info().startInstant().orElse(null)?.toEpochMilli()
+                ?: return false
+            if (startedAt != creationTimeMs) return false
+            handle.destroyForcibly()
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -298,6 +421,26 @@ internal fun launcherSpawnMode(
         LauncherSpawnMode.Direct
     }
 
+/** Ways to start an app with the user's normal rights while FocusFlow is elevated. */
+internal enum class LauncherSpawnStrategy(val logName: String) {
+    /** Shell token duplicated with query/duplicate/assign-primary plus adjust rights. */
+    UserShellToken("user-shell-token"),
+
+    /** Same API with TOKEN_ALL_ACCESS on the duplicate: a different parameter set. */
+    UserShellTokenFull("user-shell-token-full"),
+
+    /** Ask the running Explorer to open the app; no PID comes back. */
+    ExplorerHandoff("explorer-handoff")
+}
+
+/** The last strategy that worked goes first; the others follow in their default order. */
+internal fun orderedSpawnStrategies(
+    preferred: LauncherSpawnStrategy?
+): List<LauncherSpawnStrategy> {
+    val all = LauncherSpawnStrategy.entries
+    return if (preferred == null) all else listOf(preferred) + all.filter { it != preferred }
+}
+
 internal fun resolveLauncherExecutableFile(
     tilePath: String?,
     processName: String,
@@ -376,7 +519,31 @@ private fun usableExecutable(path: String?, isWindowsHost: Boolean): File? {
  * launching the app with FocusFlow's elevated token.
  */
 internal object WindowsUnelevatedLauncher {
-    fun start(executable: File, workingDirectory: File?): Long {
+    /**
+     * Which access mask the duplicated shell token gets. The original code used only
+     * the three rights Microsoft documents (query, duplicate, assign primary) and
+     * every call failed with error 5 in the field, so neither set below repeats
+     * that mask. Whether either one works on a given PC is not known without
+     * testing on Windows; the log records the outcome and, on failure, the facts
+     * gathered by [diagnostics].
+     *
+     * No explicit desktop is passed: the documentation says a NULL desktop makes the
+     * API grant the new process access to the caller's desktop itself, while an
+     * explicit desktop makes the caller responsible for those permissions.
+     */
+    enum class TokenRights {
+        /** Documented rights plus TOKEN_ADJUST_DEFAULT and TOKEN_ADJUST_SESSIONID. */
+        Extended,
+
+        /** TOKEN_ALL_ACCESS. */
+        Full
+    }
+
+    fun start(
+        executable: File,
+        workingDirectory: File?,
+        rights: TokenRights = TokenRights.Extended
+    ): Long {
         val shellWindow = User32Api.INSTANCE.GetShellWindow()
             ?: throw IOException("The interactive Windows shell is unavailable.")
         val shellPid = IntByReference()
@@ -408,7 +575,7 @@ internal object WindowsUnelevatedLauncher {
             val primaryTokenRef = PointerByReference()
             if (!advapi.DuplicateTokenEx(
                     shellToken,
-                    TOKEN_QUERY or TOKEN_DUPLICATE or TOKEN_ASSIGN_PRIMARY,
+                    if (rights == TokenRights.Full) TOKEN_ALL_ACCESS else PRIMARY_TOKEN_ACCESS,
                     null,
                     SECURITY_IMPERSONATION,
                     TOKEN_PRIMARY,
@@ -423,7 +590,10 @@ internal object WindowsUnelevatedLauncher {
                 throw IOException("CreateProcess error=5: the interactive shell token is elevated.")
             }
 
-            val startup = LauncherStartupInfo().apply { cb = size() }
+            val startup = LauncherStartupInfo().apply {
+                cb = size()
+                // lpDesktop stays null on purpose (see TokenRights).
+            }
             val created = LauncherProcessInformation()
             processInfo = created
             val started = advapi.CreateProcessWithTokenW(
@@ -437,7 +607,13 @@ internal object WindowsUnelevatedLauncher {
                 startup,
                 created
             )
-            if (!started) throw win32Failure("CreateProcessWithTokenW")
+            if (!started) {
+                val error = Native.getLastError()
+                throw IOException(
+                    "CreateProcessWithTokenW failed with Windows error=$error " +
+                        "(rights=$rights, shellPid=${shellPid.value})"
+                )
+            }
             return created.dwProcessId.toLong()
         } finally {
             processInfo?.let { info ->
@@ -447,6 +623,192 @@ internal object WindowsUnelevatedLauncher {
             if (primaryToken != null) kernel.CloseHandle(primaryToken)
             if (shellToken != null) kernel.CloseHandle(shellToken)
             kernel.CloseHandle(shellProcess)
+        }
+    }
+
+    /**
+     * CreateProcessWithTokenW needs SeImpersonatePrivilege in the caller's token. An
+     * elevated administrator normally has it enabled; if it is present but disabled
+     * it is switched on here. Returns a short state for the log. Nothing is added to
+     * the token: a privilege the token does not hold cannot be granted this way.
+     */
+    fun ensureImpersonatePrivilege(): String {
+        val kernel = Kernel32Api.INSTANCE
+        val advapi = Advapi32Api.INSTANCE
+        val tokenRef = PointerByReference()
+        if (!advapi.OpenProcessToken(
+                kernel.GetCurrentProcess(),
+                TOKEN_QUERY or TOKEN_ADJUST_PRIVILEGES,
+                tokenRef
+            )
+        ) {
+            return "unreadable(OpenProcessToken error=${Native.getLastError()})"
+        }
+        val token = tokenRef.value
+        try {
+            val state = impersonatePrivilegeState(advapi, token)
+            if (state != "present-disabled") return state
+            Memory(16).use { newState ->
+                newState.setInt(0, 1)
+                newState.setInt(4, SE_IMPERSONATE_LUID_LOW)
+                newState.setInt(8, 0)
+                newState.setInt(12, SE_PRIVILEGE_ENABLED)
+                advapi.AdjustTokenPrivileges(token, false, newState, 0, null, null)
+            }
+            val after = impersonatePrivilegeState(advapi, token)
+            return if (after == "enabled") "enabled-by-focusflow" else "still-$after"
+        } finally {
+            if (token != null) kernel.CloseHandle(token)
+        }
+    }
+
+    /**
+     * Facts that decide whether this API can work here: sessions of FocusFlow and the
+     * shell, token elevation types, SeImpersonatePrivilege, and the Secondary Logon
+     * service start type (4 = disabled). Every item is read independently; a failure
+     * to read one is reported, never thrown.
+     */
+    fun diagnostics(): String {
+        val kernel = Kernel32Api.INSTANCE
+        val advapi = Advapi32Api.INSTANCE
+        val parts = mutableListOf<String>()
+        fun part(name: String, read: () -> String) {
+            parts += "$name=" + runCatching(read)
+                .getOrElse { "unreadable(${it.javaClass.simpleName})" }
+        }
+
+        val ownPid = ProcessHandle.current().pid().toInt()
+        val shellPid = runCatching {
+            val window = User32Api.INSTANCE.GetShellWindow()
+            val pid = IntByReference()
+            if (window != null) User32Api.INSTANCE.GetWindowThreadProcessId(window, pid)
+            pid.value
+        }.getOrDefault(0)
+
+        fun sessionOf(pid: Int): String {
+            val session = IntByReference()
+            return if (pid > 0 && kernel.ProcessIdToSessionId(pid, session)) {
+                session.value.toString()
+            } else {
+                "unknown"
+            }
+        }
+
+        fun elevationTypeOf(process: Pointer?): String {
+            val tokenRef = PointerByReference()
+            if (process == null || !advapi.OpenProcessToken(process, TOKEN_QUERY, tokenRef)) {
+                return "unknown"
+            }
+            val token = tokenRef.value
+            try {
+                Memory(Int.SIZE_BYTES.toLong()).use { value ->
+                    if (!advapi.GetTokenInformation(
+                            token,
+                            TOKEN_ELEVATION_TYPE_INFORMATION,
+                            value,
+                            Int.SIZE_BYTES,
+                            IntByReference()
+                        )
+                    ) {
+                        return "unknown"
+                    }
+                    return when (value.getInt(0)) {
+                        1 -> "default"
+                        2 -> "full"
+                        3 -> "limited"
+                        else -> "other"
+                    }
+                }
+            } finally {
+                if (token != null) kernel.CloseHandle(token)
+            }
+        }
+
+        part("focusFlowSession") { sessionOf(ownPid) }
+        part("shellPid") { shellPid.toString() }
+        part("shellSession") { sessionOf(shellPid) }
+        part("focusFlowTokenType") { elevationTypeOf(kernel.GetCurrentProcess()) }
+        part("shellTokenType") {
+            val process = kernel.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, shellPid)
+            try {
+                elevationTypeOf(process)
+            } finally {
+                if (process != null) kernel.CloseHandle(process)
+            }
+        }
+        part("seImpersonate") {
+            val tokenRef = PointerByReference()
+            if (!advapi.OpenProcessToken(kernel.GetCurrentProcess(), TOKEN_QUERY, tokenRef)) {
+                "unknown"
+            } else {
+                try {
+                    impersonatePrivilegeState(advapi, tokenRef.value)
+                } finally {
+                    kernel.CloseHandle(tokenRef.value)
+                }
+            }
+        }
+        part("secondaryLogonStart") {
+            Advapi32Util.registryGetIntValue(
+                WinReg.HKEY_LOCAL_MACHINE,
+                "SYSTEM\\CurrentControlSet\\Services\\seclogon",
+                "Start"
+            ).toString()
+        }
+        return parts.joinToString(" ")
+    }
+
+    private fun impersonatePrivilegeState(api: Advapi32Api, token: Pointer?): String {
+        Memory(2048).use { buffer ->
+            if (!api.GetTokenInformation(
+                    token,
+                    TOKEN_PRIVILEGES_INFORMATION,
+                    buffer,
+                    2048,
+                    IntByReference()
+                )
+            ) {
+                return "unknown"
+            }
+            val count = buffer.getInt(0)
+            for (index in 0 until count.coerceIn(0, 100)) {
+                val offset = 4L + index * 12L
+                val low = buffer.getInt(offset)
+                val high = buffer.getInt(offset + 4)
+                val attributes = buffer.getInt(offset + 8)
+                if (low == SE_IMPERSONATE_LUID_LOW && high == 0) {
+                    return if (attributes and SE_PRIVILEGE_ENABLED != 0) {
+                        "enabled"
+                    } else {
+                        "present-disabled"
+                    }
+                }
+            }
+            return "absent"
+        }
+    }
+
+    /** Elevation of another process, or null when it cannot be read. */
+    fun isProcessElevated(pid: Long): Boolean? {
+        if (pid <= 0L || pid > Int.MAX_VALUE) return null
+        val kernel = Kernel32Api.INSTANCE
+        val advapi = Advapi32Api.INSTANCE
+        val process = kernel.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.toInt())
+            ?: return null
+        var token: Pointer? = null
+        return try {
+            val tokenRef = PointerByReference()
+            if (!advapi.OpenProcessToken(process, TOKEN_QUERY, tokenRef)) {
+                null
+            } else {
+                token = tokenRef.value
+                tokenIsElevated(advapi, token)
+            }
+        } catch (_: Throwable) {
+            null
+        } finally {
+            if (token != null) kernel.CloseHandle(token)
+            kernel.CloseHandle(process)
         }
     }
 
@@ -517,6 +879,8 @@ internal object WindowsUnelevatedLauncher {
     private interface Kernel32Api : StdCallLibrary {
         fun OpenProcess(access: Int, inheritHandle: Boolean, processId: Int): Pointer?
         fun CloseHandle(handle: Pointer?): Boolean
+        fun GetCurrentProcess(): Pointer?
+        fun ProcessIdToSessionId(processId: Int, sessionId: IntByReference): Boolean
 
         companion object {
             val INSTANCE: Kernel32Api =
@@ -548,6 +912,15 @@ internal object WindowsUnelevatedLauncher {
             returnLength: IntByReference
         ): Boolean
 
+        fun AdjustTokenPrivileges(
+            token: Pointer?,
+            disableAllPrivileges: Boolean,
+            newState: Pointer?,
+            bufferLength: Int,
+            previousState: Pointer?,
+            returnLength: IntByReference?
+        ): Boolean
+
         fun CreateProcessWithTokenW(
             token: Pointer?,
             logonFlags: Int,
@@ -570,7 +943,45 @@ internal object WindowsUnelevatedLauncher {
     private const val TOKEN_ASSIGN_PRIMARY = 0x0001
     private const val TOKEN_DUPLICATE = 0x0002
     private const val TOKEN_QUERY = 0x0008
+    private const val TOKEN_ALL_ACCESS = 0xF01FF
+    private const val TOKEN_ADJUST_DEFAULT = 0x0080
+    private const val TOKEN_ADJUST_SESSIONID = 0x0100
+    private const val PRIMARY_TOKEN_ACCESS =
+        TOKEN_QUERY or TOKEN_DUPLICATE or TOKEN_ASSIGN_PRIMARY or
+            TOKEN_ADJUST_DEFAULT or TOKEN_ADJUST_SESSIONID
     private const val SECURITY_IMPERSONATION = 2
     private const val TOKEN_PRIMARY = 1
     private const val TOKEN_ELEVATION_INFORMATION = 20
+    private const val TOKEN_ELEVATION_TYPE_INFORMATION = 18
+    private const val TOKEN_PRIVILEGES_INFORMATION = 3
+    private const val TOKEN_ADJUST_PRIVILEGES = 0x0020
+    private const val SE_IMPERSONATE_LUID_LOW = 29
+    private const val SE_PRIVILEGE_ENABLED = 0x2
+}
+
+/**
+ * Fallback launcher: asks the already-running Windows shell (Explorer) to open the
+ * app. Explorer runs with the user's normal rights, so the app does not inherit
+ * FocusFlow's administrator token. No app PID is returned; the coordinator finds
+ * the new process by name and path.
+ */
+internal object WindowsExplorerLauncher {
+    fun start(executable: File) {
+        val windowsDir = System.getenv("SystemRoot")
+            ?: System.getenv("windir")
+            ?: "C:\\Windows"
+        val explorer = File(windowsDir, "explorer.exe")
+        if (!explorer.isFile) {
+            throw IOException("CreateProcess error=2: explorer.exe was not found.")
+        }
+        val process = ProcessBuilder(explorer.absolutePath, executable.absolutePath)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        try {
+            process.outputStream.close()
+        } catch (_: Exception) {
+            // The hand-off request is already sent; a closed stdin pipe is not an error.
+        }
+    }
 }
