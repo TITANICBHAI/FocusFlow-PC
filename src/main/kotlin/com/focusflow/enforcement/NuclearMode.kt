@@ -33,6 +33,9 @@ import com.focusflow.enforcement.killProcessesByName
  */
 object NuclearMode {
 
+    private const val HOLD_MODEL_KEY = "nuclear_hold_model"
+    private const val HOLD_MODEL_VERSION = "2"
+
     internal enum class PersistedState {
         ENABLED,
         DISABLED,
@@ -112,11 +115,27 @@ object NuclearMode {
     /** Per-process escape attempt counter — flushed to DB every 5 hits. */
     private val escapeCounts = ConcurrentHashMap<String, Int>()
 
-    // StateFlow's compareAndSet keeps the enable guard atomic and also lets UI
-    // consumers react immediately when Nuclear Mode changes.
+    /**
+     * Who keeps Nuclear Mode on (see [NuclearHolds]). Enforcement runs while either the
+     * person (manual) or a Focus Launcher session holds it; only the manual hold is
+     * remembered across restarts.
+     */
+    private val holds = NuclearHolds()
     private val _isActiveState = MutableStateFlow(false)
+    private val _manualState = MutableStateFlow(false)
+    private val _sessionState = MutableStateFlow(false)
+
+    /** Nuclear enforcement is running, for any reason. */
     val activeState: StateFlow<Boolean> = _isActiveState.asStateFlow()
     val isActive: Boolean get() = _isActiveState.value
+
+    /** The person turned Nuclear Mode on; it survives restarts and needs the Nuclear PIN to end. */
+    val manualActiveState: StateFlow<Boolean> = _manualState.asStateFlow()
+    val manualActive: Boolean get() = _manualState.value
+
+    /** A Focus Launcher session is holding Nuclear Mode on; it ends with the session. */
+    val sessionHeldState: StateFlow<Boolean> = _sessionState.asStateFlow()
+    val sessionHeld: Boolean get() = _sessionState.value
 
     /** Number of processes in the escape-route list (shown on the Nuclear Mode screen). */
     val escapeProcessCount: Int get() = escapeProcesses.size
@@ -371,18 +390,102 @@ object NuclearMode {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /** Publishes a hold change to the observable flags. Call only inside [lifecycleLock]. */
+    private fun publish(transition: NuclearHolds.Transition): NuclearHolds.Transition {
+        _manualState.value = transition.after.manual
+        _sessionState.value = transition.after.session
+        _isActiveState.value = transition.after.active
+        return transition
+    }
+
     /**
-     * Enable nuclear mode.
-     * @param silent When true, suppresses tray notifications and sound. Pass true
-     *               when called from FocusLauncherService so kiosk-mode lifecycle
-     *               events don't show confusing "Nuclear Mode ON" popups.
+     * Turn Nuclear Mode on as the person's own setting (the hold that is remembered and
+     * guarded by the Nuclear PIN).
+     * @param silent When true, suppresses tray notifications and sound.
      */
     fun enable(silent: Boolean = false) {
-        // CAS prevents two simultaneous enable() calls from both passing the guard
-        // and launching two monitorJobs (each firing enforceTick() every 500 ms).
-        if (!_isActiveState.compareAndSet(false, true)) return
+        val transition = synchronized(lifecycleLock) { publish(holds.setManual(true)) }
+        if (!transition.manualChanged) return
 
-        persistSetting("nuclear_mode", "true", "Nuclear Mode state")
+        // Remembered before anything else, on this thread, so a crash right after cannot
+        // lose a protection that was just switched on.
+        persistManualHold()
+        if (transition.started) startEnforcement()
+
+        if (!silent) {
+            if (transition.started) {
+                notifyOn()
+            } else {
+                SystemTrayManager.showNotification(
+                    "Nuclear Mode kept on",
+                    "Nuclear Mode will stay on after the Focus Launcher session ends.",
+                    TrayIcon.MessageType.INFO
+                )
+            }
+        }
+    }
+
+    /**
+     * Turn off the person's own Nuclear Mode setting. If a Focus Launcher session is still
+     * holding Nuclear Mode, enforcement continues until the session ends.
+     * @param silent When true, suppresses tray notifications.
+     */
+    fun disable(silent: Boolean = false) {
+        com.focusflow.services.LooseningCoolOff.cancel(com.focusflow.services.LooseningCoolOff.KEY_NUCLEAR_OFF)
+        val transition = synchronized(lifecycleLock) { publish(holds.setManual(false)) }
+
+        // The remembered value is written off the caller's thread (the caller may be the UI
+        // thread and the database may be busy), always as the *latest* hold state.
+        schedulePersistManualHold()
+
+        // Cleanup is idempotent and safe to repeat, so a shutdown-time disable() still
+        // removes firewall rules even if nothing was marked active in memory.
+        if (!transition.after.active) stopEnforcement()
+
+        if (!silent && transition.manualChanged) {
+            if (transition.after.active) {
+                SystemTrayManager.showNotification(
+                    "Nuclear Mode setting off",
+                    "A Focus Launcher session is still using Nuclear Mode until it ends.",
+                    TrayIcon.MessageType.INFO
+                )
+            } else {
+                SystemTrayManager.updateTooltip("FocusFlow — Ready")
+                SystemTrayManager.showNotification(
+                    "Nuclear Mode OFF",
+                    "Normal operation resumed.",
+                    TrayIcon.MessageType.INFO
+                )
+            }
+        }
+    }
+
+    /**
+     * A Focus Launcher session needs Nuclear Mode. Not remembered by itself: the launcher's
+     * own session record brings it back after an interruption, and
+     * [releaseSessionHold] ends it, without touching a manual setting.
+     */
+    fun acquireSessionHold() {
+        val transition = synchronized(lifecycleLock) { publish(holds.setSession(true)) }
+        if (transition.started) startEnforcement()
+    }
+
+    /** The Focus Launcher session (or break) no longer needs Nuclear Mode. Idempotent. */
+    fun releaseSessionHold() {
+        val transition = synchronized(lifecycleLock) { publish(holds.setSession(false)) }
+        if (transition.stopped) stopEnforcement()
+    }
+
+    /**
+     * Test seam: when false, hold changes are tracked but no monitor, firewall rule or
+     * process kill is started, so tests can never end a real process on the machine
+     * running them.
+     */
+    @Volatile internal var enforcementRunsForTest = true
+
+    /** Start the monitor, firewall rules and hardening. Called once per off→on change. */
+    private fun startEnforcement() {
+        if (!enforcementRunsForTest) return
         escapeCounts.clear()
 
         // Capture the pending cleanup thread reference before launching the IO work.
@@ -399,55 +502,31 @@ object NuclearMode {
         scope.launch(Dispatchers.IO) {
             pendingCleanup?.join(3_000)   // join — interrupt won't help netsh waitFor() blocks
             synchronized(firewallLock) {
-                // disable() may have won the race while the previous cleanup was
+                // The holds may have been released while the previous cleanup was
                 // finishing. Never apply rules for a mode that is no longer active.
                 if (_isActiveState.value) applyFirewallLock()
             }
             // Optional (hidden setting): make "end task" / taskkill on FocusFlow fail while Nuclear
-            // Mode is on. Re-check afterwards in case disable() won the race.
+            // Mode is on. Re-check afterwards in case it was released meanwhile.
             if (_isActiveState.value) {
                 ProcessHardening.enableIfConfigured()
                 if (!_isActiveState.value) ProcessHardening.disable()
             }
         }
 
+        monitorJob?.cancel()
         monitorJob = scope.launch {
             while (isActive) {
                 enforceTick()
                 delay(500)
             }
         }
-
-        if (!silent) {
-            val uninstallNotice = if (InstallVariant.isWindowsDirectInstall) {
-                " Common EXE/MSI uninstallers are blocked while Nuclear Mode is active."
-            } else {
-                ""
-            }
-            SystemTrayManager.showNotification(
-                "Nuclear Mode ON",
-                if (ElevationManager.isElevated || !InstallVariant.isWindows) {
-                    "All escape routes are blocked.$uninstallNotice Stay focused."
-                } else {
-                    "Process blocking is on, but FocusFlow is not running as administrator: the firewall lock is off and tools started as administrator may survive. Use Restart as admin.$uninstallNotice"
-                },
-                TrayIcon.MessageType.WARNING
-            )
-            SystemTrayManager.updateTooltip("FocusFlow — NUCLEAR MODE ACTIVE")
-            SoundAversion.playNuclearAlert()
-        }
     }
 
-    /**
-     * Disable nuclear mode.
-     * @param silent When true, suppresses tray notifications. Pass true when called
-     *               from FocusLauncherService so kiosk-mode lifecycle events don't
-     *               show confusing "Nuclear Mode OFF / Normal operation resumed" popups.
-     */
-    fun disable(silent: Boolean = false) {
-        com.focusflow.services.LooseningCoolOff.cancel(com.focusflow.services.LooseningCoolOff.KEY_NUCLEAR_OFF)
+    /** Stop the monitor and remove firewall rules and hardening. Safe to call repeatedly. */
+    private fun stopEnforcement() {
+        if (!enforcementRunsForTest) return
         synchronized(lifecycleLock) {
-            _isActiveState.value = false
             monitorJob?.cancel()
             monitorJob = null
 
@@ -457,17 +536,16 @@ object NuclearMode {
             // UI notification that will immediately follow).
             val totalAttemptsSnapshot = escapeCounts.values.sum()
 
-            // Move both DB writes into the background cleanup thread so the caller
+            // Firewall removal and bookkeeping run on a background thread so the caller
             // (startBreak() / onKillSwitchActivated() — both on the AWT EDT or Compose
-            // UI thread) is never blocked waiting for the DB lock.
-            // awaitCleanup() joins this thread before JVM exit, so persistence is safe
-            // even when disable() is called from the shutdown sequence.
+            // UI thread) is never blocked. awaitCleanup() joins this thread before JVM
+            // exit, so the work completes even when this runs from the shutdown sequence.
             val t = Thread({
                 // First, so a locked database can never keep FocusFlow un-killable.
                 ProcessHardening.disable()
                 synchronized(firewallLock) {
-                    persistSetting("nuclear_mode", "false", "Nuclear Mode state")
-                    removeFirewallLock()
+                    // A hold taken again meanwhile owns the rules now.
+                    if (!_isActiveState.value) removeFirewallLock()
                     if (totalAttemptsSnapshot > 0) {
                         persistSetting(
                             "nuclear_last_session_attempts",
@@ -480,25 +558,38 @@ object NuclearMode {
             cleanupThread = t
             t.start()
         }
+    }
 
-        if (!silent) {
-            SystemTrayManager.updateTooltip("FocusFlow — Ready")
-            SystemTrayManager.showNotification(
-                "Nuclear Mode OFF",
-                "Normal operation resumed.",
-                TrayIcon.MessageType.INFO
-            )
+    private fun notifyOn() {
+        val uninstallNotice = if (InstallVariant.isWindowsDirectInstall) {
+            " Common EXE/MSI uninstallers are blocked while Nuclear Mode is active."
+        } else {
+            ""
         }
+        SystemTrayManager.showNotification(
+            "Nuclear Mode ON",
+            if (ElevationManager.isElevated || !InstallVariant.isWindows) {
+                "All escape routes are blocked.$uninstallNotice Stay focused."
+            } else {
+                "Process blocking is on, but FocusFlow is not running as administrator: the firewall lock is off and tools started as administrator may survive. Use Restart as admin.$uninstallNotice"
+            },
+            TrayIcon.MessageType.WARNING
+        )
+        SystemTrayManager.updateTooltip("FocusFlow — NUCLEAR MODE ACTIVE")
+        SoundAversion.playNuclearAlert()
     }
 
     /**
      * Stop this process's monitor for an administrator handoff without clearing
-     * the persisted active flag or firewall rules. The elevated child resumes
-     * Nuclear Mode once its normal startup has completed.
+     * the persisted manual setting or firewall rules. The elevated child resumes the
+     * manual hold from the database; a Focus Launcher session is not carried over (it
+     * cannot be active during a handoff) and a restored one re-acquires its own hold.
      */
     fun suspendForElevationHandoff() {
         val totalAttemptsSnapshot = synchronized(lifecycleLock) {
-            if (!_isActiveState.compareAndSet(true, false)) return
+            if (!holds.snapshot().active) return
+            persistFrozen = true
+            publish(holds.clearAll())
             monitorJob?.cancel()
             monitorJob = null
             escapeCounts.values.sum()
@@ -514,13 +605,13 @@ object NuclearMode {
     }
 
     /**
-     * Block until the background firewall-cleanup thread finishes.
-     * Call ONLY from the shutdown thread — never from the UI thread.
-     * No-op if no cleanup is pending or it already finished.
+     * Block until the background firewall-cleanup thread and any pending write of the
+     * remembered setting finish. Call ONLY from the shutdown thread — never from the UI thread.
      */
     fun awaitCleanup(timeoutMs: Long = 5_000) {
         cleanupThread?.join(timeoutMs)
         cleanupThread = null
+        runCatching { pendingPersist?.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }
     }
 
     /** Total escape attempts recorded since the last [enable] call. */
@@ -536,7 +627,7 @@ object NuclearMode {
                 "Nuclear Mode setting is unreadable; keeping enforcement active and retrying",
                 settingsReadFailure
             )
-            if (!isActive) enable(silent = true)
+            applyStoredManualHold(true)
             scheduleSettingsRetry()
         }
     }
@@ -553,6 +644,19 @@ object NuclearMode {
             is Database.SettingRead.Unreadable -> PersistedState.UNREADABLE
         }
 
+    /**
+     * Sets the manual hold from what is stored, without writing it back and without
+     * touching a Focus Launcher session's hold.
+     */
+    private fun applyStoredManualHold(held: Boolean) {
+        val transition = synchronized(lifecycleLock) {
+            if (persistFrozen) return
+            publish(holds.setManual(held))
+        }
+        if (transition.started) startEnforcement()
+        if (transition.stopped) stopEnforcement()
+    }
+
     private fun loadPersistedState(): Boolean {
         val read = Database.readSetting("nuclear_mode")
         settingsReadFailure = (read as? Database.SettingRead.Unreadable)?.cause
@@ -560,16 +664,40 @@ object NuclearMode {
             PersistedState.ENABLED -> {
                 settingsRetryJob?.cancel()
                 settingsRetryJob = null
-                if (!isActive) enable(silent = true)
+                applyStoredManualHold(true)
+                announceLegacyFlagOnce(wasEnabled = true)
                 true
             }
             PersistedState.DISABLED -> {
                 settingsRetryJob?.cancel()
                 settingsRetryJob = null
-                if (isActive) disable(silent = true)
+                applyStoredManualHold(false)
+                announceLegacyFlagOnce(wasEnabled = false)
                 true
             }
             PersistedState.UNREADABLE -> false
+        }
+    }
+
+    /**
+     * Before the two-hold model, Focus Launcher wrote its own sessions into the same stored
+     * flag, so an "on" left over from an older version may not have been chosen by the
+     * person. It is kept (never silently weakened) as a manual setting; this tells the
+     * person once so they can turn it off themselves.
+     */
+    private fun announceLegacyFlagOnce(wasEnabled: Boolean) {
+        val marker = (Database.readSetting(HOLD_MODEL_KEY) as? Database.SettingRead.Present)?.value
+        if (marker == HOLD_MODEL_VERSION) return
+        persistSetting(HOLD_MODEL_KEY, HOLD_MODEL_VERSION, "Nuclear Mode hold-model marker")
+        if (!wasEnabled) return
+        scope.launch {
+            delay(8_000L)
+            SystemTrayManager.showNotification(
+                "Nuclear Mode is ON",
+                "Nuclear Mode was left on and is kept as your own setting. " +
+                    "Turn it off in Nuclear Mode if you did not choose it (it asks for the Nuclear PIN if you set one).",
+                TrayIcon.MessageType.WARNING
+            )
         }
     }
 
@@ -586,6 +714,42 @@ object NuclearMode {
         }
     }
 
+    // ── Remembering the manual hold ───────────────────────────────────────────
+
+    private val persistLock = Any()
+    private val persistExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "FocusFlow-NuclearPersist").apply { isDaemon = true }
+    }
+    @Volatile private var pendingPersist: java.util.concurrent.Future<*>? = null
+    @Volatile private var persistFrozen = false
+
+    /**
+     * Writes the manual hold as it is *now*. Every writer goes through this one lock and
+     * reads the latest state when it runs, so a late write can never put back an older value.
+     */
+    private fun persistManualHold() {
+        synchronized(persistLock) {
+            if (persistFrozen) return
+            val value = holds.snapshot().manual
+            repeat(3) { attempt ->
+                when (val result = Database.writeSetting("nuclear_mode", value.toString())) {
+                    Database.SettingWrite.Ok -> return
+                    is Database.SettingWrite.Failed -> {
+                        if (attempt == 2) {
+                            EnforcementLog.warn("NuclearMode", "Could not persist Nuclear Mode state", result.cause)
+                        } else {
+                            try { Thread.sleep(250L) } catch (_: InterruptedException) { return }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun schedulePersistManualHold() {
+        pendingPersist = persistExecutor.submit { persistManualHold() }
+    }
+
     private fun persistSetting(key: String, value: String, description: String) {
         when (val result = Database.writeSetting(key, value)) {
             Database.SettingWrite.Ok -> Unit
@@ -599,7 +763,11 @@ object NuclearMode {
         settingsRetryJob = null
         monitorJob?.cancel()
         monitorJob = null
-        _isActiveState.value = false
+        synchronized(lifecycleLock) { publish(holds.clearAll()) }
+        enforcementRunsForTest = true
+        persistFrozen = false
+        runCatching { pendingPersist?.get(1_000L, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        pendingPersist = null
         escapeCounts.clear()
         settingsReadFailure = null
         cleanupThread?.join(1_000L)

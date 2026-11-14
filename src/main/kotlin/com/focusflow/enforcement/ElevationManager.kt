@@ -79,7 +79,7 @@ object ElevationManager {
         }.onFailure { EnforcementLog.warn("Elevation", "startup diagnostics failed", it) }
     }
 
-    fun relaunchElevated(resumeNuclearMode: Boolean = NuclearMode.isActive): RelaunchResult {
+    fun relaunchElevated(resumeNuclearMode: Boolean = NuclearMode.manualActive): RelaunchResult {
         val requestStartedAt = System.nanoTime()
         if (!isWindows) {
             EnforcementLog.info(

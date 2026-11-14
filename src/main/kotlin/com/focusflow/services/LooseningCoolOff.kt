@@ -71,7 +71,9 @@ object LooseningCoolOff {
 
     /** Nuclear Mode, guarded by the Nuclear PIN. */
     fun requestNuclearOff(): Boolean {
-        if (!NuclearMode.isActive) return true
+        // Only the person's own Nuclear Mode setting is guarded by the Nuclear PIN; a
+        // Focus Launcher session's hold ends with the session.
+        if (!NuclearMode.manualActive) return true
         return requestLoosening(NUCLEAR_SETTING, KEY_NUCLEAR_OFF, "Nuclear Mode") { NuclearMode.disable() }
     }
 

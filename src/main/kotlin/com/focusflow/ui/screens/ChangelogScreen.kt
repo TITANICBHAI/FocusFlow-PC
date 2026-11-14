@@ -46,7 +46,14 @@ internal val CHANGELOG = listOf(
             "IMP" to "Updated the Windows installer template to match the new Java runtime; the uninstall protection check works as before",
             "IMP" to "Secure (HTTPS) connections now include the encryption support modern servers expect, for example the optional Discord diagnostics webhook",
             "FIX" to "Removed an outdated startup setting that does not exist on Windows and would have broken any future network feature",
-            "UPD" to "No features or settings changed in this release. Windows-specific behavior still needs hands-on verification"
+            "FIX" to "Focus Launcher no longer leaves Nuclear Mode on after a session. A session now only borrows Nuclear Mode while it runs and gives it back when it ends, restarts or is interrupted",
+            "FIX" to "Nuclear Mode you turned on yourself is never switched off by a Focus Launcher session, and a session never turns it on for good. The Nuclear Mode screen and Settings show who is holding it (you, or a Focus Launcher session)",
+            "IMP" to "While only a Focus Launcher session is holding Nuclear Mode, its switch on the Nuclear Mode screen is disabled with an explanation and the Nuclear PIN is not asked. Your own Nuclear Mode still needs the Nuclear PIN to turn off",
+            "SEC" to "A Nuclear Mode flag left on by an older version is kept as your own setting (never silently weakened); FocusFlow tells you once so you can turn it off",
+            "FIX" to "Focus Launcher and the other app pickers now find many more programs: apps that only appear in the Start Menu or under App Paths (for example Adobe apps), and installers that leave no icon path",
+            "NEW" to "Installed Store apps such as Calculator, Clock, Calendar and Mail now appear in Focus Launcher greyed out as \"Store app — not supported\" instead of being missing",
+            "IMP" to "Runtimes, redistributables, updates and background helpers (for example the Microsoft Edge WebView2 Runtime) are hidden from app lists",
+            "UPD" to "Windows-specific behavior still needs hands-on verification"
         )
     ),
     ChangelogEntry(

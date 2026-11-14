@@ -74,6 +74,7 @@ fun SettingsScreen(
     var showPinDialog        by remember { mutableStateOf(false) }
     var hookActive           by remember { mutableStateOf(false) }
     var nuclearActive        by remember { mutableStateOf(false) }
+    val nuclearSessionHeld   by NuclearMode.sessionHeldState.collectAsState()
     var focusLockUntilTimer   by remember { mutableStateOf(false) }
     var showAlwaysOnPinDialog by remember { mutableStateOf(false) }
     var pendingAlwaysOnValue  by remember { mutableStateOf(false) }
@@ -146,7 +147,7 @@ fun SettingsScreen(
             FloatingBlockOverlay.overlayMessage  = overlayMessage
             AppBlocker.overlayEnabled           = overlayEnabled
             hookActive      = WinEventHook.isActive
-            nuclearActive   = NuclearMode.isActive
+            nuclearActive   = NuclearMode.manualActive
             nuclearPinSet   = nPinSet
             globalPinSet    = gPinSet
             pomodoroWork    = pw
@@ -1087,6 +1088,13 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = OnSurface2
                         )
+                        if (nuclearSessionHeld) {
+                            Text(
+                                "Also on right now for your Focus Launcher session. That part ends with the session; this switch is your own setting.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OnSurface2
+                            )
+                        }
                     }
                     Spacer(Modifier.width(12.dp))
                     Switch(
@@ -1094,16 +1102,16 @@ fun SettingsScreen(
                         onCheckedChange = { enabled ->
                             if (enabled) {
                                 NuclearMode.enable()
-                                nuclearActive = NuclearMode.isActive
+                                nuclearActive = NuclearMode.manualActive
                             } else {
                                 // Gate the off-switch behind the Nuclear Mode PIN when one is set.
-                                // FocusLauncherService calls disable(silent=true) directly and must
-                                // never hit this UI gate — PIN enforcement is UI-layer only.
+                                // This switch is the person's own Nuclear Mode setting. A Focus
+                                // Launcher session uses its own hold and never goes through this gate.
                                 if (NuclearPin.isSet()) {
                                     showNuclearPinGate = true
                                 } else {
                                     NuclearMode.disable()
-                                    nuclearActive = NuclearMode.isActive
+                                    nuclearActive = NuclearMode.manualActive
                                 }
                             }
                         },
@@ -1189,7 +1197,7 @@ fun SettingsScreen(
                 showNuclearPinGate = false
                 // With the (default-off) cool-off switch on, this only starts the 10-minute cool-off.
                 com.focusflow.services.LooseningCoolOff.requestNuclearOff()
-                nuclearActive = NuclearMode.isActive
+                nuclearActive = NuclearMode.manualActive
             }
         )
     }

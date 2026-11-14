@@ -568,6 +568,7 @@ object CrashReporter {
         // JVM shutdown hook and the Main.kt startup janitor cover the cases
         // where safetyCleanup() itself never runs (SIGKILL, power loss, OOM kill).
         try { FocusLauncherService.emergencyRestoreWindows() } catch (_: Throwable) {}
+        try { NuclearMode.releaseSessionHold()               } catch (_: Throwable) {}
         try { NuclearMode.disable()                          } catch (_: Throwable) {}
         try { RegistryLockdown.disable()                     } catch (_: Throwable) {}
         try { ProcessMonitor.sessionActive   = false         } catch (_: Throwable) {}

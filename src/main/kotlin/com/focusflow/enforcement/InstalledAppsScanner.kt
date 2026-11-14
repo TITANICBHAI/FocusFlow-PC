@@ -118,6 +118,7 @@ object InstalledAppsScanner {
                 .filter { app ->
                     app.processName.isNotBlank() &&
                     !isHiddenSystemUtility(app.processName) &&
+                    !InstalledAppSources.isBackgroundHelperProcess(app.processName) &&
                     app.processName.endsWith(".exe")
                 }
                 .distinctBy { it.processName }
@@ -140,7 +141,7 @@ object InstalledAppsScanner {
         synchronized(installLock) {
             if (!installedScanned) {
                 installedCache.clear()
-                installedCache.addAll(scanRegistry())
+                installedCache.addAll(scanAllSources())
                 installedScanned = true
             }
             return installedCache.toList()
@@ -212,6 +213,96 @@ object InstalledAppsScanner {
         processName.replace('\\', '/').substringAfterLast('/')
             .lowercase() in launcherSystemUtilities
 
+    // ── All sources ───────────────────────────────────────────────────────────
+
+    /**
+     * Programs come from several places, because no single one lists everything: the
+     * Uninstall registry (most desktop apps), Start Menu shortcuts (Adobe and other
+     * installers that leave no icon path), App Paths (programs registered by name) and the
+     * Store package list (Calculator, Clock, Calendar, ... — listed as unsupported). A failure
+     * in one source never hides the others.
+     */
+    private fun scanAllSources(): List<ScannedApp> {
+        if (!isWindows) return emptyList()
+        fun <T> guarded(label: String, block: () -> List<T>): List<T> =
+            try {
+                block()
+            } catch (failure: Exception) {
+                EnforcementLog.warn("AppScan", "$label scan failed; continuing without it", failure)
+                emptyList()
+            }
+
+        val registry = guarded("registry") { scanRegistry() }
+        val shortcuts = guarded("start menu") {
+            InstalledAppSources.scanShortcuts(startMenuRoots())
+        }
+        val appPaths = guarded("app paths") { scanAppPaths() }
+        val store = guarded("store apps") {
+            InstalledAppSources.storeAppsFor(readStorePackageNames())
+        }
+        val merged = InstalledAppSources.merge(registry, shortcuts, appPaths, store)
+            .filter { it.processName !in systemIgnore }
+        EnforcementLog.info(
+            "AppScan",
+            "installed apps: registry=${registry.size} startMenu=${shortcuts.size} " +
+                "appPaths=${appPaths.size} store=${store.size} merged=${merged.size}"
+        )
+        merged.forEach { app ->
+            if (app.issue == null && app.exePath != null) exePathCache.putIfAbsent(app.processName, app.exePath)
+        }
+        return merged
+    }
+
+    private fun startMenuRoots(): List<File> = listOfNotNull(
+        System.getenv("ProgramData")?.let { File(it, "Microsoft\\Windows\\Start Menu\\Programs") },
+        System.getenv("APPDATA")?.let { File(it, "Microsoft\\Windows\\Start Menu\\Programs") }
+    )
+
+    private fun scanAppPaths(): List<ScannedApp> {
+        val systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR")
+        val apps = mutableListOf<ScannedApp>()
+        val hives = listOf(
+            WinReg.HKEY_LOCAL_MACHINE to "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths",
+            WinReg.HKEY_LOCAL_MACHINE to "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths",
+            WinReg.HKEY_CURRENT_USER to "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths"
+        )
+        for ((hive, key) in hives) {
+            val subkeys = try { Advapi32Util.registryGetKeys(hive, key) } catch (_: Exception) { continue }
+            for (sub in subkeys) {
+                try {
+                    val values = Advapi32Util.registryGetValues(hive, "$key\\$sub")
+                    // The default value is stored under the empty name.
+                    val target = InstalledAppSources.appPathsTarget(values[""] as? String) ?: continue
+                    val file = File(target)
+                    val processName = file.name.lowercase()
+                    if (!file.isFile || InstalledAppSources.isBackgroundHelperProcess(processName)) continue
+                    if (InstalledAppSources.isWindowsFolderSystemTool(target, systemRoot)) continue
+                    if (classifyLauncherCandidate(processName, target) != null) continue
+                    apps += ScannedApp(
+                        processName = processName,
+                        displayName = curated[processName] ?: friendlyName(processName),
+                        isRunning = false,
+                        exePath = file.absolutePath
+                    )
+                } catch (_: Exception) { /* malformed key — skip */ }
+            }
+        }
+        return apps
+    }
+
+    /** Names of the installed Store packages, from the package registry (key names only). */
+    private fun readStorePackageNames(): List<String> {
+        val locations = listOf(
+            WinReg.HKEY_CURRENT_USER to
+                "SOFTWARE\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages",
+            WinReg.HKEY_LOCAL_MACHINE to
+                "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\Applications"
+        )
+        return locations.flatMap { (hive, key) ->
+            try { Advapi32Util.registryGetKeys(hive, key).toList() } catch (_: Exception) { emptyList() }
+        }.distinct()
+    }
+
     // ── Registry scan ─────────────────────────────────────────────────────────
 
     private fun scanRegistry(): List<ScannedApp> {
@@ -236,9 +327,29 @@ object InstalledAppsScanner {
                     val displayName = (vals["DisplayName"] as? String)?.trim()
                         ?.takeIf { it.isNotBlank() } ?: continue
 
-                    val displayIcon = (vals["DisplayIcon"] as? String)?.trim()
-                        ?.takeIf(String::isNotBlank) ?: continue
-                    val rawPath = executablePathFromDisplayIcon(displayIcon) ?: continue
+                    // Runtimes, redistributables, updates and system components are plumbing,
+                    // not programs the person opens.
+                    if (InstalledAppSources.isRuntimeOrComponentEntry(
+                            displayName = displayName,
+                            systemComponent = (vals["SystemComponent"] as? Int) == 1,
+                            hasParent = !(vals["ParentKeyName"] as? String).isNullOrBlank() ||
+                                !(vals["ParentDisplayName"] as? String).isNullOrBlank(),
+                            releaseType = vals["ReleaseType"] as? String
+                        )
+                    ) continue
+
+                    val installLocation = (vals["InstallLocation"] as? String)
+                        ?.trim()?.removeSurrounding("\"")
+                    // Many installers (MSI, Adobe, ...) leave DisplayIcon empty or pointing
+                    // at a .ico: fall back to the program inside the install folder.
+                    val rawPath = (vals["DisplayIcon"] as? String)?.trim()
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(::executablePathFromDisplayIcon)
+                        ?: findMainExecutableCandidate(
+                            displayName,
+                            executableCandidates(null, installLocation)
+                        )?.absolutePath
+                        ?: continue
                     val iconFile = File(rawPath)
                     val processName = iconFile.name.lowercase()
                     if (isHiddenSystemUtility(processName) || !processName.endsWith(".exe")) continue
@@ -246,9 +357,9 @@ object InstalledAppsScanner {
                     // Earlier results (HKLM 64-bit) take priority; don't overwrite
                     if (processName in result) continue
 
+                    if (InstalledAppSources.isBackgroundHelperProcess(processName)) continue
+
                     val issue = classifyLauncherCandidate(processName, rawPath)
-                    val installLocation = (vals["InstallLocation"] as? String)
-                        ?.trim()?.removeSurrounding("\"")
                     val resolvedMain = when (issue) {
                         null, LauncherAppIssue.StoreApp, LauncherAppIssue.SystemUtility -> null
                         else -> findMainExecutableCandidate(

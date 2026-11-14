@@ -176,7 +176,7 @@ fun FocusScreen(
                 focusModeAutoEnabledEnforcement = false
             }
             // Auto-disable Nuclear Mode if we started it for this session
-            if (focusModeAutoEnabledNuclear && NuclearMode.isActive) {
+            if (focusModeAutoEnabledNuclear && NuclearMode.manualActive) {
                 NuclearMode.disable()
                 focusModeAutoEnabledNuclear = false
             }
@@ -349,7 +349,7 @@ fun FocusScreen(
                                 scope.launch(Dispatchers.IO) { Database.setSetting("always_on_enforcement", "true") }
                                 focusModeAutoEnabledEnforcement = true
                             }
-                            if (focusModeActive && focusIntensity == "nuclear" && !NuclearMode.isActive) {
+                            if (focusModeActive && focusIntensity == "nuclear" && !NuclearMode.manualActive) {
                                 NuclearMode.enable()
                                 focusModeAutoEnabledNuclear = true
                             }

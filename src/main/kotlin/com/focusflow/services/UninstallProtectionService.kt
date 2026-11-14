@@ -448,7 +448,9 @@ object UninstallProtectionService {
         }
 
         fun addNuclearModeRequirement() {
-            if (!NuclearMode.isActive) return
+            // The person's own Nuclear Mode only. A Focus Launcher session's hold is
+            // covered by the Session PIN requirement above and ends with the session.
+            if (!NuclearMode.manualActive) return
             if (NuclearPin.isSet()) {
                 result += Requirement.Pin(
                     feature = "Nuclear Mode",
@@ -468,7 +470,7 @@ object UninstallProtectionService {
                 result += unreadableRequirement("Nuclear Mode", setting.cause)
             is SettingRead.Present -> when (setting.value) {
                 "true" -> {
-                    if (NuclearMode.isActive) addNuclearModeRequirement()
+                    if (NuclearMode.manualActive) addNuclearModeRequirement()
                     else if (NuclearPin.isSet()) {
                         result += Requirement.Pin(
                             feature = "Nuclear Mode",

@@ -68,7 +68,9 @@ object ElevationRelaunchService {
             )
             return false
         }
-        val resumeNuclearMode = NuclearMode.isActive
+        // Only the person's own setting is resumed by the new process; a Focus Launcher
+        // session blocks the relaunch altogether.
+        val resumeNuclearMode = NuclearMode.manualActive
         if (hasBlockingSession()) {
             _status.value = ElevationRelaunchStatus.Blocked(
                 if (resumeNuclearMode) {

@@ -1,0 +1,39 @@
+P0.2 — Remove sticky retry state
+ Decide spawn versus attach from live process state; remove wait-only and spawn-budget decision flags.
+ Keep only a short per-app debounce that prevents duplicate spawns without forcing a wait.
+ Acceptance: T1, T2, T5, T6, and T15 pass.
+P0.3 — Liveness-based wait and watchdog
+ Add liveness-based waiting, typed early exit/no-window outcomes, per-attempt tokens, watchdog, and per-app cancellation.
+ Ensure stale workers cannot write state for a newer attempt and cancellation leaves no state/jobs behind.
+ Acceptance: T2, T3, T4, T7, and T12 pass.
+P0.4 — Process lineage and window selection
+ Add/reuse a shared process snapshot with PID, parent PID, creation time, image name, and lazy cached full paths.
+ Track the spawn PID, descendants, and matching live instances as a union; reject PID reuse by creation time.
+ Preserve window enumeration order and select/re-evaluate the best candidate as specified in the plan.
+ Handle Store/UWP windows as specified or fail immediately and clearly.
+ Acceptance: T3, T8, T16, T17, and T21 pass; applicable Windows archetypes B–D and F are recorded for owner verification.
+P0.5 — Protect launch chains from kiosk enforcement
+ Implement one shared kiosk process decision and use it in the allowed launcher branches.
+ Apply the plan's lineage/install-root and FocusFlow-owned utility rules without weakening escape-tool name/path detection.
+ Use the plan's D1-B default unless the owner explicitly changes the decision.
+ Acceptance: T13, T14, and T18 pass; Windows archetype D and escape-tool row 12 remain for the owner.
+P0 execution notes
+Add dated entries here before and after each meaningful implementation change. Preserve failed checks and document successful reruns.
+
+2026-10-16 — P0.2/P0.3/P0.4 combined coordinator refactor — In progress
+Scope: Remove sticky retry/spawn-budget decision state; add liveness-based waiting, per-attempt tokens, watchdog and per-app cancellation; track process lineage and improve window selection. Follow the task-specific allowlists in Launcher/plan.md. No P0.5 enforcement changes.
+Completed dependency: P0.1 passed its Linux acceptance tests; Windows verification remains pending.
+Working tree at batch start: main is one commit ahead of origin/main. P0.1 changes are present and uncommitted in Launcher/tracker.md, .agents/memory/gradle-jvm-selection.md, LauncherLaunchCoordinator.kt, LauncherLaunchCoordinatorTest.kt, and ChangelogScreen.kt; preserve them.
+Files inspected: LauncherLaunchCoordinator.kt, LauncherLaunchCoordinatorTest.kt, JvmLauncherLaunchPlatform.kt, ProcessSnapshot.kt, ProcessCommandCacheTest.kt, ProcessNameResolver.kt, ProcessNameResolverTest.kt, WindowRaiser.kt, and the FocusLauncherApp model.
+Current source findings: P0.2's sticky retry and 20-second spawn-budget flags remain. P0.3 has no independent watchdog, per-attempt token, or per-app cancellation. P0.4 currently snapshots only name/path-matched instances, replaces tracked PIDs during polling, has no parent/creation-time lineage, and sorts windows by PID/handle.
+Plan acceptance note: P0.4 lists T8 while its allowlist permits only WindowRaiser.findWindows; process-based foreground verification belongs to P1.1 and its raise path. Do not widen the P0.4 allowlist; record any T8 portion that cannot be satisfied here as deferred to P1.1.
+Verification: Pending.
+2026-10-16 — P0.2/P0.3/P0.4 — Resumed implementation batch
+Scope: Continue only P0.2, P0.3, and P0.4 together. P0.5 remains out of scope for this authorization.
+Working tree: main is one commit ahead of origin/main and clean; no pre-existing edits need preservation.
+Files read before editing: replit.md, Launcher/plan.md, Launcher/tracker.md, Launcher/rules.md, Launcher/preagent-prompt.md, .agents/memory/focus-launcher-task-brief.md, .agents/memory/gradle-test-completion.md, .agents/memory/gradle-jvm-selection.md, LauncherLaunchCoordinator.kt, LauncherLaunchCoordinatorTest.kt, JvmLauncherLaunchPlatform.kt, ProcessSnapshot.kt, ProcessCommandCacheTest.kt, ProcessNameResolver.kt, ProcessNameResolverTest.kt, WindowRaiser.kt, and the FocusLauncherApp model.
+Current source findings: The coordinator still has wait-only retry and 20-second spawn-budget state, refreshes by replacing PIDs, and has no independent watchdog or per-app cancellation. ProcessSnapshot already captures parent PID/creation time and lazily caches full paths, but the JVM platform does not expose the full snapshot to the coordinator. WindowRaiser.findWindows still sorts by PID/handle and does not filter/rank candidate windows.
+Verification: Pending.
+Implementation update: Removed the coordinator's wait-only and 20-second spawn-budget decisions; added the first per-attempt/watchdog/cancellation and lineage/window-selection changes. Work remains partial and unchecked.
+Verification attempt 1: export JAVA_HOME=/nix/store/c8hr2f0b0dm685yx1dkp6bw24bpx495n-graalvm19-ce-22.3.1; export PATH="$JAVA_HOME/bin:$PATH"; java -version; gradle :compileKotlin --no-daemon --console=plain failed at :compileKotlin with ProcessSnapshot.kt:54:17 Variable 'SNAPSHOT_TTL_MS' must be initialized. Moved the constant above the cache initializer; rerun pending.
+Verification attempt 2: The same command completed with BUILD SUCCESSFUL in 2m 7s. Existing CsvExport and Compose icon deprecation warnings remain; acceptance tests are still pending.

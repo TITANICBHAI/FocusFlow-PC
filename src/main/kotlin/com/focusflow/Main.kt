@@ -329,6 +329,9 @@ private fun FocusFlowDesktop(
                 if (preserveNuclearMode) {
                     com.focusflow.enforcement.NuclearMode.suspendForElevationHandoff()
                 } else {
+                    // The process is ending: drop a Focus Launcher session's hold too, so
+                    // the firewall rules and hardening are removed with the process.
+                    com.focusflow.enforcement.NuclearMode.releaseSessionHold()
                     com.focusflow.enforcement.NuclearMode.disable()
                     com.focusflow.enforcement.NuclearMode.awaitCleanup()
                 }

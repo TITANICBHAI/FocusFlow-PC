@@ -1,0 +1,2 @@
+ F27 — SelectorProvider flag: No code change until human W9 is complete on the actual shipped JDK (current toolchain JDK 19) and current EXE/MSI formats. Include MSIX only if another active distribution path actually ships it; do not remove the flag based on the audit alone.
+ F28 — Test-configuration regression: Completed earlier in Phase 1; retain its test/configuration coverage in the final audit.

@@ -31,7 +31,12 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun NuclearModeScreen() {
+    // nuclearActive: enforcement is running for any reason. manual: the person's own
+    // setting (remembered, guarded by the Nuclear PIN). sessionHeld: a Focus Launcher
+    // session is using it and it ends with the session.
     var nuclearActive   by remember { mutableStateOf(NuclearMode.isActive) }
+    var nuclearManual   by remember { mutableStateOf(NuclearMode.manualActive) }
+    var sessionHeld     by remember { mutableStateOf(NuclearMode.sessionHeld) }
     var nuclearPinSet   by remember { mutableStateOf(NuclearPin.isSet()) }
     var sessionAttempts by remember { mutableStateOf(NuclearMode.sessionEscapeAttempts()) }
     var breakdown       by remember { mutableStateOf(NuclearMode.escapeAttemptBreakdown()) }
@@ -43,6 +48,8 @@ fun NuclearModeScreen() {
     LaunchedEffect(Unit) {
         while (true) {
             nuclearActive   = NuclearMode.isActive
+            nuclearManual   = NuclearMode.manualActive
+            sessionHeld     = NuclearMode.sessionHeld
             nuclearPinSet   = NuclearPin.isSet()
             sessionAttempts = NuclearMode.sessionEscapeAttempts()
             breakdown       = NuclearMode.escapeAttemptBreakdown()
@@ -134,14 +141,23 @@ fun NuclearModeScreen() {
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (nuclearActive) "NUCLEAR MODE ACTIVE" else "Nuclear Mode is OFF",
+                            when {
+                                nuclearActive && sessionHeld && !nuclearManual ->
+                                    "NUCLEAR MODE ACTIVE — Focus Launcher session"
+                                nuclearActive -> "NUCLEAR MODE ACTIVE"
+                                else -> "Nuclear Mode is OFF"
+                            },
                             color      = if (nuclearActive) Error else OnSurface,
                             fontWeight = FontWeight.SemiBold,
                             fontSize   = 15.sp
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (nuclearActive)
+                            if (sessionHeld && !nuclearManual)
+                                "Held by your Focus Launcher session and ends with it. It can't be turned off from here, and the Nuclear PIN isn't used for it."
+                            else if (nuclearActive && sessionHeld)
+                                "You turned this on and a Focus Launcher session is also using it. After the session it stays on until you turn it off."
+                            else if (nuclearActive)
                                 if (InstallVariant.isWindowsDirectInstall)
                                     "Monitoring ${NuclearMode.escapeProcessCount} escape routes every 500 ms, including EXE/MSI uninstallers"
                                 else
@@ -155,26 +171,33 @@ fun NuclearModeScreen() {
 
                     Button(
                         onClick = {
-                            if (nuclearActive) {
+                            if (nuclearManual) {
                                 if (nuclearPinSet) {
                                     showPinGate = true
                                 } else {
                                     NuclearMode.disable()
-                                    nuclearActive = NuclearMode.isActive
                                 }
                             } else {
+                                // Off, or held only by a session: make it the person's own
+                                // setting (so it stays on after the session).
                                 NuclearMode.enable()
-                                nuclearActive = NuclearMode.isActive
                             }
+                            nuclearActive = NuclearMode.isActive
+                            nuclearManual = NuclearMode.manualActive
+                            sessionHeld   = NuclearMode.sessionHeld
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (nuclearActive) Error.copy(alpha = 0.15f) else Purple80
+                            containerColor = if (nuclearManual) Error.copy(alpha = 0.15f) else Purple80
                         ),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text(
-                            if (nuclearActive) "Disable" else "Enable",
-                            color = if (nuclearActive) Error else androidx.compose.ui.graphics.Color.White
+                            when {
+                                nuclearManual -> "Disable"
+                                sessionHeld -> "Keep on after session"
+                                else -> "Enable"
+                            },
+                            color = if (nuclearManual) Error else androidx.compose.ui.graphics.Color.White
                         )
                     }
                 }
@@ -410,6 +433,8 @@ fun NuclearModeScreen() {
                 // With the (default-off) cool-off switch on, this only starts the 10-minute cool-off.
                 com.focusflow.services.LooseningCoolOff.requestNuclearOff()
                 nuclearActive = NuclearMode.isActive
+                nuclearManual = NuclearMode.manualActive
+                sessionHeld   = NuclearMode.sessionHeld
             }
         )
     }

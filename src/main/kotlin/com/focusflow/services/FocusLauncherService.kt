@@ -328,9 +328,10 @@ object FocusLauncherService {
         ProcessMonitor.setLauncherAllowedApps(resolvedApps)
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
 
-        // silent = true: NuclearMode is an implementation detail of kiosk mode;
-        // the user should not see "Nuclear Mode ON" when entering Focus Launcher.
-        NuclearMode.enable(silent = true)
+        // The session holds Nuclear Mode for itself. It is not the person's own Nuclear
+        // Mode setting: it is released when the session ends and never remembered by
+        // itself, so it cannot outlive the session or switch off a manual setting.
+        NuclearMode.acquireSessionHold()
 
         // Install the low-level keyboard hook to suppress system shortcuts
         // (Win key, Alt+Tab, Alt+F4, Ctrl+Esc, Alt+Esc).  Must come AFTER
@@ -401,9 +402,9 @@ object FocusLauncherService {
 
         ProcessMonitor.clearLauncherAllowedApps()
 
-        // silent = true: suppress the "Nuclear Mode OFF / Normal operation resumed"
-        // tray notification — the user exited kiosk mode, not nuclear mode explicitly.
-        if (NuclearMode.isActive) NuclearMode.disable(silent = true)
+        // Release only this session's hold. A Nuclear Mode the person turned on
+        // themselves stays on.
+        NuclearMode.releaseSessionHold()
 
         // Remove the keyboard hook, release the foreground lock, and restore
         // all registry policies that were applied at session start.
@@ -455,9 +456,8 @@ object FocusLauncherService {
         persistSession()
 
         ProcessMonitor.clearLauncherAllowedApps()
-        // silent = true: suppress "Nuclear Mode OFF" notification during a focus break —
-        // the user paused kiosk mode temporarily, not nuclear mode explicitly.
-        if (NuclearMode.isActive) NuclearMode.disable(silent = true)
+        // The break pauses the session's hold only; a manual Nuclear Mode stays on.
+        NuclearMode.releaseSessionHold()
 
         // Lift keyboard suppression, foreground lock, and registry policies during
         // the break so the user can freely interact with their desktop.
@@ -506,9 +506,7 @@ object FocusLauncherService {
 
         if (_isActive.value) {
             ProcessMonitor.setLauncherAllowedApps(_sessionApps.value)
-            // silent = true: suppress "Nuclear Mode ON" notification when kiosk
-            // automatically re-engages after a break — it would be jarring/confusing.
-            NuclearMode.enable(silent = true)
+            NuclearMode.acquireSessionHold()
 
             // Re-install keyboard hook, foreground lock, and registry policies.
             GlobalKeyboardHook.enable()
@@ -538,8 +536,8 @@ object FocusLauncherService {
         if (!_isActive.value || _breakActive.value) return
         LauncherLaunchCoordinator.shared.cancelAll()
         ProcessMonitor.clearLauncherAllowedApps()
-        // silent = true: suppress "Nuclear Mode OFF" — kill switch has its own notification.
-        if (NuclearMode.isActive) NuclearMode.disable(silent = true)
+        // The kill switch has its own notification; release only the session's hold.
+        NuclearMode.releaseSessionHold()
         GlobalKeyboardHook.disable()
         RegistryLockdown.disable()
         showTaskbar()
@@ -561,9 +559,7 @@ object FocusLauncherService {
             ProcessMonitor.clearLauncherAllowedApps()
             return
         }
-        // silent = true: suppress "Nuclear Mode ON" — kill switch deactivation already
-        // shows "Enforcement Resumed" from the tray; a second notification is redundant.
-        NuclearMode.enable(silent = true)
+        NuclearMode.acquireSessionHold()
         GlobalKeyboardHook.enable()
         RegistryLockdown.enable()
         startTaskbarGuard()
@@ -690,7 +686,9 @@ object FocusLauncherService {
         _sessionEndMs.value = 0L
         _sessionStartMs.value = 0L
         breakEndMs = 0L
-        if (disableNuclear && NuclearMode.isActive) NuclearMode.disable(silent = true)
+        // The session is over, so its hold must not remain. Releasing is idempotent and
+        // never touches the person's own setting, hence it no longer depends on [disableNuclear].
+        NuclearMode.releaseSessionHold()
     }
 
     private fun resolveSessionApps(apps: List<FocusLauncherApp>): LauncherAppsResolution =
@@ -714,7 +712,7 @@ object FocusLauncherService {
         setOverlayState(visible = false)
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
         ProcessMonitor.clearLauncherAllowedApps()
-        if (NuclearMode.isActive) NuclearMode.disable(silent = true)
+        NuclearMode.releaseSessionHold()
         GlobalKeyboardHook.disable()
         RegistryLockdown.disable()
         showTaskbar()
@@ -733,7 +731,7 @@ object FocusLauncherService {
     private fun reenableLauncherRestrictions() {
         ProcessMonitor.setLauncherAllowedApps(_sessionApps.value)
         ProcessMonitor.onLauncherProcessForegroundChanged = ::onForegroundChanged
-        NuclearMode.enable(silent = true)
+        NuclearMode.acquireSessionHold()
         GlobalKeyboardHook.enable()
         RegistryLockdown.enable()
         startTaskbarGuard()
@@ -773,6 +771,7 @@ object FocusLauncherService {
      */
     fun emergencyRestoreWindows() {
         ProcessMonitor.clearLauncherAllowedApps()
+        try { NuclearMode.releaseSessionHold() } catch (_: Throwable) {}
         try { GlobalKeyboardHook.disable() } catch (_: Throwable) {}
         try { RegistryLockdown.disable()   } catch (_: Throwable) {}
         showTaskbar()
