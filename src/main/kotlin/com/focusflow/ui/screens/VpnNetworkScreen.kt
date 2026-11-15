@@ -99,6 +99,14 @@ fun VpnNetworkScreen() {
         }
     }
 
+    // ── PIN POLICY — strengthening is easy, loosening is hard (see Security/pin-policy.md) ──
+    // This PIN gate is for actions that WEAKEN protection ONLY: turning VPN Shield OFF, removing a
+    // custom VPN process, pausing or deleting a network cut-off rule. Anything that adds or
+    // strengthens protection (turning ON, adding a process or rule, re-enabling a paused rule) is
+    // deliberately PINLESS.
+    // AGENTS: do NOT wrap an add/turn-ON action in this gate, and do NOT remove it from a
+    // remove/turn-OFF/pause action. If unsure, treat the action as weakening and keep the PIN.
+    // PinOnlyForWeakeningSourceTest enforces this; never edit that test to make a change pass.
     fun withPin(action: () -> Unit) {
         if (GlobalPin.isSet()) {
             pendingAction = action
@@ -170,29 +178,19 @@ fun VpnNetworkScreen() {
                     Switch(
                         checked = vpnEnabled,
                         onCheckedChange = { v ->
-                            if (!v) {
-                                withPin {
-                                    scope.launch {
-                                            try {
-                                                withContext(Dispatchers.IO) { VpnBlocker.isEnabled = false }
-                                                vpnEnabled = false
-                                            } catch (failure: SettingWriteException) {
-                                                showSettingsError()
-                                            }
+                            val applyVpnState = {
+                                scope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { VpnBlocker.isEnabled = v }
+                                        vpnEnabled = v
+                                    } catch (failure: SettingWriteException) {
+                                        showSettingsError()
                                     }
                                 }
-                            } else {
-                                withPin {
-                                    scope.launch {
-                                            try {
-                                                withContext(Dispatchers.IO) { VpnBlocker.isEnabled = true }
-                                                vpnEnabled = true
-                                            } catch (failure: SettingWriteException) {
-                                                showSettingsError()
-                                            }
-                                    }
-                                }
+                                Unit
                             }
+                            // ON = strengthening -> no PIN. OFF = weakening -> PIN.
+                            if (v) applyVpnState() else withPin(applyVpnState)
                         },
                         colors = SwitchDefaults.colors(checkedThumbColor = Surface, checkedTrackColor = Error)
                     )
@@ -202,9 +200,8 @@ fun VpnNetworkScreen() {
 
                 // Known VPN apps collapsible
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        withPin { expandKnownVpn = !expandKnownVpn }
-                    },
+                    // Read-only expand/collapse of the built-in list: no PIN needed.
+                    modifier = Modifier.fillMaxWidth().clickable { expandKnownVpn = !expandKnownVpn },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -277,21 +274,20 @@ fun VpnNetworkScreen() {
                             onClick = {
                                 val name = newCustomVpn.trim()
                                 if (name.isNotBlank()) {
-                                    withPin {
-                                        scope.launch {
-                                            try {
-                                                withContext(Dispatchers.IO) { VpnBlocker.addCustomProcess(name) }
-                                            } catch (failure: SettingReadException) {
-                                                showSettingsError()
-                                                return@launch
-                                            } catch (failure: SettingWriteException) {
-                                                showSettingsError()
-                                                return@launch
-                                            }
-                                            ProcessMonitor.invalidateCaches()
-                                            newCustomVpn = ""
-                                            reload()
+                                    // Adding a VPN process to the block list needs no PIN.
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) { VpnBlocker.addCustomProcess(name) }
+                                        } catch (failure: SettingReadException) {
+                                            showSettingsError()
+                                            return@launch
+                                        } catch (failure: SettingWriteException) {
+                                            showSettingsError()
+                                            return@launch
                                         }
+                                        ProcessMonitor.invalidateCaches()
+                                        newCustomVpn = ""
+                                        reload()
                                     }
                                 }
                             },
@@ -501,43 +497,42 @@ fun VpnNetworkScreen() {
                                 targetDisplayName = targetDisp,
                                 enabled           = true
                             )
-                            withPin {
-                                scope.launch {
-                                    var hostsOk = true
-                                    var firewallOk = true
-                                    withContext(Dispatchers.IO) {
-                                        Database.upsertNetworkCutoffRule(rule)
-                                        // Apply immediately for domain rules.
-                                        if (rule.mode == NetworkRuleMode.DOMAIN) {
-                                            if (!HostsBlocker.canWriteHostsFile()) {
-                                                hostsOk = false
-                                            } else {
-                                                val blockResult = HostsBlocker.blockDomain(pat)
-                                                when (blockResult) {
-                                                    is HostsBlocker.BlockResult.Success,
-                                                    is HostsBlocker.BlockResult.AlreadyBlocked ->
-                                                        HostsBlocker.startMonitor()
-                                                    is HostsBlocker.BlockResult.VerificationFail,
-                                                    is HostsBlocker.BlockResult.Error ->
-                                                        hostsOk = false
-                                                    else -> {}
-                                                }
-                                            }
-                                            if (targetProc != null) {
-                                                val added = NetworkBlocker.addRule(targetProc)
-                                                if (!added) firewallOk = false
+                            // Adding a cut-off rule strengthens protection -> no PIN.
+                            scope.launch {
+                                var hostsOk = true
+                                var firewallOk = true
+                                withContext(Dispatchers.IO) {
+                                    Database.upsertNetworkCutoffRule(rule)
+                                    // Apply immediately for domain rules.
+                                    if (rule.mode == NetworkRuleMode.DOMAIN) {
+                                        if (!HostsBlocker.canWriteHostsFile()) {
+                                            hostsOk = false
+                                        } else {
+                                            val blockResult = HostsBlocker.blockDomain(pat)
+                                            when (blockResult) {
+                                                is HostsBlocker.BlockResult.Success,
+                                                is HostsBlocker.BlockResult.AlreadyBlocked ->
+                                                    HostsBlocker.startMonitor()
+                                                is HostsBlocker.BlockResult.VerificationFail,
+                                                is HostsBlocker.BlockResult.Error ->
+                                                    hostsOk = false
+                                                else -> {}
                                             }
                                         }
+                                        if (targetProc != null) {
+                                            val added = NetworkBlocker.addRule(targetProc)
+                                            if (!added) firewallOk = false
+                                        }
                                     }
-                                    ProcessMonitor.invalidateCaches()
-                                    if (!hostsOk) showAdminError("Hosts file domain blocking")
-                                    if (!firewallOk) showAdminError("Firewall rule creation")
-                                    newPattern       = ""
-                                    newTargetProcess = ""
-                                    newTargetDisplay = ""
-                                    appSpecific      = false
-                                    reload()
                                 }
+                                ProcessMonitor.invalidateCaches()
+                                if (!hostsOk) showAdminError("Hosts file domain blocking")
+                                if (!firewallOk) showAdminError("Firewall rule creation")
+                                newPattern       = ""
+                                newTargetProcess = ""
+                                newTargetDisplay = ""
+                                appSpecific      = false
+                                reload()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Warning),
@@ -572,22 +567,21 @@ fun VpnNetworkScreen() {
                                         }
                                     }
                                 } else {
-                                    withPin {
-                                        scope.launch {
-                                            withContext(Dispatchers.IO) {
-                                                Database.setNetworkCutoffRuleEnabled(rule.id, true)
-                                                if (rule.mode == NetworkRuleMode.DOMAIN) {
-                                                    val re = HostsBlocker.blockDomain(rule.pattern)
-                                                    if (re is HostsBlocker.BlockResult.Success ||
-                                                        re is HostsBlocker.BlockResult.AlreadyBlocked) {
-                                                        HostsBlocker.startMonitor()
-                                                    }
-                                                    if (rule.targetProcess != null) NetworkBlocker.addRule(rule.targetProcess)
+                                    // Re-enabling a rule strengthens protection -> no PIN.
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) {
+                                            Database.setNetworkCutoffRuleEnabled(rule.id, true)
+                                            if (rule.mode == NetworkRuleMode.DOMAIN) {
+                                                val re = HostsBlocker.blockDomain(rule.pattern)
+                                                if (re is HostsBlocker.BlockResult.Success ||
+                                                    re is HostsBlocker.BlockResult.AlreadyBlocked) {
+                                                    HostsBlocker.startMonitor()
                                                 }
+                                                if (rule.targetProcess != null) NetworkBlocker.addRule(rule.targetProcess)
                                             }
-                                            ProcessMonitor.invalidateCaches()
-                                            reload()
                                         }
+                                        ProcessMonitor.invalidateCaches()
+                                        reload()
                                     }
                                 }
                             },

@@ -7,6 +7,7 @@ import com.focusflow.ui.components.EmptyStateCard
 import com.focusflow.ui.components.FfVerticalScrollbar
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.components.PinGateDialog
+import com.focusflow.ui.components.rememberLiveNowMs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -2021,15 +2022,14 @@ private fun TimedBlockTab() {
     var endHour   by remember { mutableStateOf((LocalTime.now().hour + 1).coerceAtMost(23)) }
     var endMin    by remember { mutableStateOf(0) }
 
-    // Live tick so timer stays updated
-    var tick by remember { mutableStateOf(0L) }
-    LaunchedEffect(standaloneBlock) {
-        while (true) { delay(1000); tick++ }
-    }
-
-    val isScheduled  = standaloneBlock != null && StandaloneBlockService.isScheduled
-    val remainingMs  = StandaloneBlockService.remainingMs()
-    val startsInMs   = StandaloneBlockService.startsInMs()
+    // Live clock: ticks every second while a block exists. The countdown below is derived from
+    // nowMs, which is READ during composition, so Compose recomposes on every tick.
+    // (The previous `tick` counter was incremented but never read, so nothing recomposed and the
+    // timer stayed frozen until the screen was left and re-entered.)
+    val nowMs        by rememberLiveNowMs(active = standaloneBlock != null)
+    val isScheduled  = standaloneBlock?.isScheduledAt(nowMs) == true
+    val remainingMs  = standaloneBlock?.remainingMsAt(nowMs) ?: 0L
+    val startsInMs   = standaloneBlock?.startsInMsAt(nowMs) ?: 0L
     val blockedNames = standaloneBlock?.processNames ?: emptyList()
 
     LaunchedEffect(Unit) {

@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.text.style.TextAlign
 import com.focusflow.data.Database
 import com.focusflow.data.SettingWriteException
+import com.focusflow.data.models.StandaloneBlock
 import com.focusflow.data.models.Task
 import com.focusflow.enforcement.InstalledAppsScanner
 import com.focusflow.enforcement.NuclearMode
@@ -50,6 +51,7 @@ import com.focusflow.services.*
 import com.focusflow.ui.components.AllowanceLoadBanner
 import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.PinGateDialog
+import com.focusflow.ui.components.rememberLiveNowMs
 import com.focusflow.ui.components.ShortcutTooltip
 import com.focusflow.ui.theme.*
 import androidx.compose.ui.input.key.*
@@ -182,9 +184,6 @@ fun FocusScreen(
             }
         }
     }
-
-    val isStandaloneActive  = standaloneBlock != null && StandaloneBlockService.isActive
-    val standaloneRemaining = StandaloneBlockService.remainingMs()
 
     val focusScrollState = rememberScrollState()
     Box(modifier = Modifier.fillMaxSize().onPreviewKeyEvent { event ->
@@ -626,9 +625,7 @@ fun FocusScreen(
 
             // ── Standalone block / always-on panel ────────────────────────────
             StandaloneBlockPanel(
-                isActive             = isStandaloneActive,
-                remainingMs          = standaloneRemaining,
-                blockedCount         = standaloneBlock?.processNames?.size ?: 0,
+                standaloneBlock      = standaloneBlock,
                 alwaysOnEnabled      = alwaysOnEnabled,
                 blockRulesCount      = blockRulesCount,
                 scheduleCount        = scheduleCount,
@@ -1092,9 +1089,7 @@ private fun EnforcementRow(
 
 @Composable
 private fun StandaloneBlockPanel(
-    isActive:             Boolean,
-    remainingMs:          Long,
-    blockedCount:         Int,
+    standaloneBlock:      StandaloneBlock?,
     alwaysOnEnabled:      Boolean,
     blockRulesCount:      Int,
     scheduleCount:        Int,
@@ -1107,6 +1102,13 @@ private fun StandaloneBlockPanel(
     onToggleAlwaysOn:     () -> Unit
 ) {
     val strings = LocalizationManager.strings
+    // Live clock scoped to this small panel (not the whole 1500-line screen). nowMs is read
+    // below, so the countdown recomposes every second; it also flips a scheduled block to
+    // "active" the moment its start time passes, with no tab switch needed.
+    val nowMs by rememberLiveNowMs(active = standaloneBlock != null)
+    val isActive     = standaloneBlock?.isActiveAt(nowMs) == true
+    val remainingMs  = standaloneBlock?.remainingMsAt(nowMs) ?: 0L
+    val blockedCount = standaloneBlock?.processNames?.size ?: 0
     Column(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface2).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)

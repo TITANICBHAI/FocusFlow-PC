@@ -62,3 +62,7 @@ At completion, report:
 4. Any deviations, assumptions, failures, blockers, and deferred items.
 
 Do not mark the project fully complete while required checks or Windows-only acceptance items remain unverified.
+
+## PIN policy (read before touching any gate)
+
+Strengthening is easy, loosening is hard: adding or turning ON a protection is pinless; removing, turning OFF, pausing or shortening one needs the Global PIN. Never add a PIN to a strengthening action or remove/soften one from a weakening action, never add a reset or bypass path, and never edit `PinOnlyForWeakeningSourceTest` to make a change pass. Full rules: `Security/pin-policy.md`. A policy change is an owner decision: stop and ask.

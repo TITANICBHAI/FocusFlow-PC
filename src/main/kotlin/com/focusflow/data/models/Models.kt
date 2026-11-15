@@ -200,7 +200,23 @@ data class StandaloneBlock(
     val processNames: List<String>,
     val untilMs: Long,
     val startMs: Long? = null   // null = start immediately; epoch ms = scheduled start
-)
+) {
+    // Pure time helpers: take "now" as a parameter so the UI can drive them from a ticking
+    // state (a live clock) and tests can pin the clock.
+
+    /** True when the block's window has started and not yet ended. */
+    fun isActiveAt(nowMs: Long): Boolean =
+        (startMs == null || nowMs >= startMs) && untilMs > nowMs && processNames.isNotEmpty()
+
+    /** True when the block is configured (may be waiting for its scheduled start). */
+    fun isScheduledAt(nowMs: Long): Boolean = untilMs > nowMs && processNames.isNotEmpty()
+
+    /** Milliseconds until the block ends (never negative). */
+    fun remainingMsAt(nowMs: Long): Long = maxOf(0L, untilMs - nowMs)
+
+    /** Milliseconds until a scheduled block starts; 0 if already started / not scheduled. */
+    fun startsInMsAt(nowMs: Long): Long = startMs?.let { maxOf(0L, it - nowMs) } ?: 0L
+}
 
 data class CustomBlockPreset(
     val id: String,

@@ -20,6 +20,16 @@ enum class PinVerificationResult {
 /**
  * Shared rules for user-configured PINs.
  *
+ * DESIGN PRINCIPLE — strengthening is easy, loosening is hard (full text: Security/pin-policy.md).
+ * The Global PIN guards only actions that WEAKEN protection: turning something OFF, removing,
+ * pausing, shortening, loosening. Actions that ADD or STRENGTHEN protection (add a keyword / VPN
+ * process / network rule, turn something ON) must stay pinless. Do not add a PIN to a
+ * strengthening action, and do not remove or soften one from a weakening action. If an "add" could
+ * end up loosening something (overwrite a stricter rule, shorten a duration), treat it as
+ * weakening. Never add a reset/bypass path. PinOnlyForWeakeningSourceTest guards this; changing the
+ * policy is an owner decision, not an agent decision.
+ *
+
  * Generated PINs intentionally use a larger range than the minimum custom
  * PIN length so they are long enough to be difficult to guess while still
  * fitting comfortably in the setup dialogs.

@@ -56,3 +56,7 @@ The plan's defaults and safety invariants are binding. For P0.5, use decision D1
 ## Final response
 
 Report completed and partial tasks, files read/changed, exact verification commands and results, deviations, failures/reruns, owner decisions, deferred work, Windows checks still required, final constants, safety paths re-read, and out-of-scope observations. Do not claim the plan is fully complete while required checks remain open.
+
+## PIN policy (read before touching any gate)
+
+Strengthening is easy, loosening is hard: adding or turning ON a protection is pinless; removing, turning OFF, pausing or shortening one needs the Global PIN. Never add a PIN to a strengthening action or remove/soften one from a weakening action, never add a reset or bypass path, and never edit `PinOnlyForWeakeningSourceTest` to make a change pass. Full rules: `Security/pin-policy.md`. A policy change is an owner decision: stop and ask.

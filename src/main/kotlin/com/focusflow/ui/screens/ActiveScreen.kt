@@ -3,6 +3,7 @@ package com.focusflow.ui.screens
 import com.focusflow.ui.components.AllowanceLoadBanner
 import com.focusflow.ui.components.EmergencyBreakAllowanceNotice
 import com.focusflow.ui.components.FfVerticalScrollbar
+import com.focusflow.ui.components.rememberLiveNowMs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -41,6 +42,7 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
     val strings            = LocalizationManager.strings
     val sessionState    by FocusSessionService.state.collectAsState()
     val standaloneBlock by StandaloneBlockService.block.collectAsState()
+    val nowMs           by rememberLiveNowMs(active = standaloneBlock != null)
     val scope           = rememberCoroutineScope()
 
     var blockRules        by remember { mutableStateOf(listOf<BlockRule>()) }
@@ -144,15 +146,17 @@ fun ActiveScreen(onNavigate: (Screen) -> Unit = {}) {
                 onClick = { onNavigate(Screen.FOCUS) }
             )
 
-            // Standalone block card
+            // Standalone block card (countdown driven by the live clock above)
             StatusCard(
                 icon   = Icons.Default.Block,
                 title  = strings.activeStandaloneBlock,
                 color  = if (standaloneBlock != null) Warning else OnSurface2,
-                status = if (standaloneBlock != null) {
-                    val minsLeft = ((standaloneBlock!!.untilMs - System.currentTimeMillis()) / 60_000).coerceAtLeast(0)
-                    "Active · ${minsLeft}m remaining · ${standaloneBlock!!.processNames.size} app(s)"
-                } else "Inactive — tap to block apps for a set time",
+                status = standaloneBlock?.let { b ->
+                    val remSec = (b.remainingMsAt(nowMs) / 1000).toInt()
+                    val h = remSec / 3600; val m = (remSec % 3600) / 60; val s = remSec % 60
+                    val left = if (h > 0) "${h}h ${m}m" else "${m}m ${s}s"
+                    "Active · $left remaining · ${b.processNames.size} app(s)"
+                } ?: "Inactive — tap to block apps for a set time",
                 active = standaloneBlock != null,
                 onClick = { onNavigate(Screen.BLOCK_APPS) }
             )

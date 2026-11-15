@@ -40,7 +40,7 @@ Tags used in this file: **[code]** = checked by reading the source · **[verify]
 7. **Git.** Do not `git push`. Do not start, poll or watch GitHub Actions.
 8. **Windows.** You cannot run Windows. Never write "verified on Windows". Windows checks belong to the owner (§9).
 9. **Gradle.** Run from the folder that contains `build.gradle.kts`. Use the system `gradle` with `--no-daemon`, **not** `./gradlew` (its wrapper jar is missing in this repo). A run can take several minutes — do not cancel it. If `grep` is not installed on your machine, use your Grep tool with the same text and count the matching lines instead.
-10. **Never weaken anything.** Do not touch PIN hashing/verification, enforcement code, or any file a card does not list.
+10. **Never weaken anything.** Do not touch PIN hashing/verification, enforcement code, or any file a card does not list. The guiding rule is *strengthening is easy, loosening is hard*: adding/turning ON a protection is pinless, removing/turning OFF/pausing it needs the Global PIN. Read `Security/pin-policy.md` before touching any PIN gate, and never edit `PinOnlyForWeakeningSourceTest` to make a change pass.
 11. **A gate is open only if its `ANSWER:` line in §2 contains exactly the required letter.** Never guess an answer.
 12. **Undo.** If the repo has git (`git rev-parse --is-inside-work-tree` prints `true`): undo a card with `git checkout -- <files the card edited>` and delete the new files the card created. No git: before the *first* edit of a file run `cp <file> <file>.orig`; undo with `cp <file>.orig <file>`; at the end `find src -name "*.orig"` must print nothing (delete them).
 

@@ -70,6 +70,13 @@ fun KeywordBlockerScreen() {
     var pendingPinAction      by remember { mutableStateOf<(() -> Unit)?>(null) }
     val navigate = LocalNavigate.current
 
+    // ── PIN POLICY — strengthening is easy, loosening is hard (see Security/pin-policy.md) ──
+    // This PIN gate is for actions that WEAKEN enforcement ONLY: removing a keyword or preset,
+    // Clear All, turning the blocker OFF. Adding keywords/presets and turning the blocker ON only
+    // strengthen enforcement, so they are deliberately PINLESS.
+    // AGENTS: do NOT wrap an add/turn-ON action in this gate, and do NOT remove it from a
+    // remove/turn-OFF action. If unsure, treat the action as weakening and keep the PIN.
+    // PinOnlyForWeakeningSourceTest enforces this; never edit that test to make a change pass.
     fun withPin(action: () -> Unit) {
         if (GlobalPin.isSet()) {
             pendingPinAction = action
@@ -102,40 +109,42 @@ fun KeywordBlockerScreen() {
         }
     }
 
-    fun toggleEnabled(v: Boolean) {
-        withPin {
-            scope.launch {
-                withContext(Dispatchers.IO) { Database.setKeywordBlockerEnabled(v) }
-                enabled = v
-            }
+    fun applyEnabled(v: Boolean) {
+        scope.launch {
+            withContext(Dispatchers.IO) { Database.setKeywordBlockerEnabled(v) }
+            enabled = v
         }
     }
 
+    // Turning ON strengthens enforcement -> no PIN. Turning OFF weakens it -> PIN.
+    fun toggleEnabled(v: Boolean) {
+        if (v) applyEnabled(true) else withPin { applyEnabled(false) }
+    }
+
+    // Adds Network Shield rules (strengthening) -> no PIN.
     fun addKeywordsToNetworkShield() {
-        withPin {
-            scope.launch {
-                val added = withContext(Dispatchers.IO) {
-                    val existing = Database.getNetworkCutoffRules()
-                        .filter { it.mode == NetworkRuleMode.KEYWORD }
-                        .map { it.pattern.lowercase() }
-                        .toSet()
-                    val missing = keywords.filter { it.lowercase() !in existing }
-                    missing.forEach { keyword ->
-                        Database.upsertNetworkCutoffRule(
-                            NetworkCutoffRule(
-                                id = UUID.randomUUID().toString(),
-                                pattern = keyword.lowercase(),
-                                mode = NetworkRuleMode.KEYWORD,
-                                enabled = true
-                            )
+        scope.launch {
+            val added = withContext(Dispatchers.IO) {
+                val existing = Database.getNetworkCutoffRules()
+                    .filter { it.mode == NetworkRuleMode.KEYWORD }
+                    .map { it.pattern.lowercase() }
+                    .toSet()
+                val missing = keywords.filter { it.lowercase() !in existing }
+                missing.forEach { keyword ->
+                    Database.upsertNetworkCutoffRule(
+                        NetworkCutoffRule(
+                            id = UUID.randomUUID().toString(),
+                            pattern = keyword.lowercase(),
+                            mode = NetworkRuleMode.KEYWORD,
+                            enabled = true
                         )
-                    }
-                    missing.size
+                    )
                 }
-                ProcessMonitor.invalidateCaches()
-                networkSuggestionCount = (networkSuggestionCount - added).coerceAtLeast(0)
-                navigate(Screen.VPN_NETWORK)
+                missing.size
             }
+            ProcessMonitor.invalidateCaches()
+            networkSuggestionCount = (networkSuggestionCount - added).coerceAtLeast(0)
+            navigate(Screen.VPN_NETWORK)
         }
     }
 
@@ -361,11 +370,8 @@ fun KeywordBlockerScreen() {
                         onClick = {
                             val kw = newKeyword.trim().lowercase()
                             if (kw.isNotEmpty() && !keywords.contains(kw)) {
-                                val updated = keywords + kw
-                                withPin {
-                                    save(updated)
-                                    newKeyword = ""
-                                }
+                                save(keywords + kw)   // adding needs no PIN
+                                newKeyword = ""
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Purple80)
@@ -614,8 +620,8 @@ fun KeywordBlockerScreen() {
                             } else {
                                 Button(
                                     onClick = {
-                                        val merged = (keywords + preset.keywords).distinct()
-                                        withPin { save(merged) }
+                                        // Adding a preset needs no PIN (removing it still does).
+                                        save((keywords + preset.keywords).distinct())
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Purple80)
                                 ) {
@@ -672,7 +678,7 @@ fun KeywordBlockerScreen() {
     if (showPinGate) {
         PinGateDialog(
             title = "Global PIN required",
-            subtitle = "Enter your Global PIN to change keyword enforcement.",
+            subtitle = "Enter your Global PIN to remove keywords or turn off keyword blocking.",
             onSuccess = {
                 showPinGate = false
                 pendingPinAction?.invoke()

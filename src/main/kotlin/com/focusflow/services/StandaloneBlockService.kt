@@ -35,19 +35,10 @@ object StandaloneBlockService {
     val block: StateFlow<StandaloneBlock?> = _block
 
     /** True when there is an active block whose window has started and not yet ended. */
-    val isActive: Boolean get() {
-        val b = _block.value ?: return false
-        val now = System.currentTimeMillis()
-        val started = b.startMs == null || now >= b.startMs
-        return started && b.untilMs > now && b.processNames.isNotEmpty()
-    }
+    val isActive: Boolean get() = _block.value?.isActiveAt(System.currentTimeMillis()) ?: false
 
     /** True when a block is configured (may be scheduled but not yet started). */
-    val isScheduled: Boolean get() {
-        val b = _block.value ?: return false
-        val now = System.currentTimeMillis()
-        return b.untilMs > now && b.processNames.isNotEmpty()
-    }
+    val isScheduled: Boolean get() = _block.value?.isScheduledAt(System.currentTimeMillis()) ?: false
 
     /** Starts or schedules a standalone block.
      *  @param startMs epoch-ms when enforcement should begin; null = immediately. */
@@ -257,17 +248,12 @@ object StandaloneBlockService {
         }
     }
 
-    fun remainingMs(): Long {
-        val b = _block.value ?: return 0L
-        return maxOf(0L, b.untilMs - System.currentTimeMillis())
-    }
+    fun remainingMs(nowMs: Long = System.currentTimeMillis()): Long =
+        _block.value?.remainingMsAt(nowMs) ?: 0L
 
     /** ms until the scheduled block starts, or 0 if already started / no block. */
-    fun startsInMs(): Long {
-        val b = _block.value ?: return 0L
-        val startMs = b.startMs ?: return 0L
-        return maxOf(0L, startMs - System.currentTimeMillis())
-    }
+    fun startsInMs(nowMs: Long = System.currentTimeMillis()): Long =
+        _block.value?.startsInMsAt(nowMs) ?: 0L
 
     private fun writeSetting(key: String, value: String, operation: String): Boolean =
         when (val result = Database.writeSetting(key, value)) {
