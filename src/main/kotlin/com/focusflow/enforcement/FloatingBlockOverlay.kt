@@ -226,7 +226,7 @@ object FloatingBlockOverlay {
                     if (overlay.showAndroidPromo) {
                         g2.color = colAccent.darker()
                         g2.font = bestFont("Segoe UI", java.awt.Font.PLAIN, 13, java.awt.Font.PLAIN, 13)
-                        val promo = "FocusFlow is also available on Android  -  Get it on AppGallery"
+                        val promo = "FocusFlow is also available on Android  -  focusflowapp.pages.dev"
                         val fmP = g2.fontMetrics
                         g2.drawString(promo, cx - fmP.stringWidth(promo) / 2, cy + 108)
                     }

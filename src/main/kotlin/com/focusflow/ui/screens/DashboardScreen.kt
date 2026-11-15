@@ -929,42 +929,35 @@ private fun DonateDialog(onDismiss: () -> Unit) {
                     lineHeight = 20.sp
                 )
 
-                // UPI card
+                // GitHub Sponsors
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(Surface2)
                         .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.CreditCard, null, tint = Purple80, modifier = Modifier.size(18.dp))
-                        Text("UPI  (India)", style = MaterialTheme.typography.labelMedium, color = Purple80, fontWeight = FontWeight.SemiBold)
+                        Icon(Icons.Default.Favorite, null, tint = Purple80, modifier = Modifier.size(18.dp))
+                        Text("GitHub Sponsors", style = MaterialTheme.typography.labelMedium, color = Purple80, fontWeight = FontWeight.SemiBold)
                     }
                     Text(
-                        "himanshu00@upi",
-                        style      = MaterialTheme.typography.bodyMedium,
-                        color      = OnSurface,
-                        fontWeight = FontWeight.SemiBold
+                        "Support FocusFlow's development.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurface2,
+                        lineHeight = 18.sp
                     )
-                    Text("Open any UPI app · Pay · Enter any amount", style = MaterialTheme.typography.bodySmall, color = OnSurface2)
-                }
-
-                // International card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Surface2)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.Language, null, tint = Purple80, modifier = Modifier.size(18.dp))
-                        Text("International", style = MaterialTheme.typography.labelMedium, color = Purple80, fontWeight = FontWeight.SemiBold)
+                    Button(
+                        onClick  = { openUrl("https://github.com/sponsors/TITANICBHAI"); onDismiss() },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape    = RoundedCornerShape(12.dp),
+                        colors   = ButtonDefaults.buttonColors(containerColor = Purple80)
+                    ) {
+                        Icon(Icons.Default.Favorite, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Sponsor on GitHub", fontWeight = FontWeight.SemiBold)
                     }
-                    Text("GitHub Sponsors or PayPal — reach out via the Contact page for the link.", style = MaterialTheme.typography.bodySmall, color = OnSurface2, lineHeight = 18.sp)
                 }
 
                 TextButton(onClick = onDismiss) {

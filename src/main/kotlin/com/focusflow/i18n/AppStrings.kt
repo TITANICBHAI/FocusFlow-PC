@@ -421,7 +421,7 @@ data class AppStringsC(
     val launcherFullOsLockdown: String,
     val promoTitle: String,
     val promoBody: String,
-    val promoGetAppGallery: String,
+    val promoVisitWebsite: String,
     val promoDownloadApk: String,
     val promoMaybeLater: String,
     val promoInstallTitle: String,
@@ -1091,7 +1091,7 @@ class AppStrings(
     val launcherFullOsLockdown: String get() = appstringsc.launcherFullOsLockdown
     val promoTitle: String get() = appstringsc.promoTitle
     val promoBody: String get() = appstringsc.promoBody
-    val promoGetAppGallery: String get() = appstringsc.promoGetAppGallery
+    val promoVisitWebsite: String get() = appstringsc.promoVisitWebsite
     val promoDownloadApk: String get() = appstringsc.promoDownloadApk
     val promoMaybeLater: String get() = appstringsc.promoMaybeLater
     val promoInstallTitle: String get() = appstringsc.promoInstallTitle

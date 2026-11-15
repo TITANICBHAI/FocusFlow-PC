@@ -22,7 +22,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.focusflow.i18n.LocalizationManager
 import com.focusflow.ui.theme.*
 
-private const val URL_APPGALLERY  = "https://appgallery.huawei.com/app/C117761461"
+private const val URL_WEBSITE     = "https://focusflowapp.pages.dev/"
 private const val URL_GITHUB_APK  = "https://github.com/TITANICBHAI/FocusFlow/releases"
 private const val URL_SAI_FDROID  = "https://f-droid.org/packages/com.aefyr.sai.fdroid/"
 private const val URL_SAI_GITHUB  = "https://github.com/Aefyr/SAI/releases"
@@ -60,7 +60,7 @@ fun AndroidPromoDialog(onDismiss: () -> Unit) {
                 when (current) {
                     PromoStep.MAIN          -> MainPromoPage(
                         onDismiss      = onDismiss,
-                        onAppGallery   = { openUrl(URL_APPGALLERY); onDismiss() },
+                        onWebsite      = { openUrl(URL_WEBSITE); onDismiss() },
                         onGithubApk    = { step = PromoStep.SIDELOAD_GUIDE }
                     )
                     PromoStep.SIDELOAD_GUIDE -> SideloadGuidePage(
@@ -77,7 +77,7 @@ fun AndroidPromoDialog(onDismiss: () -> Unit) {
 @Composable
 private fun MainPromoPage(
     onDismiss:    () -> Unit,
-    onAppGallery: () -> Unit,
+    onWebsite:    () -> Unit,
     onGithubApk:  () -> Unit
 ) {
     val s = LocalizationManager.strings
@@ -107,14 +107,14 @@ private fun MainPromoPage(
         Spacer(Modifier.height(2.dp))
 
         Button(
-            onClick  = onAppGallery,
+            onClick  = onWebsite,
             modifier = Modifier.fillMaxWidth(),
             shape    = RoundedCornerShape(12.dp),
             colors   = ButtonDefaults.buttonColors(containerColor = Purple80)
         ) {
-            Icon(Icons.Default.PhoneAndroid, null, modifier = Modifier.size(16.dp))
+            Icon(Icons.Default.Language, null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(8.dp))
-            Text(s.promoGetAppGallery, fontWeight = FontWeight.SemiBold)
+            Text(s.promoVisitWebsite, fontWeight = FontWeight.SemiBold)
         }
 
         OutlinedButton(

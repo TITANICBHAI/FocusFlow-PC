@@ -53,6 +53,8 @@ internal val CHANGELOG = listOf(
             "FIX" to "Focus Launcher and the other app pickers now find many more programs: apps that only appear in the Start Menu or under App Paths (for example Adobe apps), and installers that leave no icon path",
             "NEW" to "Installed Store apps such as Calculator, Clock, Calendar and Mail now appear in Focus Launcher greyed out as \"Store app — not supported\" instead of being missing",
             "IMP" to "Runtimes, redistributables, updates and background helpers (for example the Microsoft Edge WebView2 Runtime) are hidden from app lists",
+            "IMP" to "Support (♥) dialog: the UPI details are removed and a \"Sponsor on GitHub\" button opens github.com/sponsors/TITANICBHAI (the sponsors page only works once GitHub has approved it)",
+            "IMP" to "Android promo: the AppGallery button is replaced by a link to focusflowapp.pages.dev; the GitHub APK download stays. The popup conditions are unchanged",
             "UPD" to "Windows-specific behavior still needs hands-on verification"
         )
     ),
