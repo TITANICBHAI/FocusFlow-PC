@@ -338,6 +338,9 @@ private fun FocusFlowDesktop(
                 ProcessMonitor.dispose()
                 com.focusflow.enforcement.WindowsSessionStateMonitor.stop()
                 AppBlocker.dispose()
+                // Stop queued firewall work and end a PowerShell run still in progress, so the
+                // process does not exit with one running or a half-finished batch pending.
+                com.focusflow.enforcement.NetworkBlocker.shutdown()
                 SystemTrayManager.remove()
                 Database.close()
                 launch.release()

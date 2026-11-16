@@ -188,7 +188,7 @@ object FocusSessionService {
         // Async firewall cleanup — state is already cleared so enforcement is logically
         // ended; the slow PowerShell process runs in the background without holding any
         // lock or blocking the EDT.
-        scope.launch(Dispatchers.IO) { try { NetworkBlocker.removeAllRules() } catch (_: Exception) {} }
+        scope.launch(Dispatchers.IO) { try { NetworkBlocker.removeSessionRules() } catch (_: Exception) {} }
 
         // Serialize persistence so INSERT OR REPLACE cannot let the start row
         // overwrite the final end time.

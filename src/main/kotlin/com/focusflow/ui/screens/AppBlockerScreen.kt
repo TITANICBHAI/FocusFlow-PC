@@ -754,7 +754,7 @@ private fun AlwaysBlockTab(onNavigateToBlockDefense: () -> Unit) {
                                         withContext(Dispatchers.IO) {
                                             Database.upsertBlockRule(rule.copy(enabled = enabled))
                                         }
-                                        if (!enabled) NetworkBlocker.removeRule(rule.processName)
+                                        if (!enabled) withContext(Dispatchers.IO) { NetworkBlocker.removeRule(rule.processName) }
                                         reload()
                                     }
                                 }
@@ -764,7 +764,7 @@ private fun AlwaysBlockTab(onNavigateToBlockDefense: () -> Unit) {
                                 guardedRemoval {
                                     scope.launch {
                                         withContext(Dispatchers.IO) { Database.deleteBlockRule(rule.id) }
-                                        NetworkBlocker.removeRule(rule.processName)
+                                        withContext(Dispatchers.IO) { NetworkBlocker.removeRule(rule.processName) }
                                         reload()
                                     }
                                 }

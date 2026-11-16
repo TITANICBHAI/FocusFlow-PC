@@ -35,7 +35,8 @@ object LauncherKioskPolicy {
         systemRoot: String?,
         chainAllowanceEnabled: Boolean,
         snapshotVersion: Long = 0L,
-        resolvePath: (ProcessSnapshotEntry) -> String? = { it.executablePath }
+        resolvePath: (ProcessSnapshotEntry) -> String? = { it.executablePath },
+        isTrustedHelper: (ProcessSnapshotEntry, String?) -> Boolean = { _, _ -> false }
     ): Decision {
         val names = allowedProcessNames.mapTo(HashSet(), ::normalizeName)
         val safeNames = safeProcessNames.mapTo(HashSet(), ::normalizeName)
@@ -48,6 +49,12 @@ object LauncherKioskPolicy {
         val executablePath = resolvePath(process)
 
         if (process.pid == ownPid) return Decision.ALLOW
+
+        // A helper FocusFlow started itself (a firewall PowerShell run, taskkill, one of its own
+        // scheduled-task runs). The caller proves this by process identity — id, start time and the
+        // exact executable — never by name, so a person's PowerShell or cmd stays a block target.
+        // This is checked before the escape-tool rule because those helpers can be escape tools.
+        if (isTrustedHelper(process, executablePath)) return Decision.ALLOW
 
         // FocusFlow may itself start a small Windows utility. Only exempt a
         // provable direct child in the system directory, and only in opt-in

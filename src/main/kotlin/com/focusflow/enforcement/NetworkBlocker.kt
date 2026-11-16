@@ -1,270 +1,164 @@
 package com.focusflow.enforcement
 
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
+
 /**
- * NetworkBlocker — three-layer Windows Firewall enforcement
+ * NetworkBlocker — Windows Firewall enforcement (outbound-deny rules per program).
  *
- * Layer 1 — Resolve exe path:
- *   First tries `Get-Process` (process must be running). If the process is not
- *   currently running, falls back to a directory search across the five most
- *   common Windows install locations (Program Files, ProgramFiles(x86), AppData,
- *   LocalAppData, System32). Resolved paths are cached so subsequent calls skip
- *   the search entirely.
+ * This object is the public face; the logic lives in smaller, separately tested pieces:
+ *  - [FirewallRuleManager] owns the state: who needs each rule ([FirewallOwner]), what is
+ *    confirmed active, the queue of background requests and the retry back-off.
+ *  - [PowerShellFirewallBackend] talks to Windows Firewall: one PowerShell run at a time, absolute
+ *    PowerShell path, started as a FocusFlow-owned process (so Nuclear Mode never kills it), hard
+ *    timeouts, the whole process tree killed on timeout or [shutdown].
+ *  - [ExePathResolver] finds the program a rule points at, trusting the real Windows copy over a
+ *    same-named process running from elsewhere.
  *
- * Layer 2 — Apply + verify:
- *   Creates the outbound-deny firewall rule via `New-NetFirewallRule`, then
- *   immediately calls `Get-NetFirewallRule` to confirm the rule exists and is
- *   enabled. Only marks the rule as active if verification passes.
+ * A rule only counts as active after the firewall read-back shows it enabled, outbound and Block.
+ * Enforcement code never waits for the firewall: [requestRule] queues the work for a background
+ * worker, which applies queued programs together in batches.
  *
- * Layer 3 — Sync from firewall state on startup:
- *   [syncFromFirewall] reads all existing FocusFlow rules from the Windows
- *   Firewall and populates [activeRules]. This survives app restarts — rules
- *   created in a previous session are recognised and not double-applied.
+ * Owners: Nuclear Mode, the person's own rules and session cutoffs can need the same program.
+ * A rule is removed only when its last owner releases it, so ending a focus session
+ * ([removeSessionRules]) no longer removes Nuclear Mode's rules.
  */
 object NetworkBlocker {
 
-    private const val RULE_PREFIX = "FocusFlow_Block_"
+    private val resolver by lazy { ExePathResolver(SystemTools.systemRoot()) }
 
-    /** Tracks which process names have an active firewall rule. */
-    private val activeRules: MutableSet<String> =
-        java.util.Collections.synchronizedSet(mutableSetOf())
+    /** baseName (no .exe, lowercase) → resolved absolute exe path. */
+    private val resolvedPaths = ConcurrentHashMap<String, String>()
 
-    /**
-     * Cache: baseName (no .exe, lowercase) → resolved absolute exe path.
-     * Avoids repeated directory searches for the same process.
-     */
-    private val resolvedPaths = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val worker by lazy {
+        Executors.newSingleThreadExecutor { r -> Thread(r, "FocusFlow-Firewall").apply { isDaemon = true } }
+    }
+    private val workerScheduled = AtomicBoolean(false)
 
-    /**
-     * Processes for which we have a pending rule (path not yet resolved).
-     * ProcessMonitor retries these on the next block cycle.
-     */
-    private val pendingRules: MutableSet<String> =
-        java.util.Collections.synchronizedSet(mutableSetOf())
+    private val managerDelegate = lazy {
+        FirewallRuleManager(
+            backend = PowerShellFirewallBackend(),
+            resolvePath = ::resolveExePath,
+            wake = ::wakeWorker
+        )
+    }
+    private val manager: FirewallRuleManager get() = managerDelegate.value
 
-    // ── Layer 1: Path resolution ─────────────────────────────────────────────
-
-    /**
-     * Resolves the absolute exe path for [baseName] (process name without ".exe").
-     *
-     * Resolution order:
-     *   1. In-memory cache (instant)
-     *   2. Running process via Get-Process (most accurate)
-     *   3. Common install directories (handles pre-emptive blocks before process runs)
-     */
-    private fun resolveExePath(baseName: String): String? {
-        // Fast path — already resolved; ConcurrentHashMap read is lock-free.
+    private fun resolveExePath(name: String): String? {
+        val baseName = name.removeSuffix(".exe")
         resolvedPaths[baseName]?.let { return it }
+        val resolved = resolver.resolve(name) ?: return null
+        resolvedPaths[baseName] = resolved
+        return resolved
+    }
 
-        // Serialise resolution per map instance.
-        // Without this guard two concurrent addRule("chrome.exe") calls both see a
-        // cache miss and both spawn an expensive PowerShell process for the same name.
-        // The synchronized block is cheap: resolution is at most once-per-process-name,
-        // so contention on this lock is negligible in practice.
-        return synchronized(resolvedPaths) {
-            // Re-read inside the lock — another thread may have resolved while we waited.
-            resolvedPaths[baseName] ?: run {
-                val resolved = resolveExePathUncached(baseName)
-                // Only cache on success; null means the process isn't running yet.
-                // Leaving it out of the cache lets retryPendingRules() try again later.
-                if (resolved != null) resolvedPaths[baseName] = resolved
-                resolved
+    /** Runs the queued requests on the worker; requests that arrive meanwhile schedule one more run. */
+    private fun wakeWorker() {
+        if (!workerScheduled.compareAndSet(false, true)) return
+        try {
+            worker.execute {
+                workerScheduled.set(false)
+                try {
+                    manager.processQueued()
+                } catch (t: Throwable) {
+                    EnforcementLog.warn("NetworkBlocker", "Background firewall work failed", t)
+                }
             }
+        } catch (_: RejectedExecutionException) {
+            workerScheduled.set(false)
         }
     }
 
-    private fun resolveExePathUncached(baseName: String): String? {
-        // 2. Running process
-        val fromProcess = runPowerShellAndRead(
-            "(Get-Process -Name '$baseName' -ErrorAction SilentlyContinue " +
-            "| Select-Object -First 1 -ExpandProperty Path)"
-        )?.trim()?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-        if (fromProcess != null) return fromProcess
+    private val enabled: Boolean get() = isWindows && ElevationManager.isElevated
 
-        // 3. Directory search — try bare exe name, then one level deep
-        val searchRoots = listOfNotNull(
-            System.getenv("ProgramFiles"),
-            System.getenv("ProgramFiles(x86)"),
-            System.getenv("LOCALAPPDATA"),
-            System.getenv("APPDATA"),
-            "C:\\Windows\\System32",
-            "C:\\Windows\\SysWOW64"
-        )
-        return searchRoots.firstNotNullOfOrNull { root ->
-            val direct = java.io.File(root, "$baseName.exe")
-            if (direct.exists()) return@firstNotNullOfOrNull direct.absolutePath
-            java.io.File(root).listFiles()?.firstNotNullOfOrNull { sub ->
-                val nested = java.io.File(sub, "$baseName.exe")
-                if (nested.exists()) nested.absolutePath else null
-            }
-        }
-    }
-
-    // ── Layer 2: Apply + verify ──────────────────────────────────────────────
+    // ── Applying ──────────────────────────────────────────────────────────────
 
     /**
-     * Block all outbound traffic for [processName] (e.g. "chrome.exe").
-     *
-     * Returns true  — rule created and verified.
-     * Returns false — no admin, not Windows, or path could not be resolved
-     *                 (rule is queued in [pendingRules] for retry).
+     * Non-blocking. Asks the background worker to block [processName]. Safe to call from the
+     * enforcement loop / hook callbacks: it never waits for PowerShell. Repeated calls collapse into
+     * one queued job, and a failed attempt is not repeated for a minute.
      */
-    fun addRule(processName: String): Boolean {
-        if (!isWindows || !ElevationManager.isElevated) return false
-
-        val lower    = normalizeProcessName(processName)
-        val baseName = lower.removeSuffix(".exe")
-        val ruleName = RULE_PREFIX + baseName
-
-        if (activeRules.contains(lower)) return true   // Already applied
-
-        val exePath = resolveExePath(baseName)
-        if (exePath == null) {
-            pendingRules.add(lower)
-            return false
-        }
-
-        // Remove any stale rule with the same name before creating fresh
-        runPowerShell(
-            "Remove-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue"
-        )
-
-        val created = runPowerShell("""
-            New-NetFirewallRule `
-                -DisplayName '$ruleName' `
-                -Direction Outbound `
-                -Action Block `
-                -Program '$exePath' `
-                -Profile Any `
-                -Enabled True `
-                -ErrorAction Stop | Out-Null
-        """.trimIndent())
-
-        // Verify the rule actually exists and is an enabled outbound block.
-        // Previously the create command's exit code was discarded and a stale
-        // enabled rule with the same display name could be treated as success.
-        val verified = created && verifyRuleExists(ruleName)
-        if (verified) {
-            activeRules.add(lower)
-            pendingRules.remove(lower)
-        } else {
-            EnforcementLog.warn(
-                "NetworkBlocker",
-                "Firewall rule was not confirmed for $processName (path=$exePath, created=$created)"
-            )
-        }
-        return verified
-    }
-
-    private fun verifyRuleExists(ruleName: String): Boolean {
-        val count = runPowerShellAndRead(
-            "(Get-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue " +
-            "| Where-Object { \$_.Enabled -eq 'True' -and \$_.Direction -eq 'Outbound' " +
-            "-and \$_.Action -eq 'Block' } | Measure-Object).Count"
-        )?.trim()?.toIntOrNull() ?: return false
-        return count > 0
+    fun requestRule(processName: String, owner: FirewallOwner = FirewallOwner.SESSION) {
+        if (!enabled) return
+        manager.request(owner, normalizeProcessName(processName))
     }
 
     /**
-     * Remove the outbound-block rule for [processName].
+     * Blocking. Block all outbound traffic for [processName] (e.g. "chrome.exe"). For UI actions
+     * that need the result. Returns true only when the firewall confirmed the rule.
      */
-    fun removeRule(processName: String) {
+    fun addRule(processName: String, owner: FirewallOwner = FirewallOwner.USER): Boolean {
+        if (!enabled) return false
+        val name = normalizeProcessName(processName)
+        return manager.acquire(owner, listOf(name)).contains(name)
+    }
+
+    /**
+     * Blocking. Applies outbound-deny rules for many programs in as few PowerShell runs as
+     * possible. Returns the programs whose rule was confirmed active, including ones that already were.
+     */
+    fun addRules(processNames: Collection<String>, owner: FirewallOwner = FirewallOwner.USER): Set<String> {
+        if (!enabled) return emptySet()
+        return manager.acquire(owner, processNames.map(::normalizeProcessName))
+    }
+
+    // ── Removing ──────────────────────────────────────────────────────────────
+
+    /** Blocking. Release [owner]'s claim on [processName]; the rule goes when nobody else needs it. */
+    fun removeRule(processName: String, owner: FirewallOwner = FirewallOwner.USER) {
+        removeRules(listOf(processName), owner)
+    }
+
+    /** Blocking. Release [owner]'s claim on several programs. */
+    fun removeRules(processNames: Collection<String>, owner: FirewallOwner = FirewallOwner.USER) {
         if (!isWindows) return
-        val baseName = normalizeProcessName(processName).removeSuffix(".exe")
-        val ruleName = RULE_PREFIX + baseName
-        runPowerShell(
-            "Remove-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue"
-        )
-        activeRules.remove(normalizeProcessName(processName))
-        pendingRules.remove(normalizeProcessName(processName))
+        val names = processNames.map(::normalizeProcessName).distinct()
+        if (names.isNotEmpty()) manager.release(owner, names)
     }
 
-    /**
-     * Remove every FocusFlow-created firewall rule. Call on app exit / session end.
-     */
+    /** Blocking. Release what focus-session cutoffs claimed; rules Nuclear Mode or the person need stay. */
+    fun removeSessionRules() {
+        if (!isWindows) return
+        manager.releaseOwner(FirewallOwner.SESSION)
+    }
+
+    /** Blocking. Remove every FocusFlow-created firewall rule. For app exit and uninstall, not for a session end. */
     fun removeAllRules() {
         if (!isWindows) return
-        runPowerShell("""
-            Get-NetFirewallRule |
-            Where-Object { ${'$'}_.DisplayName -like '$RULE_PREFIX*' } |
-            Remove-NetFirewallRule -ErrorAction SilentlyContinue
-        """.trimIndent())
-        activeRules.clear()
-        pendingRules.clear()
+        manager.removeAll()
     }
 
-    // ── Layer 3: Sync from actual firewall state ──────────────────────────────
-
     /**
-     * Reads all existing FocusFlow firewall rules from Windows and populates
-     * [activeRules] accordingly. Call once at app startup so rules created in a
-     * previous session are recognised without being re-applied.
+     * Stops accepting work, drops what is queued and ends a PowerShell run in progress. Call on app
+     * exit before [removeAllRules] (which still works afterwards).
      */
+    fun shutdown() {
+        if (managerDelegate.isInitialized()) manager.shutdown()
+    }
+
+    // ── Startup sync / retry ──────────────────────────────────────────────────
+
+    /** Reads the existing FocusFlow rules so rules from a previous run are recognised. Call once at startup. */
     fun syncFromFirewall() {
-        if (!isWindows || !ElevationManager.isElevated) return
-        val output = runPowerShellAndRead("""
-            Get-NetFirewallRule |
-            Where-Object { ${'$'}_.DisplayName -like '$RULE_PREFIX*' -and ${'$'}_.Enabled -eq 'True' } |
-            Select-Object -ExpandProperty DisplayName
-        """.trimIndent()) ?: return
-
-        activeRules.clear()
-        output.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .forEach { ruleName ->
-                val baseName = ruleName.removePrefix(RULE_PREFIX).lowercase()
-                activeRules.add("$baseName.exe")
-            }
+        if (!enabled) return
+        manager.syncFromBackend()
     }
 
-    /**
-     * Retry any rules that failed path resolution (process was not running at
-     * block time). Call periodically from ProcessMonitor's enforcement loop.
-     */
+    /** Re-queues rules whose program path was not found earlier. Non-blocking. */
     fun retryPendingRules() {
-        val pending = synchronized(pendingRules) { pendingRules.toSet() }
-        pending.forEach { addRule(it) }
+        if (managerDelegate.isInitialized()) manager.retryPending()
     }
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
     fun isBlocked(processName: String): Boolean =
-        activeRules.contains(normalizeProcessName(processName))
+        managerDelegate.isInitialized() && manager.isBlocked(normalizeProcessName(processName))
 
-    fun activeRuleCount(): Int = activeRules.size
+    fun activeRuleCount(): Int = if (managerDelegate.isInitialized()) manager.activeCount() else 0
 
-    fun pendingRuleCount(): Int = pendingRules.size
-
-    // ── PowerShell helpers ────────────────────────────────────────────────────
-
-    private fun runPowerShell(script: String): Boolean {
-        try {
-            val process = ProcessBuilder(
-                "powershell", "-NonInteractive", "-NoProfile",
-                "-ExecutionPolicy", "Bypass", "-Command", script
-            ).redirectErrorStream(true).start()
-            // Drain the merged output before waiting.  A failed firewall command
-            // can write enough diagnostic text to fill the pipe; closing it
-            // immediately would leave waitFor() blocked and make enforcement
-            // appear to hang.
-            process.inputStream.bufferedReader().readText()
-            return process.waitFor() == 0
-        } catch (_: Exception) {
-            return false
-        }
-    }
-
-    private fun runPowerShellAndRead(script: String): String? {
-        return try {
-            val proc = ProcessBuilder(
-                "powershell", "-NonInteractive", "-NoProfile",
-                "-ExecutionPolicy", "Bypass", "-Command", script
-            ).redirectErrorStream(true).start()
-            val text = proc.inputStream.bufferedReader().readText()
-            proc.waitFor()
-            text.takeIf { it.isNotBlank() }
-        } catch (_: Exception) { null }
-    }
+    fun pendingRuleCount(): Int = if (managerDelegate.isInitialized()) manager.pendingCount() else 0
 
     private fun normalizeProcessName(processName: String): String =
         processName.trim()

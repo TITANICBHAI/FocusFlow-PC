@@ -144,4 +144,81 @@ class WatchdogScriptTest {
         assertTrue(headless.startsWith("conhost.exe --headless powershell.exe "), headless)
         assertTrue(headless.length <= WatchdogScript.MAX_TASK_COMMAND_LENGTH)
     }
+
+    // ---- Trust for FocusFlow's own scheduled-task runs -------------------------------------------
+
+    private val watchdogScriptPath = "C:\\Users\\me\\.focusflow-tasks\\watchdog.ps1"
+    private val guardScriptPath = "C:\\Users\\me\\.focusflow-tasks\\taskbar-guard.ps1"
+    private val svchost = "C:\\Windows\\System32\\svchost.exe"
+
+    private fun expectedRuns() = WatchdogScript.expectedTaskRuns(
+        exePath = exe,
+        exeAbsolutePath = exe,
+        watchdogScriptPath = watchdogScriptPath,
+        guardScriptPath = guardScriptPath
+    )
+
+    private fun trust(guardContent: String = WatchdogScript.taskbarGuardScript()): TaskRunTrust {
+        val files = mapOf(
+            watchdogScriptPath to WatchdogScript.scriptBytes(WatchdogScript.script(exe)),
+            guardScriptPath to WatchdogScript.scriptBytes(guardContent)
+        )
+        return TaskRunTrust(
+            systemRoot = systemRoot,
+            expectations = ::expectedRuns,
+            fileSha256 = { path -> files[path]?.let(TaskRunTrust::sha256Hex) }
+        )
+    }
+
+    /** The command line and parent a task run really has, derived from the action FocusFlow registers. */
+    private fun processFacts(action: WatchdogScript.TaskAction, headless: Boolean) = TaskRunFacts(
+        imagePath = powerShell,
+        commandLine = if (headless) {
+            action.arguments.removePrefix("--headless ")
+        } else {
+            "${action.command} ${action.arguments}"
+        },
+        parentImagePath = if (headless) conhost else svchost
+    )
+
+    @Test
+    fun everyTaskRunFocusFlowRegistersIsRecognisedAsItsOwn() {
+        val trust = trust()
+        for (headless in listOf(true, false)) {
+            val host = if (headless) conhost else null
+            val actions = mapOf(
+                "watchdog script" to WatchdogScript.scriptAction(watchdogScriptPath, systemRoot, host),
+                "taskbar guard" to WatchdogScript.scriptAction(guardScriptPath, systemRoot, host),
+                "name-only watchdog" to WatchdogScript.legacyAction(exe, systemRoot, host)
+            )
+            for ((label, action) in actions) {
+                assertTrue(trust.isTrusted(processFacts(action, headless)), "$label (headless=$headless)")
+            }
+        }
+    }
+
+    @Test
+    fun aRunOfTheWatchdogScriptWhoseFileWasEditedIsNotRecognised() {
+        val edited = trust(guardContent = WatchdogScript.taskbarGuardScript() + "\ncalc.exe\n")
+        val action = WatchdogScript.scriptAction(guardScriptPath, systemRoot, conhost)
+
+        assertFalse(edited.isTrusted(processFacts(action, headless = true)))
+    }
+
+    @Test
+    fun aNameOnlyWatchdogCommandForAnotherFocusFlowPathIsNotRecognised() {
+        val other = WatchdogScript.legacyAction("C:\\Users\\me\\Downloads\\FocusFlow.exe", systemRoot, conhost)
+
+        assertFalse(trust().isTrusted(processFacts(other, headless = true)))
+    }
+
+    @Test
+    fun theTaskbarGuardScriptRestoresThePrimaryAndEverySecondaryTaskbar() {
+        val script = WatchdogScript.taskbarGuardScript()
+
+        assertTrue(script.contains("Shell_TrayWnd"))
+        assertTrue(script.contains("Shell_SecondaryTrayWnd"))
+        assertTrue(script.contains("ShowWindow"))
+        assertTrue(script.contains("\$SW_SHOW = 5"), "PowerShell variables must keep their \$ sign")
+    }
 }

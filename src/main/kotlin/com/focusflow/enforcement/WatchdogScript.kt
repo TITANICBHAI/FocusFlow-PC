@@ -19,6 +19,10 @@ package com.focusflow.enforcement
  */
 internal object WatchdogScript {
 
+    /** File names of the two generated scripts in [com.focusflow.AppPaths.taskScriptsDir]. */
+    const val WATCHDOG_SCRIPT_NAME = "watchdog.ps1"
+    const val GUARD_SCRIPT_NAME = "taskbar-guard.ps1"
+
     /** `schtasks /tr` accepts at most 261 characters. Only the fallback registration is limited by it. */
     const val MAX_TASK_COMMAND_LENGTH = 260
 
@@ -42,6 +46,49 @@ foreach (${'$'}p in @(Get-Process -Name 'FocusFlow' -ErrorAction SilentlyContinu
 }
 if (-not ${'$'}running) { Start-Process -FilePath ${'$'}exe }
 """.trimIndent() + "\n"
+
+    /**
+     * The taskbar guard that runs at every sign-in: shows the primary taskbar and every secondary
+     * one again, so a hard kill while the Focus Launcher had it hidden never leaves it hidden.
+     * It lives here, next to the other generated text, so the exact content FocusFlow writes is also
+     * what [expectedTaskRuns] vouches for.
+     */
+    fun taskbarGuardScript(): String {
+        val D = '$'
+        return """
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class FocusFlowTaskbarGuard {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+}
+'@
+
+${D}SW_SHOW = 5
+
+# Restore primary taskbar
+${D}primary = [FocusFlowTaskbarGuard]::FindWindow("Shell_TrayWnd", ${D}null)
+if (${D}primary -ne [IntPtr]::Zero) {
+    [FocusFlowTaskbarGuard]::ShowWindow(${D}primary, ${D}SW_SHOW) | Out-Null
+}
+
+# Restore ALL secondary taskbars (handles 3+ monitor setups)
+${D}prev = [IntPtr]::Zero
+while (${D}true) {
+    ${D}sec = [FocusFlowTaskbarGuard]::FindWindowEx([IntPtr]::Zero, ${D}prev, "Shell_SecondaryTrayWnd", ${D}null)
+    if (${D}sec -eq [IntPtr]::Zero) { break }
+    [FocusFlowTaskbarGuard]::ShowWindow(${D}sec, ${D}SW_SHOW) | Out-Null
+    ${D}prev = ${D}sec
+}
+""".trimIndent()
+    }
 
     /**
      * The bytes to write for a script file: UTF-8 with a byte-order mark. Windows PowerShell 5.1
@@ -85,11 +132,19 @@ if (-not ${'$'}running) { Start-Process -FilePath ${'$'}exe }
 
     /** Runs the path-aware watchdog script (or the taskbar guard script) without a console window. */
     fun scriptAction(scriptPath: String, systemRoot: String?, headlessHost: String?): TaskAction =
-        action(systemRoot, headlessHost, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$scriptPath\"")
+        action(systemRoot, headlessHost, scriptPowerShellArguments(scriptPath))
 
     /** Name-only check for Store/MSIX, development runs and very long paths. */
     fun legacyAction(exePath: String, systemRoot: String?, headlessHost: String?): TaskAction =
-        action(systemRoot, headlessHost, "-NoProfile -NonInteractive -Command \"${legacyCheck(exePath)}\"")
+        action(systemRoot, headlessHost, legacyPowerShellArguments(exePath))
+
+    /** What PowerShell is given to run a script file. */
+    private fun scriptPowerShellArguments(scriptPath: String): String =
+        "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"$scriptPath\""
+
+    /** What PowerShell is given to run the name-only check. */
+    private fun legacyPowerShellArguments(exePath: String): String =
+        "-NoProfile -NonInteractive -Command \"${legacyCheck(exePath)}\""
 
     private fun action(systemRoot: String?, headlessHost: String?, powerShellArguments: String): TaskAction =
         if (headlessHost != null) {
@@ -134,4 +189,36 @@ if (-not ${'$'}running) { Start-Process -FilePath ${'$'}exe }
             exeExists &&
             exePath.substringAfterLast('\\').substringAfterLast('/').equals("FocusFlow.exe", ignoreCase = true) &&
             taskCommand.length <= MAX_TASK_COMMAND_LENGTH
+
+    /**
+     * Every PowerShell run FocusFlow's own scheduled tasks can produce, for [TaskRunTrust]: the
+     * exact arguments, and for a script run the SHA-256 of the file as FocusFlow writes it.
+     *
+     * Both launch styles are listed (through `conhost --headless`, or plain hidden PowerShell)
+     * because which one is registered depends on the Windows build. The text comes from the same
+     * builders that create the tasks, so a change to a task cannot silently stop being trusted.
+     *
+     * @param exePath the FocusFlow.exe path as the name-only check embeds it
+     * @param exeAbsolutePath the same path as the path-aware script embeds it
+     */
+    fun expectedTaskRuns(
+        exePath: String,
+        exeAbsolutePath: String,
+        watchdogScriptPath: String,
+        guardScriptPath: String
+    ): List<TaskRunExpectation> {
+        val watchdogHash = TaskRunTrust.sha256Hex(scriptBytes(script(exeAbsolutePath)))
+        val guardHash = TaskRunTrust.sha256Hex(scriptBytes(taskbarGuardScript()))
+        val runs = listOf(
+            Triple(scriptPowerShellArguments(watchdogScriptPath), watchdogScriptPath, watchdogHash),
+            Triple(scriptPowerShellArguments(guardScriptPath), guardScriptPath, guardHash),
+            Triple(legacyPowerShellArguments(exePath), null, null)
+        )
+        return runs.flatMap { (arguments, scriptPath, hash) ->
+            listOf(
+                TaskRunExpectation(arguments, scriptPath, hash),
+                TaskRunExpectation("-WindowStyle Hidden $arguments", scriptPath, hash)
+            )
+        }
+    }
 }

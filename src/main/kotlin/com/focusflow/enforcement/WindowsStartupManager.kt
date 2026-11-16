@@ -4,7 +4,6 @@ import com.sun.jna.platform.win32.Advapi32Util
 import com.sun.jna.platform.win32.WinReg
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
  * WindowsStartupManager
@@ -107,15 +106,13 @@ object WindowsStartupManager {
 
         /** Runs reg.exe and waits, so a failure is reported instead of silently lost. */
         private fun runReg(vararg args: String) {
-            val process = ProcessBuilder(*args)
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .start()
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                throw IOException("reg.exe timed out")
-            }
-            if (process.exitValue() != 0) throw IOException("reg.exe exited with ${process.exitValue()}")
+            // Absolute System32 path, run as a FocusFlow-owned helper with a time limit.
+            val result = SystemCommand.run(
+                listOf(SystemTools.path("reg.exe")) + args.drop(1),
+                timeoutSec = 5
+            )
+            if (result.timedOut) throw IOException("reg.exe timed out")
+            if (result.exitCode != 0) throw IOException("reg.exe exited with ${result.exitCode}")
         }
     }
 

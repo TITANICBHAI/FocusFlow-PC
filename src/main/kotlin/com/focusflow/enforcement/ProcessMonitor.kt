@@ -161,7 +161,10 @@ object ProcessMonitor {
             ownPid = ProcessHandle.current().pid(),
             systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
             chainAllowanceEnabled = com.focusflow.services.LauncherChainAllowance.isEnabled,
-            snapshotVersion = launcherPolicySnapshotVersion
+            snapshotVersion = launcherPolicySnapshotVersion,
+            // Callback thread: no process handles may be opened here, so only helpers FocusFlow
+            // itself recorded at spawn are recognised. The sweep applies the full check.
+            isTrustedHelper = EnforcementTrust.helperCheck(snapshot, commandLineOf = { null })
         ) != com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK
     }
 
@@ -329,7 +332,26 @@ object ProcessMonitor {
     @Volatile private var cachedBlockRules:       List<BlockRule>         = emptyList()
     @Volatile private var cacheLastRefreshMs:     Long                    = 0L
 
+    /** Only one cache refresh runs at a time; other callers reuse the current caches. */
+    private val cacheRefreshMutex = kotlinx.coroutines.sync.Mutex()
+
     private suspend fun refreshCaches() {
+        if (System.currentTimeMillis() - cacheLastRefreshMs < CACHE_TTL_MS) return
+        if (!cacheRefreshMutex.tryLock()) {
+            // Another coroutine is already refreshing. If the caches have never been
+            // loaded (or were just invalidated) wait for it so this check sees real data;
+            // otherwise carry on with the current caches instead of piling up.
+            if (cacheLastRefreshMs == 0L) { cacheRefreshMutex.lock(); cacheRefreshMutex.unlock() }
+            return
+        }
+        try {
+            refreshCachesLocked()
+        } finally {
+            cacheRefreshMutex.unlock()
+        }
+    }
+
+    private suspend fun refreshCachesLocked() {
         val now = System.currentTimeMillis()
         if (now - cacheLastRefreshMs < CACHE_TTL_MS) return
         // NOTE: cacheLastRefreshMs is stamped AFTER all reads succeed so that a DB
@@ -594,6 +616,9 @@ object ProcessMonitor {
         val now = System.currentTimeMillis()
         try {
             val snapshot = com.focusflow.services.ProcessSnapshot.snapshotProcesses()
+            // A person may block powershell.exe (or cmd, reg, ...) as an app. That must not end
+            // FocusFlow's own helper of the same name; see EnforcementTrust.
+            val trustedHelper = EnforcementTrust.helperCheck(snapshot)
             for (process in snapshot) {
                 if (process.pid == ownPid || process.pid == foregroundPid) continue
                 val exeName = snapshotProcessName(process) ?: continue
@@ -606,6 +631,7 @@ object ProcessMonitor {
                         process.creationTimeMs
                     ) != false &&
                     !isVisibleForegroundWindowForPid(process.pid) &&
+                    !trustedHelper(process, com.focusflow.services.ProcessSnapshot.resolveExecutablePath(process)) &&
                     tryAcquireCooldown(exeName, now)
                 ) {
                     enforceBlock(exeName, process.pid, showOverlay = false)
@@ -645,6 +671,7 @@ object ProcessMonitor {
         val now    = System.currentTimeMillis()
         try {
             val snapshot = refreshLauncherPolicySnapshot()
+            val trustedHelper = EnforcementTrust.helperCheck(snapshot)
             for (process in snapshot) {
                 // Re-read the active allow-set on every iteration. If exit()
                 // clears it mid-sweep, stop using the stale snapshot at once.
@@ -668,7 +695,8 @@ object ProcessMonitor {
                     systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
                     chainAllowanceEnabled = com.focusflow.services.LauncherChainAllowance.isEnabled,
                     snapshotVersion = launcherPolicySnapshotVersion,
-                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
+                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) },
+                    isTrustedHelper = trustedHelper
                 )
                 if (
                     decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK &&
@@ -753,7 +781,8 @@ object ProcessMonitor {
                     systemRoot = System.getenv("SystemRoot") ?: System.getenv("WINDIR"),
                     chainAllowanceEnabled = com.focusflow.services.LauncherChainAllowance.isEnabled,
                     snapshotVersion = launcherPolicySnapshotVersion,
-                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) }
+                    resolvePath = { com.focusflow.services.ProcessSnapshot.resolveExecutablePath(it) },
+                    isTrustedHelper = EnforcementTrust.helperCheck(snapshot)
                 )
                 if (
                     decision == com.focusflow.services.LauncherKioskPolicy.Decision.BLOCK &&
@@ -820,7 +849,12 @@ object ProcessMonitor {
                         val netKey = "net:${rule.id}:$resolvedLower"
                         if (tryAcquireCooldown(netKey, now)) {
                             val cutTarget = rule.targetProcess ?: resolvedName
-                            NetworkBlocker.addRule(cutTarget)
+                            // A keyword rule with no target app cuts whatever window matched.
+                            // Never let that be FocusFlow itself.
+                            if (rule.targetProcess == null && resolvedPid == ProcessHandle.current().pid()) return@forEach
+                            // Never wait for the firewall here: this runs on the enforcement
+                            // path, and a slow PowerShell call used to stop every kill.
+                            NetworkBlocker.requestRule(cutTarget)
                         }
                     }
                 }
@@ -950,10 +984,16 @@ object ProcessMonitor {
         pid: Long = 0L,
         showOverlay: Boolean = false
     ) {
-        if (pid > 0L) {
+        val killed = if (pid > 0L) {
             killProcessByPid(pid, processName)
         } else {
             killProcessByName(processName)
+        }
+        if (!killed) {
+            EnforcementLog.warn(
+                "ProcessMonitor",
+                "kill did not succeed for $processName pid=$pid (exited already, timed out, or access denied)"
+            )
         }
         SoundAversion.playBlockAlert()
 
@@ -972,7 +1012,7 @@ object ProcessMonitor {
 
         val rule = cachedBlockRules.find { it.processName.equals(processName, ignoreCase = true) }
         if (rule?.blockNetwork == true) {
-            NetworkBlocker.addRule(processName)
+            NetworkBlocker.requestRule(processName)
         }
     }
 

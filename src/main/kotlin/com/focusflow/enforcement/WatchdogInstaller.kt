@@ -6,7 +6,6 @@ import com.sun.jna.platform.win32.WinReg
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.TimeUnit
 
 /**
  * WatchdogInstaller — self-restart guardian for FocusFlow.
@@ -45,21 +44,23 @@ object WatchdogInstaller {
     private const val TASK_NAME         = "FocusFlowWatchdog"
     private const val GUARD_TASK_NAME   = "FocusFlowTaskbarGuard"
 
-    private const val WATCHDOG_SCRIPT_NAME = "watchdog.ps1"
-    private const val GUARD_SCRIPT_NAME    = "taskbar-guard.ps1"
+    private const val WATCHDOG_SCRIPT_NAME = WatchdogScript.WATCHDOG_SCRIPT_NAME
+    private const val GUARD_SCRIPT_NAME    = WatchdogScript.GUARD_SCRIPT_NAME
 
     /** Longest a quit or an uninstall waits on any one schtasks call (a stuck Task Scheduler must not hold either up). */
     private const val QUICK_STEP_TIMEOUT_SECONDS = 10L
+    /** Creating or deleting a task can take a few seconds; anything beyond this is a hang. */
+    private const val SCHTASKS_TIMEOUT_SECONDS = 30L
 
     private val startBoundaryFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
 
     fun isInstalled(): Boolean {
         if (!isWindows) return false
         return try {
-            val proc = ProcessBuilder("schtasks", "/query", "/tn", TASK_NAME)
-                .redirectErrorStream(true)
-                .start()
-            proc.waitFor() == 0
+            SystemCommand.run(
+                listOf(SystemTools.path("schtasks.exe"), "/query", "/tn", TASK_NAME),
+                QUICK_STEP_TIMEOUT_SECONDS
+            ).ok
         } catch (_: Exception) { false }
     }
 
@@ -145,42 +146,9 @@ object WatchdogInstaller {
             scriptsDir.mkdirs()
             val scriptFile = File(scriptsDir, GUARD_SCRIPT_NAME)
 
-            // PowerShell script: show primary + ALL secondary taskbar windows via Win32.
-            // Uses a loop with FindWindowEx to handle 3+ monitor setups.
-            val D = '$'
-            scriptFile.writeBytes(WatchdogScript.scriptBytes("""
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public class FocusFlowTaskbarGuard {
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll")]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
-}
-'@
-
-${D}SW_SHOW = 5
-
-# Restore primary taskbar
-${D}primary = [FocusFlowTaskbarGuard]::FindWindow("Shell_TrayWnd", ${D}null)
-if (${D}primary -ne [IntPtr]::Zero) {
-    [FocusFlowTaskbarGuard]::ShowWindow(${D}primary, ${D}SW_SHOW) | Out-Null
-}
-
-# Restore ALL secondary taskbars (handles 3+ monitor setups)
-${D}prev = [IntPtr]::Zero
-while (${D}true) {
-    ${D}sec = [FocusFlowTaskbarGuard]::FindWindowEx([IntPtr]::Zero, ${D}prev, "Shell_SecondaryTrayWnd", ${D}null)
-    if (${D}sec -eq [IntPtr]::Zero) { break }
-    [FocusFlowTaskbarGuard]::ShowWindow(${D}sec, ${D}SW_SHOW) | Out-Null
-    ${D}prev = ${D}sec
-}
-""".trimIndent()))
+            // PowerShell script: show primary + ALL secondary taskbar windows via Win32 (see
+            // WatchdogScript.taskbarGuardScript, which also lets the trust check vouch for exactly this text).
+            scriptFile.writeBytes(WatchdogScript.scriptBytes(WatchdogScript.taskbarGuardScript()))
 
             val systemRoot = systemRoot()
             val host = headlessHost(systemRoot)
@@ -283,10 +251,14 @@ while (${D}true) {
         }
     }
 
+    /** Runs schtasks with a time limit (it used to wait forever); a timeout is reported as exit code -1. */
     private fun schtasks(vararg args: String): Pair<Int, String> {
-        val process = ProcessBuilder("schtasks", *args).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText().trim()
-        return process.waitFor() to output
+        val result = SystemCommand.run(
+            listOf(SystemTools.path("schtasks.exe"), *args),
+            SCHTASKS_TIMEOUT_SECONDS
+        )
+        if (result.timedOut) return -1 to "schtasks timed out after ${SCHTASKS_TIMEOUT_SECONDS}s"
+        return (result.exitCode ?: -1) to result.output.trim()
     }
 
     private fun systemRoot(): String? =
@@ -376,16 +348,15 @@ while (${D}true) {
      */
     private fun quickSchtasks(what: String, vararg args: String) {
         try {
-            val process = ProcessBuilder("schtasks", *args)
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .start()
-            if (!process.waitFor(QUICK_STEP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
+            val result = SystemCommand.run(
+                listOf(SystemTools.path("schtasks.exe"), *args),
+                QUICK_STEP_TIMEOUT_SECONDS
+            )
+            if (result.timedOut) {
                 EnforcementLog.warn("WatchdogInstaller", "$what: timed out and was given up on")
                 return
             }
-            EnforcementLog.info("WatchdogInstaller", "$what (exit code ${process.exitValue()})")
+            EnforcementLog.info("WatchdogInstaller", "$what (exit code ${result.exitCode})")
         } catch (failure: Exception) {
             EnforcementLog.warn("WatchdogInstaller", "$what: could not run schtasks", failure)
         }

@@ -4,7 +4,18 @@ import com.focusflow.services.ProcessSnapshotEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+/** Runs the selector against Nuclear Mode's real escape lists. */
 class NuclearModeSnapshotTest {
+    private fun select(snapshot: List<ProcessSnapshotEntry>) = EscapeTargetSelector.select(
+        snapshot = snapshot,
+        ownPid = 1L,
+        escapeNames = NuclearMode.escapeProcessNames,
+        escapePathSuffixes = NuclearMode.escapePathSuffixes,
+        resolvePath = { it.executablePath },
+        isNameBlockable = { true },
+        isTrusted = { _, _ -> false }
+    )
+
     @Test
     fun detectsNamedEscapeToolsFromTheSharedSnapshot() {
         val snapshot = listOf(
@@ -16,10 +27,7 @@ class NuclearModeSnapshotTest {
             ProcessSnapshotEntry(pid = 124L, processName = "ordinary.exe")
         )
 
-        assertEquals(
-            setOf("powershell.exe"),
-            NuclearMode.getRunningEscapeProcesses(snapshot)
-        )
+        assertEquals(mapOf(123L to "powershell.exe"), select(snapshot))
     }
 
     @Test
@@ -32,9 +40,6 @@ class NuclearModeSnapshotTest {
             )
         )
 
-        assertEquals(
-            setOf("taskmgr.exe"),
-            NuclearMode.getEscapeProcessesByPath(snapshot)
-        )
+        assertEquals(mapOf(125L to "renamed.exe"), select(snapshot))
     }
 }

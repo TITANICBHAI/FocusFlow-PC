@@ -169,13 +169,13 @@ object HostsBlocker {
     fun verifyBlock(domain: String): Boolean {
         if (!isWindows) return false
         return try {
-            val proc = ProcessBuilder("nslookup", domain, "127.0.0.1")
-                .redirectErrorStream(true)
-                .start()
-            val output = proc.inputStream.bufferedReader().readText()
-            proc.waitFor()
-            // nslookup output contains "Address:  127.0.0.1" when the hosts entry is active
-            output.contains("127.0.0.1")
+            val result = com.focusflow.enforcement.SystemCommand.run(
+                listOf(com.focusflow.enforcement.SystemTools.path("nslookup.exe"), domain, "127.0.0.1"),
+                timeoutSec = 10
+            )
+            // nslookup output contains "Address:  127.0.0.1" when the hosts entry is active.
+            // A timed-out lookup proves nothing, so it does not count as verified.
+            !result.timedOut && result.output.contains("127.0.0.1")
         } catch (_: Exception) { false }
     }
 
@@ -263,10 +263,10 @@ object HostsBlocker {
 
     private fun flushDnsCache() {
         try {
-            ProcessBuilder("ipconfig", "/flushdns")
-                .redirectErrorStream(true)
-                .start()
-                .waitFor()
+            com.focusflow.enforcement.SystemCommand.run(
+                listOf(com.focusflow.enforcement.SystemTools.path("ipconfig.exe"), "/flushdns"),
+                timeoutSec = 10
+            )
         } catch (_: Exception) {}
     }
 

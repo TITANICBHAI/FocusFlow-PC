@@ -183,6 +183,15 @@ fun killProcessesByName(processNames: Collection<String>): Boolean {
 }
 
 /**
+ * Kill several specific processes by id, in as few `taskkill` commands as possible.
+ *
+ * Unlike [killProcessesByName] this cannot end a same-named process the caller did not choose,
+ * which is what lets enforcement kill a user's PowerShell without ending FocusFlow's own.
+ * The caller is responsible for having verified each id (see [ProcessSnapshot.isAlive]).
+ */
+fun killProcessesByPid(pids: Collection<Long>): Boolean = Taskkill.killPids(pids)
+
+/**
  * Kill a specific process by PID. More targeted than killProcessByName —
  * only terminates the one window/tab group associated with this PID rather
  * than every instance of the browser.
@@ -221,10 +230,15 @@ fun killProcessByPid(pid: Long, expectedProcessName: String? = null): Boolean {
  */
 private fun runTaskkill(args: List<String>): Boolean {
     return try {
-        val process = ProcessBuilder(args)
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .redirectError(ProcessBuilder.Redirect.DISCARD)
-            .start()
+        // Absolute System32 path (not whatever "taskkill" resolves to on PATH), started as a
+        // registered FocusFlow-owned child so enforcement never treats it as an escape tool.
+        val taskkillExe = SystemTools.path("taskkill.exe")
+        val process = OwnedProcesses.start(
+            ProcessBuilder(listOf(taskkillExe) + args.drop(1))
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD),
+            expectedImage = taskkillExe
+        )
         process.outputStream.close()
         if (!process.waitFor(2, TimeUnit.SECONDS)) {
             process.destroyForcibly()
