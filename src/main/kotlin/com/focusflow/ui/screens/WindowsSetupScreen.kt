@@ -120,10 +120,9 @@ fun WindowsSetupScreen() {
                 required = false,
                 actionLabel = if (isWindows) "Open Security →" else null,
                 onAction = if (isWindows) ({
-                    try {
-                        if (java.awt.Desktop.isDesktopSupported())
-                            java.awt.Desktop.getDesktop().browse(java.net.URI("ms-settings:windowsdefender"))
-                    } catch (_: Exception) {}
+                    com.focusflow.services.WindowsSettingsLauncher.open(
+                        com.focusflow.services.WindowsSettingsLauncher.SECURITY
+                    )
                 }) else null
             )
 
@@ -191,10 +190,9 @@ fun WindowsSetupScreen() {
                 required = false,
                 actionLabel = if (isWindows) "Open Notifications →" else null,
                 onAction = if (isWindows) ({
-                    try {
-                        if (java.awt.Desktop.isDesktopSupported())
-                            java.awt.Desktop.getDesktop().browse(java.net.URI("ms-settings:notifications"))
-                    } catch (_: Exception) {}
+                    com.focusflow.services.WindowsSettingsLauncher.open(
+                        com.focusflow.services.WindowsSettingsLauncher.NOTIFICATIONS
+                    )
                 }) else null
             )
 
@@ -212,10 +210,9 @@ fun WindowsSetupScreen() {
                 required = false,
                 actionLabel = if (isWindows) "Open Focus Assist →" else null,
                 onAction = if (isWindows) ({
-                    try {
-                        if (java.awt.Desktop.isDesktopSupported())
-                            java.awt.Desktop.getDesktop().browse(java.net.URI("ms-settings:quiethours"))
-                    } catch (_: Exception) {}
+                    com.focusflow.services.WindowsSettingsLauncher.open(
+                        com.focusflow.services.WindowsSettingsLauncher.FOCUS_ASSIST
+                    )
                 }) else null
             )
 

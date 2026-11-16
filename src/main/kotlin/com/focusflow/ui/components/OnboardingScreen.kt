@@ -915,6 +915,11 @@ private fun DurationOption(
 // ─── Permission deep-link helpers ────────────────────────────────────────────
 
 private fun openSettingsUrl(url: String) {
+    // Windows Settings links go to Windows itself; Desktop.browse can send them to a browser.
+    if (com.focusflow.services.WindowsSettingsLauncher.isSettingsLink(url)) {
+        com.focusflow.services.WindowsSettingsLauncher.open(url)
+        return
+    }
     try {
         if (java.awt.Desktop.isDesktopSupported())
             java.awt.Desktop.getDesktop().browse(java.net.URI(url))
