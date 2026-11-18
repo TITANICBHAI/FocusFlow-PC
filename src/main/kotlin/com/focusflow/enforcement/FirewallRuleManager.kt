@@ -27,7 +27,10 @@ internal data class FirewallRule(val name: String, val exePath: String)
  * A fake implementation makes the rule logic testable without Windows.
  */
 internal interface FirewallBackend {
-    /** Creates the rules and returns the names that were read back as enabled, outbound and Block. */
+    /**
+     * Creates the rules and returns the names that were read back as enabled, outbound, Block and
+     * pointing at the requested program. A rule pointing elsewhere is not confirmed.
+     */
     fun apply(rules: List<FirewallRule>): Set<String>
 
     /** Removes the rules for [names]. Missing rules are not an error. */
@@ -36,12 +39,19 @@ internal interface FirewallBackend {
     /** Removes every rule FocusFlow created. */
     fun removeAll(): Boolean
 
-    /** The programs with an active FocusFlow rule, or null when the firewall could not be read. */
-    fun readActive(): Set<String>?
+    /**
+     * The programs with an enabled FocusFlow rule, each with the program path the rule points at
+     * (null when that path could not be read), or null when the firewall could not be read at all.
+     */
+    fun readActive(): Map<String, String?>?
 
     /** Stops whatever is running right now (a stuck PowerShell). Must not block or take locks. */
     fun close()
 }
+
+/** Whether two program paths are the same file, ignoring case, slash direction and a `\\?\` prefix. */
+internal fun sameProgramPath(a: String?, b: String?): Boolean =
+    a != null && b != null && OwnedProcessRegistry.normalize(a) == OwnedProcessRegistry.normalize(b)
 
 /**
  * Keeps track of which programs are blocked and why, and drives a [FirewallBackend].
@@ -56,6 +66,11 @@ internal interface FirewallBackend {
  *  - **Serialized firewall access, no lock held across it.** One backend call at a time; state
  *    locks are never held while the (slow) backend runs.
  *  - **Coalescing.** Background requests collect into a queue and are applied in batches.
+ *  - **Right program.** A rule is a path, so it only blocks the program it points at. The path each
+ *    rule was applied with is remembered, and every [recheckIntervalMs] the program is looked up
+ *    again; if it moved (an app update into a new folder) the rule is applied again. Rules found
+ *    in the firewall at startup are adopted with the path they really point at. The recheck is
+ *    triggered by use but runs on the worker, so [request] stays cheap on the enforcement path.
  */
 internal class FirewallRuleManager(
     private val backend: FirewallBackend,
@@ -64,6 +79,7 @@ internal class FirewallRuleManager(
     private val batchSize: Int = 20,
     private val failureBackoffMs: Long = 60_000L,
     private val unresolvedBackoffMs: Long = 10_000L,
+    private val recheckIntervalMs: Long = 10 * 60_000L,
     private val wake: () -> Unit = {}
 ) {
     private val stateLock = Any()
@@ -74,6 +90,12 @@ internal class FirewallRuleManager(
     private val pending = HashSet<String>()
     private val queued = LinkedHashMap<String, MutableSet<FirewallOwner>>()
     private val retryAfter = HashMap<String, Long>()
+
+    /** The program path each active rule was applied with (absent when unknown, e.g. unreadable at startup). */
+    private val appliedPath = HashMap<String, String>()
+
+    /** When each active rule's path was last confirmed to still be the program's path (absent: never). */
+    private val verifiedAt = HashMap<String, Long>()
     @Volatile private var closed = false
 
     // ── Blocking operations ──────────────────────────────────────────────────
@@ -101,7 +123,7 @@ internal class FirewallRuleManager(
                 val stillWanted = !claimants.isNullOrEmpty() || queued.containsKey(name)
                 if (stillWanted) continue
                 owners.remove(name)
-                active.remove(name)
+                forgetRule(name)
                 pending.remove(name)
                 retryAfter.remove(name)
                 toRemove += name
@@ -122,21 +144,28 @@ internal class FirewallRuleManager(
     fun removeAll() {
         synchronized(stateLock) {
             owners.clear(); active.clear(); pending.clear(); queued.clear(); retryAfter.clear()
+            appliedPath.clear(); verifiedAt.clear()
         }
         backendLock.withLock { backend.removeAll() }
     }
 
-    /** Adopts the rules that already exist in the firewall. A failed read changes nothing. */
+    /**
+     * Adopts the rules that already exist in the firewall, with the path each one points at. A rule
+     * whose path cannot be read is adopted too but will be applied again on first use. A failed
+     * read changes nothing.
+     */
     fun syncFromBackend() {
         val found = backend.readActive() ?: return
         synchronized(stateLock) {
             val vanished = active.filter { it !in found }
-            active.removeAll(vanished.toSet())
+            vanished.forEach(::forgetRule)
             // A rule someone still wants but that is gone from the firewall is applied again later.
             vanished.filter { owners.containsKey(it) }.forEach { pending += it; retryAfter[it] = nowMs() }
-            for (name in found) {
+            for ((name, program) in found) {
                 active += name
                 pending -= name
+                if (program != null) appliedPath[name] = program else appliedPath.remove(name)
+                verifiedAt.remove(name)   // never verified in this run: the first use checks it
                 val claimants = owners.getOrPut(name) { mutableSetOf() }
                 if (claimants.isEmpty()) claimants += FirewallOwner.RECOVERED
             }
@@ -154,15 +183,18 @@ internal class FirewallRuleManager(
         synchronized(stateLock) {
             if (name in active) {
                 owners.getOrPut(name) { mutableSetOf() }.add(owner)
-                return false
+                // Cheap on purpose: only a timestamp comparison. The path lookup happens on the worker.
+                if (!recheckDue(name) || queued.containsKey(name)) return false
+                queued[name] = mutableSetOf(owner)
+            } else {
+                queued[name]?.let { it.add(owner); return false }
+                val notBefore = retryAfter[name]
+                if (notBefore != null && nowMs() < notBefore) {
+                    owners.getOrPut(name) { mutableSetOf() }.add(owner)
+                    return false
+                }
+                queued[name] = mutableSetOf(owner)
             }
-            queued[name]?.let { it.add(owner); return false }
-            val notBefore = retryAfter[name]
-            if (notBefore != null && nowMs() < notBefore) {
-                owners.getOrPut(name) { mutableSetOf() }.add(owner)
-                return false
-            }
-            queued[name] = mutableSetOf(owner)
         }
         wake()
         return true
@@ -213,16 +245,44 @@ internal class FirewallRuleManager(
 
     // ── Applying ─────────────────────────────────────────────────────────────
 
+    /** Caller holds [stateLock]. */
+    private fun recheckDue(name: String): Boolean {
+        val last = verifiedAt[name] ?: return true
+        return nowMs() - last >= recheckIntervalMs
+    }
+
+    /** Caller holds [stateLock]. */
+    private fun forgetRule(name: String) {
+        active.remove(name)
+        appliedPath.remove(name)
+        verifiedAt.remove(name)
+    }
+
+    /**
+     * Applies the rules for [names] that are not blocked yet, and re-verifies active ones whose
+     * recheck is due: the program is looked up again and its rule applied again if it moved.
+     */
     private fun applyMissing(names: Collection<String>): Set<String> {
-        val candidates = synchronized(stateLock) { names.filter { it !in active && owners.containsKey(it) } }
+        val candidates = synchronized(stateLock) {
+            names.filter { owners.containsKey(it) && (it !in active || recheckDue(it)) }
+        }
 
         val rules = ArrayList<FirewallRule>()
         for (name in candidates) {
             val path = resolvePath(name)
-            if (path == null) {
-                synchronized(stateLock) { pending += name; retryAfter[name] = nowMs() + unresolvedBackoffMs }
-            } else {
-                rules += FirewallRule(name, path)
+            val (wasActive, appliedBefore) = synchronized(stateLock) { (name in active) to appliedPath[name] }
+            when {
+                path == null -> synchronized(stateLock) {
+                    if (wasActive) {
+                        verifiedAt[name] = nowMs()   // cannot tell: keep the working rule, look again later
+                    } else {
+                        pending += name
+                        retryAfter[name] = nowMs() + unresolvedBackoffMs
+                    }
+                }
+                wasActive && sameProgramPath(appliedBefore, path) ->
+                    synchronized(stateLock) { verifiedAt[name] = nowMs() }
+                else -> rules += FirewallRule(name, path)
             }
         }
 
@@ -230,7 +290,10 @@ internal class FirewallRuleManager(
             backendLock.withLock {
                 // Someone may have released, or another thread applied it, while we waited.
                 val wanted = synchronized(stateLock) {
-                    if (closed) emptyList() else chunk.filter { owners.containsKey(it.name) && it.name !in active }
+                    if (closed) emptyList() else chunk.filter { rule ->
+                        owners.containsKey(rule.name) &&
+                            (rule.name !in active || !sameProgramPath(appliedPath[rule.name], rule.exePath))
+                    }
                 }
                 if (wanted.isEmpty()) return@withLock
 
@@ -244,11 +307,20 @@ internal class FirewallRuleManager(
                 synchronized(stateLock) {
                     for (rule in wanted) {
                         when {
-                            rule.name !in confirmed -> retryAfter[rule.name] = nowMs() + failureBackoffMs
+                            rule.name !in confirmed -> {
+                                // Applying replaces the old rule, so a failure here means the program
+                                // may no longer be blocked: stop claiming it, and try again later.
+                                val wasActive = rule.name in active
+                                forgetRule(rule.name)
+                                retryAfter[rule.name] = nowMs() + failureBackoffMs
+                                if (wasActive) pending += rule.name
+                            }
                             owners.containsKey(rule.name) -> {
                                 active += rule.name
                                 pending -= rule.name
                                 retryAfter.remove(rule.name)
+                                appliedPath[rule.name] = rule.exePath
+                                verifiedAt[rule.name] = nowMs()
                             }
                             // Released while the firewall was working: undo it rather than record it.
                             else -> stale += rule.name

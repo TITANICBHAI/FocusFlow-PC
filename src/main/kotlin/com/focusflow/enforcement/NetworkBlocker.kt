@@ -1,6 +1,5 @@
 package com.focusflow.enforcement
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -29,8 +28,8 @@ object NetworkBlocker {
 
     private val resolver by lazy { ExePathResolver(SystemTools.systemRoot()) }
 
-    /** baseName (no .exe, lowercase) → resolved absolute exe path. */
-    private val resolvedPaths = ConcurrentHashMap<String, String>()
+    /** Where each program was found, for a limited time (see [ResolvedPathCache]): an app that updates into a new folder must not keep its old path. */
+    private val resolvedPaths by lazy { ResolvedPathCache(resolve = { resolver.resolve(it) }) }
 
     private val worker by lazy {
         Executors.newSingleThreadExecutor { r -> Thread(r, "FocusFlow-Firewall").apply { isDaemon = true } }
@@ -40,19 +39,11 @@ object NetworkBlocker {
     private val managerDelegate = lazy {
         FirewallRuleManager(
             backend = PowerShellFirewallBackend(),
-            resolvePath = ::resolveExePath,
+            resolvePath = { name -> resolvedPaths.get(name) },
             wake = ::wakeWorker
         )
     }
     private val manager: FirewallRuleManager get() = managerDelegate.value
-
-    private fun resolveExePath(name: String): String? {
-        val baseName = name.removeSuffix(".exe")
-        resolvedPaths[baseName]?.let { return it }
-        val resolved = resolver.resolve(name) ?: return null
-        resolvedPaths[baseName] = resolved
-        return resolved
-    }
 
     /** Runs the queued requests on the worker; requests that arrive meanwhile schedule one more run. */
     private fun wakeWorker() {

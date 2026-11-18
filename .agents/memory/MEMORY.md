@@ -1,5 +1,6 @@
 - [UI thread DB freeze patterns](ui-db-freeze-patterns.md) — Compose screens must never call Database.* directly; always use withContext(Dispatchers.IO) or scope.launch(Dispatchers.IO).
-- [NuclearMode disable pattern](nuclear-mode-disable.md) — disable() must never use runBlocking; use background Thread + awaitCleanup() from shutdown thread.
+- NuclearMode disable pattern (no detail file exists) — disable() must never use runBlocking; use background Thread + awaitCleanup() from shutdown thread.
+- [Enforcement helper trust](enforcement-helper-trust.md) — Tell FocusFlow's own PowerShell/taskkill/scheduled-task runs from a person's escape tools by identity (owned-process registry, task-run trust), kill by PID, never by image name; firewall rules have owners.
 - [Bug fixes audit round 1](bug-fixes-audit-2026-06-04.md) — 7 bugs fixed in Database.kt, BreakEnforcer.kt, HostsBlocker.kt, WeeklyReportService.kt, FocusSessionService.kt.
 - [Bug fixes audit round 3](bug-fixes-audit-2026-06-05-round3.md) — NetworkBlocker race (synchronized double-check), RecurringTaskService @Synchronized, BackupService CSV newline escaping, Main.kt dispose() call, SessionPin blank-bypass analysis.
 - [Bug fixes audit round 4](bug-fixes-audit-2026-06-05-round4.md) — DailyAllowanceTracker wall-clock drift, FloatingBlockOverlay dismissJob visibility, full architecture audit of FocusLauncherService/AppBlocker/RegistryLockdown/BlockScheduleService (all clean).

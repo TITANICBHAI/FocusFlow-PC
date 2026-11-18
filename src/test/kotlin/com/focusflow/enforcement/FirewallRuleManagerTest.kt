@@ -16,7 +16,7 @@ class FirewallRuleManagerTest {
         var closeCalls = 0
         var confirm: (FirewallRule) -> Boolean = { true }
         var onApply: () -> Unit = {}
-        var readResult: Set<String>? = emptySet()
+        var readResult: Map<String, String?>? = emptyMap()
 
         override fun apply(rules: List<FirewallRule>): Set<String> {
             applyCalls += rules
@@ -33,7 +33,7 @@ class FirewallRuleManagerTest {
         }
 
         override fun removeAll(): Boolean { removeAllCalls++; rules.clear(); return true }
-        override fun readActive(): Set<String>? = readResult
+        override fun readActive(): Map<String, String?>? = readResult
         override fun close() { closeCalls++ }
     }
 
@@ -49,6 +49,7 @@ class FirewallRuleManagerTest {
         batchSize = 2,
         failureBackoffMs = 60_000L,
         unresolvedBackoffMs = 10_000L,
+        recheckIntervalMs = 600_000L,
         wake = { wakes++ }
     )
 
@@ -227,12 +228,132 @@ class FirewallRuleManagerTest {
         assertEquals(0, m.pendingCount())
     }
 
+    // ── the rule must keep pointing at the program that is really there ─────
+
+    private val recheckDue = 600_001L
+
+    private fun appliedPaths() = backend.applyCalls.flatten().map { it.exePath }
+
+    @Test
+    fun aRuleIsAppliedAgainWhenTheProgramMovedAndTheRecheckIsDue() {
+        paths["app.exe"] = "C:\\old\\app.exe"
+        manager.acquire(user, listOf("app.exe"))
+        paths["app.exe"] = "C:\\new\\app.exe"
+        clock += recheckDue
+
+        manager.acquire(user, listOf("app.exe"))
+
+        assertEquals(listOf("C:\\old\\app.exe", "C:\\new\\app.exe"), appliedPaths())
+        assertTrue(manager.isBlocked("app.exe"))
+    }
+
+    @Test
+    fun aRecheckThatFindsTheSamePathAppliesNothingAndPathsCompareWithoutCaseOrSlashes() {
+        paths["app.exe"] = "C:\\Old\\App.exe"
+        manager.acquire(user, listOf("app.exe"))
+        paths["app.exe"] = "c:/old/app.exe"
+        clock += recheckDue
+
+        manager.acquire(user, listOf("app.exe"))
+
+        assertEquals(1, backend.applyCalls.size)
+    }
+
+    @Test
+    fun beforeTheRecheckIsDueThePathIsNotEvenLookedUp() {
+        var lookups = 0
+        val counting = FirewallRuleManager(
+            backend, resolvePath = { lookups++; "C:\\x\\a.exe" }, nowMs = { clock }, recheckIntervalMs = 600_000L
+        )
+        counting.acquire(user, listOf("a.exe"))
+
+        counting.acquire(nuclear, listOf("a.exe"))
+        assertFalse(counting.request(session, "a.exe"), "the busy path must stay cheap")
+
+        assertEquals(1, lookups)
+    }
+
+    @Test
+    fun aRequestForABlockedProgramWhoseRecheckIsDueIsQueuedAndTheWorkerVerifiesIt() {
+        paths["app.exe"] = "C:\\old\\app.exe"
+        manager.acquire(user, listOf("app.exe"))
+        paths["app.exe"] = "C:\\new\\app.exe"
+        clock += recheckDue
+
+        assertTrue(manager.request(session, "app.exe"))
+        manager.processQueued()
+
+        assertEquals(listOf("C:\\old\\app.exe", "C:\\new\\app.exe"), appliedPaths())
+    }
+
+    @Test
+    fun ifTheReapplyIsNotConfirmedTheProgramIsNotClaimedAsBlockedBecauseTheOldRuleWasReplaced() {
+        paths["app.exe"] = "C:\\old\\app.exe"
+        manager.acquire(user, listOf("app.exe"))
+        paths["app.exe"] = "C:\\new\\app.exe"
+        backend.confirm = { false }
+        clock += recheckDue
+
+        manager.acquire(user, listOf("app.exe"))
+
+        assertFalse(manager.isBlocked("app.exe"))
+    }
+
+    @Test
+    fun aRecoveredRuleWithAStalePathIsAppliedAgainOnFirstUse() {
+        backend.readResult = mapOf("app.exe" to "C:\\old\\app.exe")
+        manager.syncFromBackend()
+        paths["app.exe"] = "C:\\new\\app.exe"
+
+        manager.acquire(nuclear, listOf("app.exe"))
+
+        assertEquals(listOf("C:\\new\\app.exe"), appliedPaths())
+    }
+
+    @Test
+    fun aRecoveredRuleWhosePathMatchesIsLeftAlone() {
+        backend.readResult = mapOf("app.exe" to "C:\\Windows\\System32\\app.exe")
+        manager.syncFromBackend()
+
+        manager.acquire(nuclear, listOf("app.exe"))
+
+        assertTrue(backend.applyCalls.isEmpty())
+        assertTrue(manager.isBlocked("app.exe"))
+    }
+
+    @Test
+    fun aRecoveredRuleWhosePathCouldNotBeReadIsAppliedAgainSoItCanBeTrusted() {
+        backend.readResult = mapOf("app.exe" to null)
+        manager.syncFromBackend()
+
+        manager.acquire(nuclear, listOf("app.exe"))
+
+        assertEquals(1, backend.applyCalls.size)
+    }
+
+    @Test
+    fun aProgramThatCannotBeFoundDuringARecheckKeepsItsRule() {
+        var found = true
+        val m = FirewallRuleManager(
+            backend, resolvePath = { if (found) "C:\\old\\app.exe" else null },
+            nowMs = { clock }, recheckIntervalMs = 600_000L
+        )
+        m.acquire(user, listOf("app.exe"))
+        found = false
+        clock += recheckDue
+
+        m.acquire(user, listOf("app.exe"))
+
+        assertTrue(m.isBlocked("app.exe"), "an unfindable program must not drop a working rule")
+        assertEquals(1, backend.applyCalls.size)
+    }
+
     // ── sync, removeAll, shutdown ────────────────────────────────────────────
 
     @Test
     fun rulesFoundInTheFirewallAtStartupAreAdoptedAndAnyonesReleaseRemovesThem() {
         backend.rules += "old.exe"
-        backend.readResult = setOf("old.exe")
+        backend.readResult = mapOf("old.exe" to "C:\\Windows\\System32\\old.exe")
 
         manager.syncFromBackend()
         assertTrue(manager.isBlocked("old.exe"))
@@ -257,7 +378,7 @@ class FirewallRuleManagerTest {
     @Test
     fun aSuccessfulReadDropsRulesThatNoLongerExist() {
         manager.acquire(user, listOf("a.exe"))
-        backend.readResult = emptySet()
+        backend.readResult = emptyMap()
 
         manager.syncFromBackend()
 
